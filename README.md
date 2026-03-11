@@ -46,20 +46,6 @@ No installer needed.
 
 ---
 
-## Screenshots
-
-> *Replace these placeholder paths with actual screenshots before publishing. Suggested tool: Windows Snipping Tool (`Win + Shift + S`).*
-
-| Tab | Screenshot |
-|---|---|
-| Tools | `screenshots/tools_tab.png` |
-| Report — Scoreboard | `screenshots/report_scoreboard.png` |
-| Report — Form | `screenshots/report_form.png` |
-| Halo Support Window | `screenshots/halo_support_window.png` |
-| Log Tab | `screenshots/log_tab.png` |
-
----
-
 ## Usage Guide
 
 ### ⚙ Tools Tab
