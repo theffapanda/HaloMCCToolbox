@@ -52,8 +52,9 @@ public partial class Scanner : UserControl
     private SavedHandleInfo? _savedHandle;
     private SavedHandleInfo? _savedMatchSession;
     private readonly System.Windows.Threading.DispatcherTimer _mccWatcher =
-        new() { Interval = TimeSpan.FromSeconds(5) };
+        new() { Interval = TimeSpan.FromSeconds(1) };  // CRITICAL FIX: 5s → 1s (catch fast restarts)
     private bool _mccWasRunning = false;
+    private int _lastMccPid = 0;  // CRITICAL FIX: Track PID to detect fast MCC restarts
     private bool _restoreInProgress = false;
 
     public Scanner()
@@ -1311,6 +1312,30 @@ public partial class Scanner : UserControl
 
             bool running = Process.GetProcessesByName("MCC-Win64-Shipping").Length > 0
                         || Process.GetProcessesByName("MCC-Win64-Shipping-EAC").Length > 0;
+
+            // CRITICAL FIX: Track MCC process ID to detect fast restarts
+            // If MCC restarts within the watcher interval (now 1s), Process.GetProcessesByName
+            // might show it as "running" even though it's a NEW process with a different PID.
+            // This detects that scenario and triggers crash restore.
+            int currentMccPid = 0;
+            if (running)
+            {
+                var mccProcess = Process.GetProcessesByName("MCC-Win64-Shipping")
+                    .Concat(Process.GetProcessesByName("MCC-Win64-Shipping-EAC"))
+                    .FirstOrDefault();
+                if (mccProcess is not null)
+                    currentMccPid = mccProcess.Id;
+            }
+
+            // Detect if MCC restarted (PID changed) while appearing "running"
+            if (running && _mccWasRunning && _lastMccPid > 0 && currentMccPid != _lastMccPid && !_restoreInProgress)
+            {
+                AddDiag("WATCHER[FastRestart]", $"MCC PID changed ({_lastMccPid} → {currentMccPid}) — treating as crash", "");
+                _mccWasRunning = false;  // Force the exit handler to trigger
+            }
+
+            if (running)
+                _lastMccPid = currentMccPid;  // Update PID tracker
 
             // Heartbeat: Log every 10 ticks so we can see watcher is alive and what state it sees
             if (_watcherTickCount % 10 == 0)

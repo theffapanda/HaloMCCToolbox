@@ -779,7 +779,7 @@ public class ProxyService : IDisposable
         }
     }
 
-    /// <summary>Clears the in-memory match session (called when user clicks CLEAR).</summary>
+    /// <summary>Clears the in-memory match session (called when user clicks CLEAR or when a new game is detected).</summary>
     public void ClearSavedMatchSession()
     {
         _lastMatchSession = null;
@@ -791,6 +791,23 @@ public class ProxyService : IDisposable
         _cachedInjectedMatchBody = null;
         _cachedInjectedMatchEtag = "";
         ClearGhostSessionMode();  // Also clear ghost mode when clearing saved session
+
+        // CRITICAL FIX #4: Delete stale session file from disk so it's not reloaded on next startup
+        try
+        {
+            string matchSessionFile = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "HaloMCCToolbox", "last-match-session.json");
+            if (System.IO.File.Exists(matchSessionFile))
+            {
+                System.IO.File.Delete(matchSessionFile);
+                Debug.WriteLine("[CLEAR-Match] Deleted stale saved session file from disk");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[CLEAR-Match] Failed to delete session file: {ex.Message}");
+        }
     }
 
     /// <summary>Sets the in-memory match session from an externally loaded SavedHandleInfo.
@@ -798,12 +815,24 @@ public class ProxyService : IDisposable
     /// rejoin attempts on stale sessions.</summary>
     public void SetSavedMatchSession(SavedHandleInfo? info)
     {
-        // If we're loading a DIFFERENT session, clear ghost mode from the old one
-        if (info is not null && _lastMatchSession is not null &&
-            info.SessionName != _lastMatchSession.SessionName)
+        // CRITICAL FIX #3: Compare BOTH SessionName AND TemplateName to detect new games!
+        // When player joins NEW match (different TemplateName), old saved session is STALE.
+        // Example: Old squad session "cascadesquadsession/ece32fc2" vs new match "CascadeMatchmaking/bce79e38"
+        // Must clear ALL rejoin state (not just ghost mode) when game template changes.
+        if (info is not null && _lastMatchSession is not null)
         {
-            Debug.WriteLine($"[SESSION] New session detected ({info.SessionName}), clearing old ghost session");
-            ClearGhostSessionMode();
+            bool isDifferentSession =
+                info.SessionName != _lastMatchSession.SessionName ||
+                info.TemplateName != _lastMatchSession.TemplateName;
+
+            if (isDifferentSession)
+            {
+                Debug.WriteLine($"[SESSION] New game detected: {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionName} → {info.TemplateName}/{info.SessionName}");
+                Debug.WriteLine("[SESSION] Clearing ALL rejoin state and file to prevent stale session reuse");
+
+                // Call ClearSavedMatchSession to fully clear in-memory state AND delete stale file from disk
+                ClearSavedMatchSession();
+            }
         }
         _lastMatchSession = info;
     }
@@ -1291,7 +1320,9 @@ public class ProxyService : IDisposable
                         return;  // Skip normal body capture, we already have the data
                     }
                     // On restart: if we have cached server info, redirect to it
-                    else if (_cachedGameServerInfo is not null && _pendingCrashRestore)
+                    // CRITICAL FIX: Also redirect if injection is active, even if _pendingCrashRestore somehow missed
+                    // (defense-in-depth against watcher timing misses). INJECT[Member] fires independently of _pendingCrashRestore.
+                    else if (_cachedGameServerInfo is not null && (_pendingCrashRestore || _cachedInjectedMatchBody is not null))
                     {
                         _gameServerRedirectionActive = true;
                         // CRITICAL FIX: Do NOT clear _pendingCrashRestore here!
@@ -1646,15 +1677,17 @@ public class ProxyService : IDisposable
         // CRITICAL FIX #1: Use the REAL connection GUID that was captured when the player
         // originally joined the match. MPSD validates rejoin attempts using this GUID.
         // A fake GUID will cause rejoin validation to fail.
+        // If not captured, generate a fresh GUID rather than using a hardcoded fallback
+        // (hardcoded fallback would make all ghost sessions appear as the same member).
         string connectionGuid = string.IsNullOrEmpty(_ghostSession.ConnectionGuid)
-            ? "12345678-1234-1234-1234-123456789abc"  // Fallback if not captured
+            ? Guid.NewGuid().ToString()              // Generate fresh fallback
             : _ghostSession.ConnectionGuid;             // Real captured GUID
 
         // CRITICAL FIX #2: Include RTA subscription object for connection validation!
         string subscriptionField = "";
         if (!string.IsNullOrEmpty(_ghostSession.SubscriptionId))
         {
-            var changeTypesList = string.Join("\",\"", _ghostSession.ChangeTypes);
+            var changeTypesList = string.Join("\", \"", _ghostSession.ChangeTypes);
             subscriptionField = $$"""
 ,
           "subscription": {
@@ -1706,8 +1739,10 @@ public class ProxyService : IDisposable
         // CRITICAL FIX #1: Use the REAL connection GUID that was captured when the player
         // originally joined the match. MPSD validates rejoin attempts using this GUID.
         // A fake GUID will cause rejoin validation to fail.
+        // If not captured, generate a fresh GUID rather than using a hardcoded fallback
+        // (hardcoded fallback would make all ghost sessions appear as the same member).
         string connectionGuid = _ghostSession is null || string.IsNullOrEmpty(_ghostSession.ConnectionGuid)
-            ? "12345678-1234-1234-1234-123456789abc"  // Fallback if not captured
+            ? Guid.NewGuid().ToString()              // Generate fresh fallback
             : _ghostSession.ConnectionGuid;             // Real captured GUID
 
         // CRITICAL FIX #2: Include RTA subscription object for connection validation!
@@ -1717,7 +1752,7 @@ public class ProxyService : IDisposable
         string subscriptionField = "";
         if (_ghostSession is not null && !string.IsNullOrEmpty(_ghostSession.SubscriptionId))
         {
-            var changeTypesList = string.Join("\",\"", _ghostSession.ChangeTypes);
+            var changeTypesList = string.Join("\", \"", _ghostSession.ChangeTypes);
             subscriptionField = $$"""
 ,
       "subscription": {
@@ -1790,20 +1825,24 @@ public class ProxyService : IDisposable
             // CRITICAL FIX #1: Include the ACTUAL captured connection GUID from when the player originally joined!
             // This GUID proves continuity to MPSD - it's the key validation that allows rejoin.
             // If the GUID is empty or wrong, MPSD will reject or remove the member.
-            string connectionField = string.IsNullOrEmpty(_ghostSession.ConnectionGuid)
-                ? ""
-                : $",\"connection\":\"{_ghostSession.ConnectionGuid}\"";
+
+            // Build the PUT body with connection GUID and subscription
+            string connectionGuid = _ghostSession.ConnectionGuid ?? "";
 
             // CRITICAL FIX #2: Include RTA subscription object for connection validation!
             // When the session template has connectionRequiredForActiveMembers=true,
             // MPSD validates that active members have valid RTA subscriptions.
             // Without the subscription ID, the game server's connection validation fails.
             // The subscription ID must match what was captured during the original join.
-            string subscriptionField = "";
+            string subscriptionJson = "";
             if (!string.IsNullOrEmpty(_ghostSession.SubscriptionId))
             {
-                var changeTypesList = string.Join("\",\"", _ghostSession.ChangeTypes);
-                subscriptionField = $",\"subscription\":{{\"id\":\"{_ghostSession.SubscriptionId}\",\"changeTypes\":[\"{changeTypesList}\"]}}";
+                var changeTypesList = string.Join("\", \"", _ghostSession.ChangeTypes);
+                subscriptionJson = $@",
+    ""subscription"": {{
+      ""id"": ""{_ghostSession.SubscriptionId}"",
+      ""changeTypes"": [""{changeTypesList}""]
+    }}";
             }
 
             // MPSD API: PUT /sessions/{id}/members/me expects member properties directly (no "members" wrapper)
@@ -1811,7 +1850,7 @@ public class ProxyService : IDisposable
 {
   "properties": {
     "system": {
-      "active": true{{connectionField}}{{subscriptionField}}
+      "active": true{{subscriptionJson}}
     },
     "custom": {}
   }
