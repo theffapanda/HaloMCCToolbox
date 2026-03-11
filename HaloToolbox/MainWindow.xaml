@@ -1,0 +1,1554 @@
+<Window x:Class="HaloToolbox.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:HaloToolbox"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Halo MCC Toolbox — The FFA Panda"
+        Height="860" Width="960"
+        MinHeight="700" MinWidth="800"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="CanResizeWithGrip">
+
+    <Window.Resources>
+        <!-- Scanline brush -->
+        <DrawingBrush x:Key="ScanlineBrush" TileMode="Tile"
+                      Viewport="0,0,1,4" ViewportUnits="Absolute"
+                      Viewbox="0,0,1,4"   ViewboxUnits="Absolute">
+            <DrawingBrush.Drawing>
+                <DrawingGroup>
+                    <GeometryDrawing Brush="#08000000">
+                        <GeometryDrawing.Geometry>
+                            <RectangleGeometry Rect="0,2,1,2"/>
+                        </GeometryDrawing.Geometry>
+                    </GeometryDrawing>
+                </DrawingGroup>
+            </DrawingBrush.Drawing>
+        </DrawingBrush>
+    </Window.Resources>
+
+    <!-- Outer chrome -->
+    <Border Background="{DynamicResource BgBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="4"
+            ClipToBounds="True">
+
+        <!-- Scanlines overlay -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="42"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="28"/>
+            </Grid.RowDefinitions>
+
+            <!-- ══ TITLE BAR ══ -->
+            <Border Grid.Row="0"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="0,0,0,1"
+                    MouseLeftButtonDown="TitleBar_MouseDown">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Margin="14,0">
+                        <TextBlock Text="🐼"
+                                   FontSize="18"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0"/>
+                        <TextBlock FontFamily="Consolas"
+                                   FontSize="13"
+                                   FontWeight="Bold"
+                                   VerticalAlignment="Center">
+                            <Run Foreground="{DynamicResource TextBrush}" Text="HALO MCC"/>
+                            <Run Foreground="{DynamicResource AccentBrush}" Text=" TOOLBOX"/>
+                            <Run Foreground="{DynamicResource MutedBrush}" Text="  ·  THE FFA PANDA"/>
+                        </TextBlock>
+                    </StackPanel>
+
+                    <!-- Window controls -->
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Margin="0,0,8,0">
+
+                        <!-- Theme toggle -->
+                        <Button x:Name="ThemeToggleBtn"
+                                Width="36" Height="28"
+                                FontSize="14"
+                                ToolTip="Toggle light / dark mode"
+                                Click="ThemeToggleBtn_Click">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="Cursor" Value="Hand"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#1AFFFFFF"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+
+                        <Button x:Name="MinBtn"
+                                Content="─"
+                                Width="36" Height="28"
+                                FontSize="14"
+                                Foreground="{DynamicResource MutedBrush}"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Cursor="Hand"
+                                Click="MinBtn_Click">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#1AFFFFFF"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                    <Setter Property="Cursor" Value="Hand"/>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button x:Name="CloseBtn"
+                                Content="✕"
+                                Width="36" Height="28"
+                                FontSize="12"
+                                Cursor="Hand"
+                                Click="CloseBtn_Click">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#CCFF2D55"/>
+                                                        <Setter Property="Foreground" Value="White"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                    <Setter Property="Cursor" Value="Hand"/>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ══ MAIN CONTENT ══ -->
+            <TabControl Grid.Row="1"
+                        Style="{StaticResource DarkTab}"
+                        Background="{DynamicResource BgBrush}"
+                        Margin="0">
+
+                <!-- Tab headers row -->
+                <TabControl.Template>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0"
+                                    Background="{DynamicResource SurfaceBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="0,0,0,1">
+                                <TabPanel IsItemsHost="True"
+                                          Background="Transparent"
+                                          Margin="8,0"/>
+                            </Border>
+                            <ContentPresenter Grid.Row="1"
+                                              ContentSource="SelectedContent"
+                                              Margin="0"/>
+                        </Grid>
+                    </ControlTemplate>
+                </TabControl.Template>
+
+                <!-- ═══ TAB 1: TOOLS ═══ -->
+                <TabItem Header="⚙  TOOLS" Style="{StaticResource DarkTabItem}">
+                    <!-- No outer scroll — layout fills available space, map list scrolls internally -->
+                    <Grid Margin="20,12,20,12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>  <!-- section label: Fix & Repair -->
+                            <RowDefinition Height="Auto"/>  <!-- credentials card -->
+                            <RowDefinition Height="Auto"/>  <!-- EAC card -->
+                            <RowDefinition Height="Auto"/>  <!-- Fix Rejoins card -->
+                            <RowDefinition Height="Auto"/>  <!-- section label: Map Selector -->
+                            <RowDefinition Height="Auto"/>  <!-- map header + path -->
+                            <RowDefinition Height="Auto"/>  <!-- button row -->
+                            <RowDefinition Height="*"/>     <!-- map list — fills remaining space -->
+                            <RowDefinition Height="Auto"/>  <!-- status -->
+                        </Grid.RowDefinitions>
+
+                        <!-- Section: Fix & Repair -->
+                        <TextBlock Grid.Row="0"
+                                   Text="— FIX &amp; REPAIR"
+                                   FontFamily="Consolas"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   Foreground="#00C8FF"
+                                   Margin="0,0,0,10"/>
+
+                        <!-- Clean Credentials Card -->
+                        <Border Grid.Row="1"
+                                Background="{DynamicResource PanelBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Padding="20"
+                                Margin="0,0,0,14">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="0" Opacity="0.5"/>
+                            </Border.Effect>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,20,0">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                                        <TextBlock Text="🔑 " FontSize="16" VerticalAlignment="Center"/>
+                                        <TextBlock Text="FIX LOGIN ISSUES"
+                                                   FontFamily="Consolas"
+                                                   FontSize="13"
+                                                   FontWeight="Bold"
+                                                   Foreground="White"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Deletes stored Xbox Live credentials and MCC webcache files. Run this if you're stuck on sign-in, getting auth errors, or experiencing matchmaking issues."
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               TextWrapping="Wrap"
+                                               LineHeight="18"/>
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        x:Name="BtnCleanCreds"
+                                        Content="RUN FIX"
+                                        Style="{StaticResource OrangeButton}"
+                                        Width="110"
+                                        Click="BtnCleanCreds_Click"
+                                        VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- EAC Repair Card -->
+                        <Border Grid.Row="2"
+                                Background="{DynamicResource PanelBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Padding="20"
+                                Margin="0,0,0,14">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="0" Opacity="0.5"/>
+                            </Border.Effect>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,20,0">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                                        <TextBlock Text="🛡 " FontSize="16" VerticalAlignment="Center"/>
+                                        <TextBlock Text="REPAIR EASYANTICHEAT"
+                                                   FontFamily="Consolas"
+                                                   FontSize="13"
+                                                   FontWeight="Bold"
+                                                   Foreground="White"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Launches the EasyAntiCheat setup tool and triggers a service repair. Use this if MCC is failing to launch, showing EAC errors, or getting stuck on the anti-cheat check."
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               TextWrapping="Wrap"
+                                               LineHeight="18"/>
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        x:Name="BtnRepairEAC"
+                                        Content="RUN FIX"
+                                        Style="{StaticResource OrangeButton}"
+                                        Width="110"
+                                        Click="BtnRepairEAC_Click"
+                                        VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Fix Rejoins Card -->
+                        <Border Grid.Row="3"
+                                Background="{DynamicResource PanelBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Padding="20"
+                                Margin="0,0,0,14">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="0" Opacity="0.5"/>
+                            </Border.Effect>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,20,0">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                                        <TextBlock Text="↻ " FontSize="16" VerticalAlignment="Center"/>
+                                        <TextBlock Text="FIX REJOINS"
+                                                   FontFamily="Consolas"
+                                                   FontSize="13"
+                                                   FontWeight="Bold"
+                                                   Foreground="White"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock Text="EXPERIMENTAL: Activates the network proxy to capture and display rejoin requests, team assignments, and player skill distribution. Helps debug session invites and rejoin guards. Restart MCC after starting the proxy. This may impact other applications, use at your own risk."
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               TextWrapping="Wrap"
+                                               LineHeight="18"/>
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        x:Name="BtnFixRejoins"
+                                        Content="RUN FIX"
+                                        Style="{StaticResource OrangeButton}"
+                                        Width="110"
+                                        Click="BtnFixRejoins_Click"
+                                        VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Section: Map Selector -->
+                        <TextBlock Grid.Row="4"
+                                   Text="— MAP SELECTOR"
+                                   FontFamily="Consolas"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   Foreground="#00C8FF"
+                                   Margin="0,0,0,10"/>
+
+                        <!-- Map header + path -->
+                        <StackPanel Grid.Row="5" Margin="0,0,0,10">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <TextBlock Text="🗺 " FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="HALO 3 MULTIPLAYER MAP SELECTOR"
+                                           FontFamily="Consolas"
+                                           FontSize="13"
+                                           FontWeight="Bold"
+                                           Foreground="White"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Only Halo 3 maps can be removed without getting kicked. Unchecked maps are renamed with REMOVED_ so MCC ignores them. Click any row to toggle."
+                                       FontFamily="Consolas"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       TextWrapping="Wrap"
+                                       LineHeight="17"
+                                       Margin="0,0,0,10"/>
+                            <!-- Path picker -->
+                            <TextBlock Text="MCC INSTALLATION PATH"
+                                       FontFamily="Consolas"
+                                       FontSize="10"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       Margin="0,0,0,5"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="TxtMccPath"
+                                         Style="{StaticResource DarkTextBox}"
+                                         Grid.Column="0"
+                                         Margin="0,0,8,0"
+                                         Text="C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection"/>
+                                <Button Content="BROWSE"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Grid.Column="1"
+                                        Click="BtnBrowse_Click"
+                                        Padding="12,6"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- All action buttons in one row -->
+                        <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="⟳  LOAD MAPS"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Click="BtnLoadMaps_Click"
+                                    Margin="0,0,8,0"/>
+                            <Button Content="✓  ENABLE ALL"
+                                    Style="{StaticResource GreenButton}"
+                                    Click="BtnEnableAll_Click"
+                                    Margin="0,0,8,0"/>
+                            <Button Content="✕  DISABLE ALL"
+                                    Style="{StaticResource RedButton}"
+                                    Click="BtnDisableAll_Click"
+                                    Margin="0,0,8,0"/>
+                            <Button Content="🚫  DISABLE 343 MAPS"
+                                    Style="{StaticResource RedButton}"
+                                    Click="BtnDisable343_Click"
+                                    Padding="12,8"
+                                    FontSize="11"
+                                    Margin="0,0,8,0"/>
+                            <Button Content="💾  APPLY"
+                                    Style="{StaticResource OrangeButton}"
+                                    Click="BtnApplyMaps_Click"/>
+                        </StackPanel>
+
+                        <!-- Map list — fills all remaining vertical space -->
+                        <Border Grid.Row="7"
+                                Background="{DynamicResource SurfaceBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          Style="{StaticResource FlatScrollViewer}"
+                                          Padding="0,0">
+                                <ItemsControl x:Name="MapList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <!-- Header row (section divider) -->
+                                            <Border x:Name="RowBd"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="0,0,0,1"
+                                                    Padding="14,10"
+                                                    MouseLeftButtonUp="MapRow_Click">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="Transparent"/>
+                                                        <Setter Property="Cursor" Value="Hand"/>
+                                                        <Style.Triggers>
+                                                            <!-- Header rows: not clickable, distinct style -->
+                                                            <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                                                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+                                                                <Setter Property="Cursor" Value="Arrow"/>
+                                                                <Setter Property="Padding" Value="14,12"/>
+                                                            </DataTrigger>
+                                                            <MultiDataTrigger>
+                                                                <MultiDataTrigger.Conditions>
+                                                                    <Condition Binding="{Binding IsHeader}" Value="False"/>
+                                                                    <Condition Binding="{Binding RelativeSource={RelativeSource AncestorType=Border}, Path=IsMouseOver}" Value="True"/>
+                                                                </MultiDataTrigger.Conditions>
+                                                                <Setter Property="Background" Value="#0D1820"/>
+                                                            </MultiDataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+
+                                                <Grid>
+                                                    <!-- HEADER DISPLAY -->
+                                                    <TextBlock Text="{Binding DisplayName}"
+                                                               FontFamily="Consolas"
+                                                               FontSize="11"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FF6A00"
+                                                               VerticalAlignment="Center">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+
+                                                    <!-- MAP ROW DISPLAY -->
+                                                    <Grid>
+                                                        <Grid.Style>
+                                                            <Style TargetType="Grid">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Grid.Style>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <!-- Checkbox indicator -->
+                                                        <Border Grid.Column="0"
+                                                                Width="20" Height="20"
+                                                                VerticalAlignment="Center"
+                                                                Margin="0,0,12,0"
+                                                                CornerRadius="2">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource MutedBrush}"/>
+                                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                                    <Setter Property="Background" Value="Transparent"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsEnabled}" Value="True">
+                                                                            <Setter Property="BorderBrush" Value="#39FF14"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock Text="✓"
+                                                                       FontSize="13"
+                                                                       FontWeight="Bold"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#39FF14"/>
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsEnabled}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                        </Border>
+
+                                                        <!-- Map name — modded maps shown in orange -->
+                                                        <TextBlock Grid.Column="1"
+                                                                   Text="{Binding DisplayName}"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="14"
+                                                                   VerticalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsEnabled}" Value="False">
+                                                                            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding IsModded}" Value="True">
+                                                                            <Setter Property="Foreground" Value="#CC8833"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+
+                                                        <!-- Right-side badges -->
+                                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <!-- MOD badge -->
+                                                            <Border Background="#1A331A00"
+                                                                    BorderBrush="#CC8833"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="2"
+                                                                    Padding="5,2"
+                                                                    Margin="6,0,0,0">
+                                                                <Border.Style>
+                                                                    <Style TargetType="Border">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsModded}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
+                                                                <TextBlock Text="MOD"
+                                                                           FontFamily="Consolas"
+                                                                           FontSize="9"
+                                                                           FontWeight="Bold"
+                                                                           Foreground="#CC8833"/>
+                                                            </Border>
+
+                                                            <!-- REMOVED badge -->
+                                                            <TextBlock Text="REMOVED"
+                                                                       FontFamily="Consolas"
+                                                                       FontSize="10"
+                                                                       FontWeight="Bold"
+                                                                       Foreground="#FF2D55"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="8,0,0,0">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsEnabled}" Value="False">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Border>
+
+                        <!-- Status -->
+                        <TextBlock Grid.Row="8"
+                                   x:Name="TxtMapStatus"
+                                   FontFamily="Consolas"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   Margin="0,8,0,0"
+                                   Text="No maps loaded. Set your MCC path and click LOAD MAPS."/>
+                    </Grid>
+                </TabItem>
+
+                <!-- ═══ TAB 2: LOG ═══ -->
+                <!-- ═══ TAB 3: REPORT CHEATER ═══ -->
+                <TabItem Header="🚨  REPORT" Style="{StaticResource DarkTabItem}">
+                    <Grid Margin="20,12,20,12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>  <!-- header / load button -->
+                            <RowDefinition Height="Auto"/>  <!-- game info bar -->
+                            <RowDefinition Height="*"/>     <!-- scoreboard -->
+                            <RowDefinition Height="Auto"/>  <!-- form -->
+                            <RowDefinition Height="Auto"/>  <!-- export button -->
+                        </Grid.RowDefinitions>
+
+                        <!-- Header row -->
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                                    <TextBlock Text="🚨 " FontSize="16" VerticalAlignment="Center"/>
+                                    <TextBlock Text="REPORT A CHEATER"
+                                               FontFamily="Consolas" FontSize="13" FontWeight="Bold"
+                                               Foreground="White" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Text="Loads the last game's carnage report, lets you select the cheating player, and bundles everything into a ZIP with your theater evidence."
+                                           FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}"
+                                           TextWrapping="Wrap" LineHeight="17"/>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    x:Name="BtnLoadCarnage"
+                                    Content="⟳  LOAD LAST GAME"
+                                    Style="{StaticResource PrimaryButton}"
+                                    VerticalAlignment="Center"
+                                    Click="BtnLoadCarnage_Click"/>
+                        </Grid>
+
+                        <!-- Game info bar -->
+                        <Border Grid.Row="1"
+                                x:Name="GameInfoBar"
+                                Background="{DynamicResource PanelBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="14,8"
+                                Margin="0,0,0,8"
+                                Visibility="Collapsed">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="GAME TYPE  " FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="TxtGameMap" FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="#00C8FF" VerticalAlignment="Center"/>
+                                    <TextBlock Text="   ·   " FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource BorderBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="MAP  " FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="TxtGameMode" FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="20,0,0,0">
+                                    <TextBlock Text="DATE  " FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="TxtGameDate" FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Grid.Column="2"
+                                           x:Name="TxtCarnageFile"
+                                           FontFamily="Consolas" FontSize="9"
+                                           Foreground="{DynamicResource SubtleBrush}" VerticalAlignment="Center"
+                                           Margin="20,0,0,0"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Scoreboard -->
+                        <Border Grid.Row="2"
+                                Background="{DynamicResource SurfaceBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/> <!-- column headers -->
+                                    <RowDefinition Height="*"/>    <!-- player rows -->
+                                </Grid.RowDefinitions>
+
+                                <!-- Column headers -->
+                                <Border Grid.Row="0"
+                                        Background="{DynamicResource BgBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="0,0,0,1"
+                                        Padding="14,7">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="28"/>   <!-- select indicator -->
+                                            <ColumnDefinition Width="*"/>    <!-- gamertag -->
+                                            <ColumnDefinition Width="55"/>   <!-- score -->
+                                            <ColumnDefinition Width="55"/>   <!-- kills -->
+                                            <ColumnDefinition Width="55"/>   <!-- deaths -->
+                                            <ColumnDefinition Width="55"/>   <!-- assists -->
+                                            <ColumnDefinition Width="40"/>   <!-- team -->
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"/>
+                                        <TextBlock Grid.Column="1" Text="GAMERTAG" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}"/>
+                                        <TextBlock Grid.Column="2" Text="SCORE" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/>
+                                        <TextBlock Grid.Column="3" Text="KILLS" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/>
+                                        <TextBlock Grid.Column="4" Text="DEATHS" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/>
+                                        <TextBlock Grid.Column="5" Text="ASSISTS" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/>
+                                        <TextBlock Grid.Column="6" Text="TEAM" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Player rows -->
+                                <ScrollViewer Grid.Row="1"
+                                              VerticalScrollBarVisibility="Auto"
+                                              Style="{StaticResource FlatScrollViewer}">
+                                    <ItemsControl x:Name="ScoreboardList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="0,0,0,1"
+                                                        Padding="14,9"
+                                                        Cursor="Hand"
+                                                        MouseLeftButtonUp="ScoreboardRow_Click">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Background" Value="Transparent"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                    <Setter Property="Background" Value="#1A0000"/>
+                                                                </DataTrigger>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter Property="Background" Value="#0D1820"/>
+                                                                </Trigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="28"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="55"/>
+                                                            <ColumnDefinition Width="55"/>
+                                                            <ColumnDefinition Width="55"/>
+                                                            <ColumnDefinition Width="55"/>
+                                                            <ColumnDefinition Width="40"/>
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <!-- Selected indicator -->
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="▶"
+                                                                   FontSize="11"
+                                                                   Foreground="#FF2D55"
+                                                                   VerticalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+
+                                                        <!-- Gamertag -->
+                                                        <TextBlock Grid.Column="1"
+                                                                   Text="{Binding Gamertag}"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="13"
+                                                                   VerticalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                            <Setter Property="Foreground" Value="#FF2D55"/>
+                                                                            <Setter Property="FontWeight" Value="Bold"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+
+                                                        <!-- Stats columns -->
+                                                        <TextBlock Grid.Column="2" Text="{Binding Score}"   FontFamily="Consolas" FontSize="13" Foreground="#FFD700" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        <TextBlock Grid.Column="3" Text="{Binding Kills}"   FontFamily="Consolas" FontSize="13" Foreground="#39FF14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        <TextBlock Grid.Column="4" Text="{Binding Deaths}"  FontFamily="Consolas" FontSize="13" Foreground="#FF2D55" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        <TextBlock Grid.Column="5" Text="{Binding Assists}" FontFamily="Consolas" FontSize="13" Foreground="#00C8FF" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        <TextBlock Grid.Column="6" Text="{Binding Team}"    FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Grid>
+                        </Border>
+
+                        <!-- Report form -->
+                        <Border Grid.Row="3"
+                                Background="{DynamicResource PanelBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="16,12"
+                                Margin="0,8,0,8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="16"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>  <!-- row 0: reported player + game title -->
+                                    <RowDefinition Height="Auto"/>  <!-- row 1: cheat type + map -->
+                                    <RowDefinition Height="Auto"/>  <!-- row 2: theater (hidden for CE/H2) -->
+                                    <RowDefinition Height="Auto"/>  <!-- row 3: additional notes -->
+                                </Grid.RowDefinitions>
+
+                                <!-- Reported player display -->
+                                <StackPanel Grid.Column="0" Grid.Row="0" Margin="0,0,0,10">
+                                    <TextBlock Text="REPORTED PLAYER" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock x:Name="TxtSelectedPlayer"
+                                               Text="Click a player on the scoreboard above"
+                                               FontFamily="Consolas" FontSize="13"
+                                               Foreground="{DynamicResource MutedBrush}"/>
+                                </StackPanel>
+
+                                <!-- Game title selector -->
+                                <StackPanel Grid.Column="2" Grid.Row="0" Margin="0,0,0,10">
+                                    <TextBlock Text="GAME TITLE" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="CboGameTitle"
+                                              Style="{StaticResource DarkCombo}"
+                                              FontFamily="Consolas"
+                                              FontSize="12"
+                                              SelectedIndex="3"
+                                              SelectionChanged="CboGameTitle_SelectionChanged">
+                                        <ComboBoxItem Content="Halo CE"/>
+                                        <ComboBoxItem Content="Halo 2"/>
+                                        <ComboBoxItem Content="Halo 2 Anniversary"/>
+                                        <ComboBoxItem Content="Halo 3"/>
+                                        <ComboBoxItem Content="Halo Reach"/>
+                                        <ComboBoxItem Content="Halo 4"/>
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <!-- Cheat type -->
+                                <StackPanel Grid.Column="0" Grid.Row="1" Margin="0,0,0,10">
+                                    <TextBlock Text="CHEAT TYPE" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="CboCheatType"
+                                              Style="{StaticResource DarkCombo}"
+                                              FontFamily="Consolas"
+                                              FontSize="12">
+                                        <ComboBoxItem Content="Aimbot / Auto-aim"/>
+                                        <ComboBoxItem Content="Wall hacks / ESP"/>
+                                        <ComboBoxItem Content="Speed / movement hacks"/>
+                                        <ComboBoxItem Content="God mode / invincibility"/>
+                                        <ComboBoxItem Content="Map exploits / out of bounds"/>
+                                        <ComboBoxItem Content="Score / stat manipulation"/>
+                                        <ComboBoxItem Content="Host manipulation / lag switching"/>
+                                        <ComboBoxItem Content="Other (see description)"/>
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <!-- Map played (filtered by selected game) -->
+                                <StackPanel Grid.Column="2" Grid.Row="1" Margin="0,0,0,10">
+                                    <TextBlock Text="MAP PLAYED ON" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="CboReportMap"
+                                              Style="{StaticResource DarkCombo}"
+                                              FontFamily="Consolas"
+                                              FontSize="12"/>
+                                </StackPanel>
+
+                                <!-- Theater file count — hidden for CE and H2 (no Film mode) -->
+                                <StackPanel x:Name="TheaterPanel"
+                                            Grid.Column="0" Grid.ColumnSpan="3" Grid.Row="2"
+                                            Margin="0,0,0,10">
+                                    <TextBlock Text="THEATER FILES FOUND" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock x:Name="TxtTheaterCount"
+                                               Text="— select a map first —"
+                                               FontFamily="Consolas" FontSize="12"
+                                               Foreground="{DynamicResource MutedBrush}"/>
+                                </StackPanel>
+
+                                <!-- Additional notes — spans full width -->
+                                <StackPanel Grid.Column="0" Grid.ColumnSpan="3" Grid.Row="3">
+                                    <TextBlock Text="ADDITIONAL NOTES" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="TxtReportNotes"
+                                             Style="{StaticResource DarkTextBox}"
+                                             FontFamily="Consolas"
+                                             FontSize="12"
+                                             Height="56"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"
+                                             Text=""
+                                             ToolTip="Describe what you saw. Timestamps, weapon used, anything unusual."/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Export button row -->
+                        <Grid Grid.Row="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="TxtReportStatus"
+                                       FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}"
+                                       VerticalAlignment="Center"
+                                       Text="Load a game, select the cheating player, fill in the form, then export."/>
+                            <Button Grid.Column="1"
+                                    x:Name="BtnBuildReport"
+                                    Content="📦  BUILD REPORT ZIP"
+                                    Style="{StaticResource OrangeButton}"
+                                    Click="BtnBuildReport_Click"
+                                    Padding="18,10"
+                                    FontSize="12"/>
+                            <!-- Support button + live session indicator -->
+                            <StackPanel Grid.Column="3" HorizontalAlignment="Right">
+                                <Button x:Name="BtnSubmitHalo"
+                                        Content="🌐  OPEN HALO SUPPORT"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Click="BtnSubmitHalo_Click"
+                                        Padding="18,10"
+                                        FontSize="12"
+                                        ToolTip="Opens the Halo Support ticket form pre-filled with all report details. Sign in, attach your ZIP, and click Submit."/>
+                                <!-- Session status pill — updated by CheckSupportSessionAsync -->
+                                <TextBlock x:Name="TxtSupportSessionStatus"
+                                           FontFamily="Consolas"
+                                           FontSize="10"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,4,0,0"
+                                           Text="● checking session…"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           ToolTip="Indicates whether a Halo Support / Microsoft Account session is stored locally. Green = already logged in. Red = will need to log in."/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </TabItem>
+
+                <!-- ═══ TAB 3: STATS ═══ -->
+                <TabItem Header="📊  STATS" Style="{StaticResource DarkTabItem}">
+                    <TabItem.Resources>
+                        <!-- ListView implicit styles scoped to this tab only -->
+                        <Style TargetType="ListView">
+                            <Setter Property="Background"      Value="Transparent"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Foreground"      Value="{DynamicResource TextBrush}"/>
+                        </Style>
+                        <Style TargetType="GridViewColumnHeader">
+                            <Setter Property="Background"                  Value="{DynamicResource SurfaceBrush}"/>
+                            <Setter Property="Foreground"                  Value="{DynamicResource MutedBrush}"/>
+                            <Setter Property="BorderBrush"                 Value="{DynamicResource BorderBrush}"/>
+                            <Setter Property="BorderThickness"             Value="0,0,0,1"/>
+                            <Setter Property="Padding"                     Value="8,5"/>
+                            <Setter Property="FontFamily"                  Value="Consolas"/>
+                            <Setter Property="FontSize"                    Value="11"/>
+                            <Setter Property="FontWeight"                  Value="SemiBold"/>
+                            <Setter Property="HorizontalContentAlignment"  Value="Left"/>
+                        </Style>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding"  Value="0"/>
+                            <Setter Property="Margin"   Value="0"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListViewItem">
+                                        <Border x:Name="Bd"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="0,0,0,1"
+                                                Padding="0">
+                                            <GridViewRowPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource StatsHoverRowBrush}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsMe}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource StatsMyRowBrush}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsScanning}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource StatsScanRowBrush}"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Team}" Value="0">
+                                    <Setter Property="Background" Value="{DynamicResource StatsTeam0RowBrush}"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Team}" Value="1">
+                                    <Setter Property="Background" Value="{DynamicResource StatsTeam1RowBrush}"/>
+                                </DataTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsMe}" Value="True"/>
+                                        <Condition Binding="{Binding Team}" Value="0"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Background" Value="{DynamicResource StatsMyRowBrush}"/>
+                                </MultiDataTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsMe}" Value="True"/>
+                                        <Condition Binding="{Binding Team}" Value="1"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Background" Value="{DynamicResource StatsMyRowBrush}"/>
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                        <!-- Toggle button for Auto-Lobby -->
+                        <Style x:Key="StatsToggleBtn" TargetType="ToggleButton">
+                            <Setter Property="Background"      Value="Transparent"/>
+                            <Setter Property="Foreground"      Value="{DynamicResource MutedBrush}"/>
+                            <Setter Property="BorderBrush"     Value="{DynamicResource BorderBrush}"/>
+                            <Setter Property="BorderThickness" Value="1"/>
+                            <Setter Property="Padding"         Value="10,6"/>
+                            <Setter Property="FontFamily"      Value="Consolas"/>
+                            <Setter Property="FontSize"        Value="12"/>
+                            <Setter Property="Cursor"          Value="Hand"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Bd"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="2"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Bd" Property="Background"  Value="{DynamicResource StatsMyRowBrush}"/>
+                                                <Setter TargetName="Bd" Property="BorderBrush" Value="#39FF14"/>
+                                                <Setter Property="Foreground" Value="#39FF14"/>
+                                            </Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="BorderBrush" Value="#00C8FF"/>
+                                            </Trigger>
+                                            <Trigger Property="IsEnabled" Value="False">
+                                                <Setter Property="Opacity" Value="0.4"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </TabItem.Resources>
+
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/> <!-- 0: Gamertag input -->
+                            <RowDefinition Height="Auto"/> <!-- 1: Stats bar -->
+                            <RowDefinition Height="Auto"/> <!-- 2: Buttons -->
+                            <RowDefinition Height="Auto"/> <!-- 3: Team summary -->
+                            <RowDefinition Height="*"/>    <!-- 4: Lobby list -->
+                            <RowDefinition Height="Auto"/> <!-- 5: Status bar -->
+                        </Grid.RowDefinitions>
+
+                        <!-- ── Row 0: Gamertag input ──────────────────────────────────── -->
+                        <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,0,0,1" Padding="14,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0" Text="GAMERTAG"
+                                           FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"
+                                           Margin="0,0,10,0"/>
+
+                                <TextBox x:Name="StatsGamertagBox"
+                                         Grid.Column="1"
+                                         Style="{StaticResource DarkTextBox}"
+                                         FontSize="13" FontWeight="SemiBold"
+                                         KeyDown="StatsGamertagBox_KeyDown"/>
+
+                                <Button x:Name="StatsApplyBtn"
+                                        Grid.Column="2"
+                                        Content="APPLY"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Margin="8,0,0,0"
+                                        Click="StatsApplyBtn_Click"/>
+
+                                <TextBlock x:Name="StatsHwStatusLabel"
+                                           Grid.Column="3"
+                                           Text="HW: —"
+                                           FontFamily="Consolas" FontSize="11"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           VerticalAlignment="Center"
+                                           Margin="14,0,8,0"/>
+
+                                <Button x:Name="StatsSyncBtn"
+                                        Grid.Column="4"
+                                        Content="↻ SYNC"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Click="StatsSyncBtn_Click"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- ── Row 1: Stats summary bar ───────────────────────────────── -->
+                        <Border Grid.Row="1" Background="{DynamicResource BgBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,0,0,1" Padding="14,8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Lifetime K/D -->
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="LIFETIME" FontFamily="Consolas" FontSize="10"
+                                               FontWeight="SemiBold" Foreground="{DynamicResource MutedBrush}"
+                                               VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <TextBlock Text="K/D " FontFamily="Consolas" FontSize="12"
+                                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsLifetimeKdLabel" Text="—"
+                                               FontFamily="Consolas" FontSize="20" FontWeight="Bold"
+                                               Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"
+                                               Margin="0,0,16,0"/>
+                                    <TextBlock x:Name="StatsLifetimeTotalsLabel" Text=""
+                                               FontFamily="Consolas" FontSize="12"
+                                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                                    <Button x:Name="BtnStatsMyHistory"
+                                            Content="📋 MATCH HISTORY"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Padding="8,3" FontSize="11"
+                                            Margin="16,0,0,0" VerticalAlignment="Center"
+                                            Click="BtnStatsMyHistory_Click"/>
+                                </StackPanel>
+
+                                <!-- Session stats -->
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,14,0">
+                                    <TextBlock Text="SESSION" FontFamily="Consolas" FontSize="10"
+                                               FontWeight="SemiBold" Foreground="{DynamicResource MutedBrush}"
+                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock x:Name="StatsWinsLabel" Text="0W"
+                                               FontFamily="Consolas" FontSize="16" FontWeight="Bold"
+                                               Foreground="#39FF14" VerticalAlignment="Center"/>
+                                    <TextBlock Text=" – " FontFamily="Consolas" FontSize="16"
+                                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsLossesLabel" Text="0L"
+                                               FontFamily="Consolas" FontSize="16" FontWeight="Bold"
+                                               Foreground="#FF2D55" VerticalAlignment="Center"/>
+                                    <TextBlock Text="  ·  " FontFamily="Consolas" FontSize="14"
+                                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="K/D " FontFamily="Consolas" FontSize="12"
+                                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsSessionKdLabel" Text="—"
+                                               FontFamily="Consolas" FontSize="16" FontWeight="Bold"
+                                               Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                </StackPanel>
+
+                                <TextBlock x:Name="StatsGamesLabel" Grid.Column="2"
+                                           Text="0 games"
+                                           FontFamily="Consolas" FontSize="11"
+                                           Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- ── Row 2: Action buttons ──────────────────────────────────── -->
+                        <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,0,0,1" Padding="14,8">
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="StatsResetBtn"
+                                        Content="⟳ RESET SESSION"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Margin="0,0,6,0"
+                                        Click="StatsResetBtn_Click"/>
+                                <Button x:Name="StatsLastGameBtn"
+                                        Content="↺ LAST GAME"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Margin="0,0,6,0"
+                                        Click="StatsLastGameBtn_Click"/>
+                                <Button x:Name="StatsScanBtn"
+                                        Content="▶ SCAN LOBBY"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Margin="0,0,6,0"
+                                        Click="StatsScanBtn_Click"/>
+                                <ToggleButton x:Name="StatsAutoToggle"
+                                              Content="AUTO: OFF"
+                                              Style="{StaticResource StatsToggleBtn}"
+                                              Margin="0,0,6,0"
+                                              Checked="StatsAutoToggle_Checked"
+                                              Unchecked="StatsAutoToggle_Unchecked"/>
+                                <Button x:Name="StatsHwAuthBtn"
+                                        Content="🔑 HW AUTH"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Click="StatsHwAuthBtn_Click"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ── Row 3: Team summary bar (hidden until team game detected) ── -->
+                        <Border x:Name="StatsTeamSummaryBar"
+                                Grid.Row="3"
+                                Background="{DynamicResource BgBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="16,10"
+                                Visibility="Collapsed">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Team 0 (Red) -->
+                                <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                    <TextBlock x:Name="StatsTeam0Label" Text="TEAM 0"
+                                               FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="#FF4444" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsTeam0AvgLabel" Text="—"
+                                               FontFamily="Consolas" FontSize="22" FontWeight="Bold"
+                                               Foreground="#FF4444" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsTeam0GamesLabel" Text=""
+                                               FontFamily="Consolas" FontSize="10"
+                                               Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsTeam0FavoredLabel" Text=""
+                                               FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                                               Foreground="#39FF14" HorizontalAlignment="Center"/>
+                                </StackPanel>
+
+                                <TextBlock Grid.Column="1" Text="vs"
+                                           FontFamily="Consolas" FontSize="14"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           VerticalAlignment="Center" Margin="24,0"/>
+
+                                <!-- Team 1 (Blue) -->
+                                <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                                    <TextBlock x:Name="StatsTeam1Label" Text="TEAM 1"
+                                               FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="#4499FF" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsTeam1AvgLabel" Text="—"
+                                               FontFamily="Consolas" FontSize="22" FontWeight="Bold"
+                                               Foreground="#4499FF" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsTeam1GamesLabel" Text=""
+                                               FontFamily="Consolas" FontSize="10"
+                                               Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsTeam1FavoredLabel" Text=""
+                                               FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                                               Foreground="#39FF14" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- ── Row 4: Lobby ListView ──────────────────────────────────── -->
+                        <ListView x:Name="StatsLobbyList"
+                                  Grid.Row="4"
+                                  SelectionMode="Single"
+                                  MouseDoubleClick="StatsLobbyList_MouseDoubleClick">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="PLAYER" Width="200">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock FontFamily="Consolas" Padding="6,5">
+                                                    <Hyperlink NavigateUri="{Binding WortUrl}"
+                                                               Foreground="{Binding GamertagColor}"
+                                                               TextDecorations="None"
+                                                               RequestNavigate="StatsHyperlink_RequestNavigate">
+                                                        <Run Text="{Binding Gamertag, Mode=OneWay}"/>
+                                                    </Hyperlink>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+
+                                    <GridViewColumn Header="K/D" Width="70">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding KD}"
+                                                           Foreground="{Binding KdColor}"
+                                                           FontFamily="Consolas" FontWeight="SemiBold"
+                                                           Padding="6,5" HorizontalAlignment="Center"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+
+                                    <GridViewColumn Header="KILLS / DEATHS" Width="145">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Totals}"
+                                                           Foreground="{DynamicResource MutedBrush}"
+                                                           FontFamily="Consolas"
+                                                           Padding="6,5"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+
+                                    <GridViewColumn Header="GAMES" Width="80">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding GamesPlayed}"
+                                                           Foreground="{DynamicResource MutedBrush}"
+                                                           FontFamily="Consolas"
+                                                           Padding="6,5" HorizontalAlignment="Right"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+
+                                    <GridViewColumn Header="TEAM" Width="60">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding TeamLabel}"
+                                                           Foreground="{DynamicResource MutedBrush}"
+                                                           FontFamily="Consolas"
+                                                           Padding="6,5" HorizontalAlignment="Center"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+
+                                    <GridViewColumn Header="RECENT (100G)" Width="145">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="6,3">
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding RecentKD}"
+                                                                       Foreground="{Binding RecentKdColor}"
+                                                                       FontFamily="Consolas"
+                                                                       FontSize="12" FontWeight="SemiBold"/>
+                                                            <TextBlock Text="{Binding RecentTrend}"
+                                                                       Foreground="{Binding TrendColor}"
+                                                                       FontFamily="Consolas"
+                                                                       FontSize="11" Margin="4,0,0,1"
+                                                                       VerticalAlignment="Bottom"/>
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding ReturnGapText}"
+                                                                   Foreground="#FF6A00"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="9"
+                                                                   Visibility="{Binding ReturnGapVisibility}"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+
+                        <!-- ── Row 5: Status bar ──────────────────────────────────────── -->
+                        <Border Grid.Row="5" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,1,0,0" Padding="14,6">
+                            <TextBlock x:Name="StatsStatusLabel"
+                                       FontFamily="Consolas" FontSize="11"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       TextTrimming="CharacterEllipsis"
+                                       Text="Ready — enter your gamertag and click APPLY."/>
+                        </Border>
+                    </Grid>
+                </TabItem>
+
+                <!-- ═══ TAB 4: SCANNER ═══ -->
+                <TabItem Header="🔍  SCANNER" Style="{StaticResource DarkTabItem}">
+                    <local:Scanner x:Name="ScannerTab" />
+                </TabItem>
+
+                <!-- ═══ TAB 5: ABOUT ═══ -->
+                <TabItem Header="ℹ  ABOUT" Style="{StaticResource DarkTabItem}">
+                    <Grid>
+                        <StackPanel VerticalAlignment="Center"
+                                    HorizontalAlignment="Center"
+                                    MaxWidth="420">
+                            <TextBlock Text="🐼"
+                                       FontSize="64"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,16"/>
+                            <TextBlock FontFamily="Consolas"
+                                       FontSize="22"
+                                       FontWeight="Bold"
+                                       Foreground="White"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,4">
+                                <Run Text="HALO MCC "/>
+                                <Run Foreground="#00C8FF" Text="TOOLBOX"/>
+                            </TextBlock>
+                            <TextBlock Text="by The FFA Panda"
+                                       FontFamily="Consolas"
+                                       FontSize="13"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,28"/>
+
+                            <Border Background="{DynamicResource PanelBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="20"
+                                    Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="FEATURES"
+                                               FontFamily="Consolas" FontSize="10"
+                                               Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10"/>
+                                    <TextBlock FontFamily="Consolas" FontSize="12"
+                                               Foreground="{DynamicResource TextBrush}" LineHeight="22"
+                                               TextWrapping="Wrap">
+                                        <Run Text="• "/>
+                                        <Run Foreground="{DynamicResource AccentBrush}" Text="XBL Credential Cleaner"/>
+                                        <Run Text=" — Clears stored credentials &amp; webcache&#x0a;"/>
+                                        <Run Text="• "/>
+                                        <Run Foreground="{DynamicResource AccentBrush}" Text="H3 Map Selector"/>
+                                        <Run Text=" — Enable/disable maps by renaming them with REMOVED_ prefix so MCC skips them in matchmaking&#x0a;"/>
+                                        <Run Text="• "/>
+                                        <Run Foreground="{DynamicResource AccentBrush}" Text="Cheater Report"/>
+                                        <Run Text=" — Load a carnage report XML, review the scoreboard, build a ZIP evidence package with theater files, and submit directly to Halo Support&#x0a;"/>
+                                        <Run Text="• "/>
+                                        <Run Foreground="{DynamicResource AccentBrush}" Text="Live Stats"/>
+                                        <Run Text=" — Real-time lobby scanner that shows K/D, win rate, and recent form for every player in your game; tracks session W/L and supports Halo Waypoint authentication for full stats&#x0a;"/>
+                                        <Run Text="• "/>
+                                        <Run Foreground="{DynamicResource AccentBrush}" Text="Threat Scanner"/>
+                                        <Run Text=" — Quick lobby threat analysis tool that fetches player stats and calculates team threat verdict based on average K/D ratio"/>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{DynamicResource PanelBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="20">
+                                <TextBlock FontFamily="Consolas" FontSize="11"
+                                           Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
+                                           LineHeight="18"
+                                           Text="Only Halo 3 maps can be safely removed from matchmaking rotation without getting kicked. Removing maps for other games may result in disconnects."/>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </TabItem>
+
+                <!-- ═══ TAB 6: LOG ═══ -->
+                <TabItem Header="📋  LOG" Style="{StaticResource DarkTabItem}">
+                    <Grid Margin="20">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0"
+                                Background="{DynamicResource SurfaceBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2">
+                            <ScrollViewer x:Name="LogScroller"
+                                          VerticalScrollBarVisibility="Auto"
+                                          Style="{StaticResource FlatScrollViewer}"
+                                          Padding="14,10">
+                                <TextBlock x:Name="TxtLog"
+                                           FontFamily="Consolas"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextBrush}"
+                                           TextWrapping="Wrap"
+                                           LineHeight="20"/>
+                            </ScrollViewer>
+                        </Border>
+
+                        <Button Grid.Row="1"
+                                Content="CLEAR LOG"
+                                Style="{StaticResource PrimaryButton}"
+                                HorizontalAlignment="Right"
+                                Margin="0,10,0,0"
+                                Click="BtnClearLog_Click"/>
+                    </Grid>
+                </TabItem>
+
+            </TabControl>
+
+            <!-- ══ STATUS BAR ══ -->
+            <Border Grid.Row="2"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="0,1,0,0">
+                <Grid Margin="14,0">
+                    <TextBlock x:Name="TxtStatus"
+                               FontFamily="Consolas"
+                               FontSize="11"
+                               Foreground="{DynamicResource MutedBrush}"
+                               VerticalAlignment="Center"
+                               Text="Ready."/>
+                    <TextBlock Text="The FFA Panda  ·  Halo MCC Toolbox"
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               Foreground="{DynamicResource SubtleBrush}"
+                               HorizontalAlignment="Right"
+                               VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- Hidden WebView2 — shares the persistent cookie environment with HaloReportWindow.
+                 Used only for CheckSupportSessionAsync(); never navigated or rendered. -->
+            <wv2:WebView2 x:Name="HiddenCookieChecker"
+                          Grid.RowSpan="3"
+                          Width="0" Height="0"
+                          IsHitTestVisible="False"
+                          Focusable="False"/>
+
+            <!-- Scanline overlay -->
+            <Rectangle Grid.RowSpan="3"
+                       Fill="{StaticResource ScanlineBrush}"
+                       IsHitTestVisible="False"
+                       Opacity="0.4"/>
+        </Grid>
+    </Border>
+</Window>
