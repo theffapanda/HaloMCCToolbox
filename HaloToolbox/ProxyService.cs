@@ -678,9 +678,12 @@ public class ProxyService : IDisposable
 
             if (string.IsNullOrEmpty(scid) || string.IsNullOrEmpty(sessionName)) return;
 
-            // Extract connection GUID from request body if present
-            // Format: {"members":{"me":{"properties":{"system":{"active":true,"connection":"<GUID>"}}}}}
+            // Extract connection GUID and RTA subscription from request body if present
+            // Format: {"members":{"me":{"properties":{"system":{"active":true,"connection":"<GUID>","subscription":{"id":"<ID>","changeTypes":["everything"]}}}}}}
             string connectionGuid = "";
+            string subscriptionId = "";
+            var changeTypes = new List<string> { "everything" };
+
             if (!string.IsNullOrEmpty(requestBody))
             {
                 try
@@ -690,16 +693,39 @@ public class ProxyService : IDisposable
                     if (root.TryGetProperty("members", out var members) &&
                         members.TryGetProperty("me", out var me) &&
                         me.TryGetProperty("properties", out var props) &&
-                        props.TryGetProperty("system", out var sys) &&
-                        sys.TryGetProperty("connection", out var conn))
+                        props.TryGetProperty("system", out var sys))
                     {
-                        connectionGuid = conn.GetString() ?? "";
-                        Debug.WriteLine($"[SAVE-Match] Captured connection GUID: {connectionGuid}");
+                        // Extract connection GUID
+                        if (sys.TryGetProperty("connection", out var conn))
+                        {
+                            connectionGuid = conn.GetString() ?? "";
+                            Debug.WriteLine($"[SAVE-Match] Captured connection GUID: {connectionGuid}");
+                        }
+
+                        // Extract RTA subscription (CRITICAL FIX: Required for connection validation)
+                        if (sys.TryGetProperty("subscription", out var sub) &&
+                            sub.TryGetProperty("id", out var subId))
+                        {
+                            subscriptionId = subId.GetString() ?? "";
+                            Debug.WriteLine($"[SAVE-Match] Captured subscription ID: {subscriptionId}");
+
+                            // Extract changeTypes array
+                            if (sub.TryGetProperty("changeTypes", out var changes))
+                            {
+                                changeTypes.Clear();
+                                foreach (var item in changes.EnumerateArray())
+                                {
+                                    if (item.ValueKind == JsonValueKind.String)
+                                        changeTypes.Add(item.GetString() ?? "");
+                                }
+                                Debug.WriteLine($"[SAVE-Match] Captured changeTypes: {string.Join(",", changeTypes)}");
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[SAVE-Match] Failed to extract connection GUID: {ex.Message}");
+                    Debug.WriteLine($"[SAVE-Match] Failed to extract connection GUID/subscription: {ex.Message}");
                 }
             }
 
@@ -710,6 +736,8 @@ public class ProxyService : IDisposable
                 SessionName    = sessionName,
                 SavedAt        = DateTime.UtcNow,
                 ConnectionGuid = connectionGuid,
+                SubscriptionId = subscriptionId,
+                ChangeTypes    = changeTypes,
                 RequestHeaders = new Dictionary<string, string>(requestHeaders, StringComparer.OrdinalIgnoreCase),
             };
 
@@ -1615,6 +1643,27 @@ public class ProxyService : IDisposable
     {
         if (_ghostSession is null) return "{}";
 
+        // CRITICAL FIX #1: Use the REAL connection GUID that was captured when the player
+        // originally joined the match. MPSD validates rejoin attempts using this GUID.
+        // A fake GUID will cause rejoin validation to fail.
+        string connectionGuid = string.IsNullOrEmpty(_ghostSession.ConnectionGuid)
+            ? "12345678-1234-1234-1234-123456789abc"  // Fallback if not captured
+            : _ghostSession.ConnectionGuid;             // Real captured GUID
+
+        // CRITICAL FIX #2: Include RTA subscription object for connection validation!
+        string subscriptionField = "";
+        if (!string.IsNullOrEmpty(_ghostSession.SubscriptionId))
+        {
+            var changeTypesList = string.Join("\",\"", _ghostSession.ChangeTypes);
+            subscriptionField = $$"""
+,
+          "subscription": {
+            "id": "{{_ghostSession.SubscriptionId}}",
+            "changeTypes": ["{{changeTypesList}}"]
+          }
+""";
+        }
+
         // Real session doc structure (minimal valid response)
         return $$"""
 {
@@ -1634,8 +1683,8 @@ public class ProxyService : IDisposable
       "properties": {
         "system": {
           "active": true,
-          "connection": "12345678-1234-1234-1234-123456789abc",
-          "joinTime": "2026-03-08T00:00:00Z"
+          "connection": "{{connectionGuid}}",
+          "joinTime": "2026-03-08T00:00:00Z"{{subscriptionField}}
         },
         "custom": {}
       }
@@ -1654,6 +1703,30 @@ public class ProxyService : IDisposable
     /// <summary>Generate a fake member document showing player is active.</summary>
     private string GenerateFakeMemberDocument()
     {
+        // CRITICAL FIX #1: Use the REAL connection GUID that was captured when the player
+        // originally joined the match. MPSD validates rejoin attempts using this GUID.
+        // A fake GUID will cause rejoin validation to fail.
+        string connectionGuid = _ghostSession is null || string.IsNullOrEmpty(_ghostSession.ConnectionGuid)
+            ? "12345678-1234-1234-1234-123456789abc"  // Fallback if not captured
+            : _ghostSession.ConnectionGuid;             // Real captured GUID
+
+        // CRITICAL FIX #2: Include RTA subscription object for connection validation!
+        // When the session template has connectionRequiredForActiveMembers=true,
+        // MPSD and the game server validate that active members have valid RTA subscriptions.
+        // Without this, the game server rejects the "connection wasn't established" error.
+        string subscriptionField = "";
+        if (_ghostSession is not null && !string.IsNullOrEmpty(_ghostSession.SubscriptionId))
+        {
+            var changeTypesList = string.Join("\",\"", _ghostSession.ChangeTypes);
+            subscriptionField = $$"""
+,
+      "subscription": {
+        "id": "{{_ghostSession.SubscriptionId}}",
+        "changeTypes": ["{{changeTypesList}}"]
+      }
+""";
+        }
+
         return $$"""
 {
   "gamertag": "Player",
@@ -1662,8 +1735,8 @@ public class ProxyService : IDisposable
   "properties": {
     "system": {
       "active": true,
-      "connection": "12345678-1234-1234-1234-123456789abc",
-      "joinTime": "2026-03-08T00:00:00Z"
+      "connection": "{{connectionGuid}}",
+      "joinTime": "2026-03-08T00:00:00Z"{{subscriptionField}}
     },
     "custom": {}
   }
@@ -1714,29 +1787,40 @@ public class ProxyService : IDisposable
             if (string.IsNullOrEmpty(etag)) return;  // No ETag, can't proceed
 
             // Session is alive! Now PUT /members/me to re-add player as active
-            // CRITICAL: Include the connection GUID from when the player originally joined!
-            // The game server validates rejoin attempts using this GUID. If we omit or change it,
-            // the game server will reject the rejoin with "connection interrupted" error.
+            // CRITICAL FIX #1: Include the ACTUAL captured connection GUID from when the player originally joined!
+            // This GUID proves continuity to MPSD - it's the key validation that allows rejoin.
+            // If the GUID is empty or wrong, MPSD will reject or remove the member.
             string connectionField = string.IsNullOrEmpty(_ghostSession.ConnectionGuid)
                 ? ""
                 : $",\"connection\":\"{_ghostSession.ConnectionGuid}\"";
 
+            // CRITICAL FIX #2: Include RTA subscription object for connection validation!
+            // When the session template has connectionRequiredForActiveMembers=true,
+            // MPSD validates that active members have valid RTA subscriptions.
+            // Without the subscription ID, the game server's connection validation fails.
+            // The subscription ID must match what was captured during the original join.
+            string subscriptionField = "";
+            if (!string.IsNullOrEmpty(_ghostSession.SubscriptionId))
+            {
+                var changeTypesList = string.Join("\",\"", _ghostSession.ChangeTypes);
+                subscriptionField = $",\"subscription\":{{\"id\":\"{_ghostSession.SubscriptionId}\",\"changeTypes\":[\"{changeTypesList}\"]}}";
+            }
+
+            // MPSD API: PUT /sessions/{id}/members/me expects member properties directly (no "members" wrapper)
             var putBody = $$"""
 {
-  "members": {
-    "me": {
-      "properties": {
-        "system": {
-          "active": true{{connectionField}}
-        },
-        "custom": {}
-      }
-    }
+  "properties": {
+    "system": {
+      "active": true{{connectionField}}{{subscriptionField}}
+    },
+    "custom": {}
   }
 }
 """;
 
-            using var putReq = new HttpRequestMessage(HttpMethod.Put, _ghostSession.SessionUrl);
+            // PUT to /members/me endpoint, not the session root
+            string memberUrl = _ghostSession.SessionUrl + "/members/me";
+            using var putReq = new HttpRequestMessage(HttpMethod.Put, memberUrl);
             putReq.Content = new StringContent(putBody, System.Text.Encoding.UTF8, "application/json");
             putReq.Headers.TryAddWithoutValidation("If-Match", etag);
             foreach (var (k, v) in _ghostSession.RequestHeaders)

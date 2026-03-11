@@ -79,11 +79,13 @@ public partial class Scanner : UserControl
         SessionLogList.ItemsSource    = _sessionLog;
 
         // Initialize MCC watcher for rejoin crash restore
-        // NOTE: Load async to avoid blocking UI on startup
-        _ = Dispatcher.InvokeAsync(async () =>
+        // CRITICAL: Run on UI thread — LoadSavedHandle/LoadSavedMatchSession call AddDiag
+        // which updates the UI. Running on Task.Run (background thread) causes cross-thread
+        // exceptions that prevent the watcher from starting.
+        _ = Dispatcher.InvokeAsync(() =>
         {
-            await Task.Run(() => LoadSavedHandle());
-            await Task.Run(() => LoadSavedMatchSession());
+            LoadSavedHandle();
+            LoadSavedMatchSession();
             _mccWatcher.Tick += MccWatcher_Tick;
             _mccWatcher.Start();
         }, System.Windows.Threading.DispatcherPriority.Normal);
@@ -1292,43 +1294,65 @@ public partial class Scanner : UserControl
     }
 
     // ── Rejoin Guard: MCC Process Monitor ───────────────────────────────────────
+    private int _watcherTickCount = 0;
+
     private void MccWatcher_Tick(object? sender, EventArgs e)
     {
-        bool running = Process.GetProcessesByName("MCC-Win64-Shipping").Length > 0
-                    || Process.GetProcessesByName("MCC-Win64-Shipping-EAC").Length > 0;
-
-        if (_mccWasRunning && !running && !_restoreInProgress &&
-            (_savedHandle is not null || _savedMatchSession is not null))
+        try
         {
-            // MCC just exited — arm the proxy for just-in-time injection on restart
-            _mccWasRunning      = false;
-            _restoreInProgress  = true;
+            _watcherTickCount++;
 
-            // Diagnostic: log what state we have at restore time
-            AddDiag("RESTORE[Start]",
-                $"handle={(_savedHandle is not null ? _savedHandle.TemplateName + "/" + _savedHandle.SessionShort : "null")}  " +
-                $"match={(_savedMatchSession is not null ? _savedMatchSession.TemplateName + "/" + _savedMatchSession.SessionShort : "null")}");
+            // DEFENSIVE LOAD: Ensure session is always fresh before crash detection.
+            // If MCC crashes before a PUT is captured, _savedMatchSession could be null
+            // even though the session file exists on disk. This ensures ghost mode can
+            // activate by guaranteeing the session is loaded when needed.
+            if (_savedMatchSession is null)
+                LoadSavedMatchSession();
 
-            // Auto-arm block-match-leave: when MCC exits (whether clicked or crashed),
-            // arm the proxy to block the next leave request, keeping the session alive
-            _proxy.ForceBlockMatchLeave();
-            AddDiag("AUTO-BLOCK[Armed]", "MCC exit detected — block armed for next leave request", "");
+            bool running = Process.GetProcessesByName("MCC-Win64-Shipping").Length > 0
+                        || Process.GetProcessesByName("MCC-Win64-Shipping-EAC").Length > 0;
 
-            // Arm the proxy: on MCC's first sessiondirectory request, the proxy will:
-            //   1. PUT /members/me to the match session (JIT, with MCC's fresh auth)
-            //   2. POST activity handle for the match session
-            //   3. Force-replace session discovery results (if MCC does discovery)
-            if (_savedMatchSession is not null)
-                _proxy.SetPendingCrashRestore(_savedMatchSession);
+            // Heartbeat: Log every 10 ticks so we can see watcher is alive and what state it sees
+            if (_watcherTickCount % 10 == 0)
+                AddDiag("WATCHER[Heartbeat]", $"tick={_watcherTickCount}  running={running}  wasRunning={_mccWasRunning}  session={(_savedMatchSession?.SessionShort ?? "null")}  inProgress={_restoreInProgress}", "");
 
-            _restoreInProgress = false;
+            if (_mccWasRunning && !running && !_restoreInProgress &&
+                (_savedHandle is not null || _savedMatchSession is not null))
+            {
+                // MCC just exited — arm the proxy for just-in-time injection on restart
+                _mccWasRunning      = false;
+                _restoreInProgress  = true;
+
+                // Diagnostic: log what state we have at restore time
+                AddDiag("RESTORE[Start]",
+                    $"handle={(_savedHandle is not null ? _savedHandle.TemplateName + "/" + _savedHandle.SessionShort : "null")}  " +
+                    $"match={(_savedMatchSession is not null ? _savedMatchSession.TemplateName + "/" + _savedMatchSession.SessionShort : "null")}");
+
+                // Auto-arm block-match-leave: when MCC exits (whether clicked or crashed),
+                // arm the proxy to block the next leave request, keeping the session alive
+                _proxy.ForceBlockMatchLeave();
+                AddDiag("AUTO-BLOCK[Armed]", "MCC exit detected — block armed for next leave request", "");
+
+                // Arm the proxy: on MCC's first sessiondirectory request, the proxy will:
+                //   1. PUT /members/me to the match session (JIT, with MCC's fresh auth)
+                //   2. POST activity handle for the match session
+                //   3. Force-replace session discovery results (if MCC does discovery)
+                if (_savedMatchSession is not null)
+                    _proxy.SetPendingCrashRestore(_savedMatchSession);
+
+                _restoreInProgress = false;
+            }
+            else if (running && !_mccWasRunning)
+            {
+                // MCC just launched — clear the restore debounce
+                _restoreInProgress = false;
+            }
+
+            _mccWasRunning = running;
         }
-        else if (running && !_mccWasRunning)
+        catch (Exception ex)
         {
-            // MCC just launched — clear the restore debounce
-            _restoreInProgress = false;
+            Debug.WriteLine($"[ERROR] MccWatcher_Tick: {ex.GetType().Name}: {ex.Message}");
         }
-
-        _mccWasRunning = running;
     }
 }

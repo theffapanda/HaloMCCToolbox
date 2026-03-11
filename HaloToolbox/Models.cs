@@ -75,6 +75,12 @@ public class SavedHandleInfo
     [JsonPropertyName("connectionGuid")]
     public string ConnectionGuid { get; set; } = "";  // Captured from player's connection GUID when joining
 
+    [JsonPropertyName("subscriptionId")]
+    public string SubscriptionId { get; set; } = "";  // RTA subscription ID for connection validation
+
+    [JsonPropertyName("changeTypes")]
+    public List<string> ChangeTypes { get; set; } = new() { "everything" };  // RTA change types
+
     // Display helpers
     public string SessionShort => SessionName.Length > 13 ? SessionName[..13] + "…" : SessionName;
     public string SavedAtStr   => SavedAt.ToLocalTime().ToString("HH:mm:ss");
