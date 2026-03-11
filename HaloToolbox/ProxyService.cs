@@ -747,7 +747,12 @@ public class ProxyService : IDisposable
                 Path.Combine(dir, "last-match-session.json"),
                 JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = true }));
 
-            _lastMatchSession = info;
+            // CRITICAL FIX #5: Update _lastMatchSession AFTER the event, not before!
+            // When OnMatchSessionSaved fires, Scanner calls SetSavedMatchSession which compares
+            // the newly loaded session against _lastMatchSession. If _lastMatchSession is already set
+            // to the new value, the comparison always fails (same value), and the "new game detected"
+            // logic never triggers. By setting it AFTER the event, SetSavedMatchSession can properly
+            // detect when a different game template is being loaded.
 
             // Diagnostic: emit a synthetic entry so the capture log shows this fired
             OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
@@ -758,10 +763,13 @@ public class ProxyService : IDisposable
                 Path         = new Uri(url).AbsolutePath,
                 RequestBody  = $"template={templateName}  session={sessionName}",
                 StatusCode   = 0,
-                ResponseBody = $"Wrote last-match-session.json\n_lastMatchSession set",
+                ResponseBody = $"Wrote last-match-session.json (will update _lastMatchSession after event)",
             });
 
             OnMatchSessionSaved?.Invoke(this, EventArgs.Empty);
+
+            // Now update _lastMatchSession after the event handler has had a chance to call SetSavedMatchSession
+            _lastMatchSession = info;
         }
         catch (Exception ex)
         {
