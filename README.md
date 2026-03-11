@@ -344,7 +344,7 @@ HaloToolbox/
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+BSD3 License — see [LICENSE](LICENSE) for details.
 
 Free to use, modify, and distribute. Credit appreciated but not required.
 
