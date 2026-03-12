@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using System.Windows.Media;
 
@@ -141,6 +142,105 @@ public class GameServerPort
 
     [JsonPropertyName("protocol")]
     public string Protocol { get; set; } = "";
+}
+
+// ── Theater Backups ───────────────────────────────────────────────────────────
+public class TheaterClip : INotifyPropertyChanged
+{
+    private bool    _isSelected;
+    private bool    _sourcePresent;
+    private bool    _isBackedUp;
+    private string? _customName;
+    private bool    _isRenaming;
+    private string  _pendingName = "";
+
+    public string Game          { get; init; } = "";   // "Halo 3", "Halo 2: Anniv.", etc.
+    public string GameKey       { get; init; } = "";   // "Halo3", "Halo2A", etc.
+    public string FileName      { get; init; } = "";   // e.g. "asq_guardia_abc123.mov"
+    public string MapName       { get; init; } = "";   // raw filename without extension
+    public string MapDisplayName { get; init; } = "";  // resolved human-readable map name
+    public long   FileSizeBytes { get; init; }
+    public DateTime RecordedAt  { get; init; }
+    public string SourcePath    { get; init; } = "";
+    public string BackupPath    { get; init; } = "";
+
+    public SolidColorBrush GameBrush { get; init; } = new(Colors.Gray);
+
+    // ── Computed display strings ───────────────────────────────────────────────
+    /// <summary>The name shown in the UI: custom override if set, else resolved map name.</summary>
+    public string DisplayName => _customName ?? MapDisplayName;
+
+    public string FileSizeStr => FileSizeBytes >= 1_048_576
+        ? $"{FileSizeBytes / 1_048_576.0:F1} MB"
+        : $"{FileSizeBytes / 1024.0:F0} KB";
+
+    public string DateShort => RecordedAt.ToString("MM-dd HH:mm");
+
+    public string SrcIndicator => _sourcePresent ? "✓" : "—";
+
+    public SolidColorBrush SrcBrush => _sourcePresent
+        ? new SolidColorBrush(Color.FromRgb(0x3F, 0xB9, 0x50))
+        : new SolidColorBrush(Color.FromRgb(0x48, 0x4F, 0x58));
+
+    // ── Notifying properties ───────────────────────────────────────────────────
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set { _isSelected = value; Notify(nameof(IsSelected)); }
+    }
+
+    public bool SourcePresent
+    {
+        get => _sourcePresent;
+        set
+        {
+            _sourcePresent = value;
+            Notify(nameof(SourcePresent));
+            Notify(nameof(SrcIndicator));
+            Notify(nameof(SrcBrush));
+        }
+    }
+
+    public bool IsBackedUp
+    {
+        get => _isBackedUp;
+        set { _isBackedUp = value; Notify(nameof(IsBackedUp)); }
+    }
+
+    /// <summary>User-defined display name override. Null clears the override (reverts to MapDisplayName).</summary>
+    public string? CustomName
+    {
+        get => _customName;
+        set
+        {
+            _customName = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            Notify(nameof(CustomName));
+            Notify(nameof(DisplayName));
+        }
+    }
+
+    /// <summary>True while the inline rename TextBox is visible for this row.</summary>
+    public bool IsRenaming
+    {
+        get => _isRenaming;
+        set
+        {
+            if (value) PendingName = DisplayName; // pre-fill before showing box
+            _isRenaming = value;
+            Notify(nameof(IsRenaming));
+        }
+    }
+
+    /// <summary>Temporary edit value bound to the inline rename TextBox.</summary>
+    public string PendingName
+    {
+        get => _pendingName;
+        set { _pendingName = value; Notify(nameof(PendingName)); }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void Notify(string name) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
 // ── Session Intel ─────────────────────────────────────────────────────────────

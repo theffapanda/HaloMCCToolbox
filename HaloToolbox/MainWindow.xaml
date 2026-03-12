@@ -1401,7 +1401,12 @@
                     </Grid>
                 </TabItem>
 
-                <!-- ═══ TAB 4: SCANNER ═══ -->
+                <!-- ═══ TAB 4: THEATER ═══ -->
+                <TabItem Header="🎬  THEATER" Style="{StaticResource DarkTabItem}">
+                    <local:Theater x:Name="TheaterTab"/>
+                </TabItem>
+
+                <!-- ═══ TAB 5: SCANNER ═══ -->
                 <TabItem Header="🔍  SCANNER" Style="{StaticResource DarkTabItem}">
                     <local:Scanner x:Name="ScannerTab" />
                 </TabItem>

@@ -1,0 +1,418 @@
+<UserControl x:Class="HaloToolbox.Theater"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource BgBrush}"
+             FontFamily="Consolas"
+             FontSize="11"
+             Foreground="{DynamicResource TextBrush}"
+             Loaded="Theater_Loaded"
+             Unloaded="Theater_Unloaded">
+
+    <UserControl.Resources>
+
+        <!-- Flat button — matches Scanner's FlatBtn style -->
+        <Style x:Key="FlatBtn" TargetType="Button">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="Foreground"      Value="#7D8590"/>
+            <Setter Property="BorderBrush"     Value="#2A3238"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontFamily"      Value="Consolas"/>
+            <Setter Property="FontSize"        Value="10"/>
+            <Setter Property="Padding"         Value="10,5"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#3A4248"/>
+                                <Setter Property="Foreground" Value="#C8D8E8"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1A1E24"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Small row-selection checkbox -->
+        <Style x:Key="SmallChk" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Border x:Name="Bd"
+                                Width="13" Height="13"
+                                BorderBrush="{DynamicResource MutedBrush}"
+                                BorderThickness="1"
+                                Background="Transparent"
+                                CornerRadius="2">
+                            <TextBlock x:Name="Check"
+                                       Text="✓"
+                                       FontFamily="Consolas" FontSize="9" FontWeight="Bold"
+                                       Foreground="{DynamicResource AccentBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="Collapsed"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="Bd"    Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>  <!-- 0 header bar      -->
+            <RowDefinition Height="Auto"/>  <!-- 1 status strip     -->
+            <RowDefinition Height="Auto"/>  <!-- 2 filter bar       -->
+            <RowDefinition Height="Auto"/>  <!-- 3 column headers   -->
+            <RowDefinition Height="*"/>     <!-- 4 clip list        -->
+            <RowDefinition Height="Auto"/>  <!-- 5 footer           -->
+        </Grid.RowDefinitions>
+
+        <!-- ═══ Row 0: Header Bar ═══ -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,10">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left"
+                           Text="🎬  THEATER BACKUPS"
+                           FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{DynamicResource AccentBrush}"
+                           VerticalAlignment="Center"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="BtnOpenFolder"
+                            Content="OPEN FOLDER"
+                            Style="{StaticResource FlatBtn}"
+                            Click="BtnOpenFolder_Click"
+                            Margin="0,0,6,0"
+                            ToolTip="Open backup folder in Explorer"/>
+                    <Button x:Name="BtnScan"
+                            Content="SCAN NOW"
+                            Style="{StaticResource FlatBtn}"
+                            Click="BtnScan_Click"
+                            Margin="0,0,6,0"
+                            ToolTip="Re-scan all theater folders and backup any new clips"/>
+                    <Button x:Name="BtnRestore"
+                            Content="RESTORE SELECTED ▾"
+                            Style="{StaticResource FlatBtn}"
+                            Click="BtnRestore_Click"
+                            ToolTip="Copy backed-up clips back into MCC theater folders">
+                        <Button.ContextMenu>
+                            <ContextMenu FontFamily="Consolas" FontSize="11">
+                                <MenuItem x:Name="MniRestoreSelected"
+                                          Header="Restore Selected"
+                                          Click="MniRestoreSelected_Click"/>
+                                <MenuItem x:Name="MniRestoreAll"
+                                          Header="Restore All"
+                                          Click="MniRestoreAll_Click"/>
+                                <Separator/>
+                                <MenuItem x:Name="MniByGameParent"
+                                          Header="Restore by Game">
+                                    <!-- populated dynamically after scan -->
+                                </MenuItem>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ═══ Row 1: Status Strip ═══ -->
+        <Border Grid.Row="1"
+                Background="{DynamicResource PanelBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,5">
+            <TextBlock x:Name="TxtStatus"
+                       FontFamily="Consolas" FontSize="10"
+                       Foreground="{DynamicResource MutedBrush}"
+                       Text="WATCHING: 0 FOLDERS  ●  0 CLIPS"/>
+        </Border>
+
+        <!-- ═══ Row 2: Filter Bar ═══ -->
+        <Border Grid.Row="2"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="12,8">
+            <DockPanel>
+                <!-- Right side: SELECT ALL, sort label, sort combo -->
+                <Button DockPanel.Dock="Right"
+                        x:Name="BtnSelectAll"
+                        Content="SELECT ALL"
+                        Style="{StaticResource FlatBtn}"
+                        Click="BtnSelectAll_Click"
+                        Margin="6,0,0,0"/>
+                <ComboBox DockPanel.Dock="Right"
+                          x:Name="CboSort"
+                          Style="{StaticResource DarkCombo}"
+                          Width="130"
+                          SelectionChanged="CboSort_SelectionChanged"
+                          FontFamily="Consolas" FontSize="10"
+                          Height="28"
+                          Margin="4,0,0,0"/>
+                <TextBlock DockPanel.Dock="Right"
+                           Text="SORT:"
+                           FontFamily="Consolas" FontSize="10"
+                           Foreground="{DynamicResource MutedBrush}"
+                           VerticalAlignment="Center"
+                           Margin="12,0,4,0"/>
+                <!-- Left side: game filter, search -->
+                <ComboBox DockPanel.Dock="Left"
+                          x:Name="CboGame"
+                          Style="{StaticResource DarkCombo}"
+                          Width="150"
+                          SelectionChanged="CboGame_SelectionChanged"
+                          FontFamily="Consolas" FontSize="10"
+                          Height="28"
+                          Margin="0,0,8,0"/>
+                <TextBox x:Name="TxtSearch"
+                         Style="{StaticResource DarkTextBox}"
+                         Height="28"
+                         FontFamily="Consolas" FontSize="10"
+                         TextChanged="TxtSearch_TextChanged"
+                         ToolTip="Search by map name or filename"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ═══ Row 3: Column Headers ═══ -->
+        <Border Grid.Row="3"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="12,5">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="28"/>   <!-- checkbox   -->
+                    <ColumnDefinition Width="140"/>  <!-- game       -->
+                    <ColumnDefinition Width="*"/>    <!-- file       -->
+                    <ColumnDefinition Width="70"/>   <!-- size       -->
+                    <ColumnDefinition Width="80"/>   <!-- date       -->
+                    <ColumnDefinition Width="34"/>   <!-- src        -->
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="1" Text="GAME"
+                           FontFamily="Consolas" FontSize="9" FontWeight="Bold"
+                           Foreground="#484F58"/>
+                <TextBlock Grid.Column="2" Text="FILE"
+                           FontFamily="Consolas" FontSize="9" FontWeight="Bold"
+                           Foreground="#484F58"/>
+                <TextBlock Grid.Column="3" Text="SIZE"
+                           FontFamily="Consolas" FontSize="9" FontWeight="Bold"
+                           Foreground="#484F58" HorizontalAlignment="Right"/>
+                <TextBlock Grid.Column="4" Text="DATE"
+                           FontFamily="Consolas" FontSize="9" FontWeight="Bold"
+                           Foreground="#484F58" HorizontalAlignment="Center"/>
+                <TextBlock Grid.Column="5" Text="SRC"
+                           FontFamily="Consolas" FontSize="9" FontWeight="Bold"
+                           Foreground="#484F58" HorizontalAlignment="Center"
+                           ToolTip="✓ = source file present in MCC folder  /  — = backed up only"/>
+            </Grid>
+        </Border>
+
+        <!-- ═══ Row 4: Clip List ═══ -->
+        <Grid Grid.Row="4">
+            <ScrollViewer Style="{StaticResource FlatScrollViewer}"
+                          VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="ClipList" Focusable="False">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <!-- Row border — click toggles selection, double-click enters rename -->
+                            <Border Tag="{Binding}"
+                                    Padding="12,0"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="0,0,0,1"
+                                    Cursor="Hand"
+                                    MouseLeftButtonUp="Row_MouseLeftButtonUp"
+                                    MouseLeftButtonDown="Row_MouseLeftButtonDown">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="Transparent"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+                                            </Trigger>
+                                            <DataTrigger Binding="{Binding SourcePresent}" Value="False">
+                                                <Setter Property="Opacity" Value="0.6"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <!-- Right-click context menu -->
+                                <Border.ContextMenu>
+                                    <ContextMenu FontFamily="Consolas" FontSize="11">
+                                        <MenuItem Header="Open Source Folder"
+                                                  Click="MniOpenSource_Click"
+                                                  Tag="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                        <MenuItem Header="Open Backup Folder"
+                                                  Click="MniOpenBackup_Click"
+                                                  Tag="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                        <Separator/>
+                                        <MenuItem Header="Restore to Source"
+                                                  Click="MniRestoreOne_Click"
+                                                  Tag="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                        <Separator/>
+                                        <MenuItem Header="Copy Backup Path"
+                                                  Click="MniCopyPath_Click"
+                                                  Tag="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                        <MenuItem Header="Delete Clip"
+                                                  Click="MniDeleteClip_Click"
+                                                  Tag="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    </ContextMenu>
+                                </Border.ContextMenu>
+                                <!-- Row content -->
+                                <Grid Height="36">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="28"/>
+                                        <ColumnDefinition Width="140"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="70"/>
+                                        <ColumnDefinition Width="80"/>
+                                        <ColumnDefinition Width="34"/>
+                                    </Grid.ColumnDefinitions>
+                                    <!-- Checkbox — visual only; row click toggles IsSelected -->
+                                    <CheckBox Grid.Column="0"
+                                              IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                              IsHitTestVisible="False"
+                                              Focusable="False"
+                                              Style="{StaticResource SmallChk}"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Center"/>
+                                    <!-- Game dot + name -->
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Ellipse Width="8" Height="8"
+                                                 Fill="{Binding GameBrush}"
+                                                 Margin="0,0,6,0"
+                                                 VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Game}"
+                                                   FontSize="10"
+                                                   Foreground="{DynamicResource TextBrush}"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <!-- Filename: normal label or inline rename TextBox -->
+                                    <Grid Grid.Column="2" VerticalAlignment="Center">
+                                        <!-- Normal display: resolved map name + extension -->
+                                        <StackPanel Orientation="Horizontal"
+                                                    ToolTip="{Binding FileName}">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <TextBlock Text="{Binding DisplayName}"
+                                                       FontSize="11" Foreground="#C8D8E8"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Text=".mov"
+                                                       FontSize="10" Foreground="#484F58"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <!-- Inline rename: appears on double-click, auto-focuses -->
+                                        <TextBox Text="{Binding PendingName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 FontFamily="Consolas" FontSize="11"
+                                                 Background="#141820"
+                                                 Foreground="#C8D8E8"
+                                                 BorderBrush="{DynamicResource AccentBrush}"
+                                                 BorderThickness="1"
+                                                 Padding="4,1"
+                                                 CaretBrush="#00C8FF"
+                                                 KeyDown="RenameBox_KeyDown"
+                                                 LostFocus="RenameBox_LostFocus"
+                                                 IsVisibleChanged="RenameBox_IsVisibleChanged"
+                                                 ToolTip="Enter to save · Escape to cancel">
+                                            <TextBox.Style>
+                                                <Style TargetType="TextBox">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBox.Style>
+                                        </TextBox>
+                                    </Grid>
+                                    <!-- Size -->
+                                    <TextBlock Grid.Column="3"
+                                               Text="{Binding FileSizeStr}"
+                                               FontSize="10"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               VerticalAlignment="Center"
+                                               HorizontalAlignment="Right"/>
+                                    <!-- Date -->
+                                    <TextBlock Grid.Column="4"
+                                               Text="{Binding DateShort}"
+                                               FontSize="10"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               VerticalAlignment="Center"
+                                               HorizontalAlignment="Center"/>
+                                    <!-- Source indicator -->
+                                    <TextBlock Grid.Column="5"
+                                               Text="{Binding SrcIndicator}"
+                                               Foreground="{Binding SrcBrush}"
+                                               FontSize="11" FontWeight="Bold"
+                                               VerticalAlignment="Center"
+                                               HorizontalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+            <!-- Empty state message -->
+            <TextBlock x:Name="TxtEmpty"
+                       Text="No theater clips found.&#10;MCC theater .mov files will appear here automatically when detected."
+                       FontFamily="Consolas" FontSize="11"
+                       Foreground="{DynamicResource MutedBrush}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       Margin="60"
+                       Visibility="Collapsed"/>
+        </Grid>
+
+        <!-- ═══ Row 5: Footer ═══ -->
+        <Border Grid.Row="5"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="16,6">
+            <TextBlock x:Name="TxtBackupPath"
+                       FontFamily="Consolas" FontSize="10"
+                       Foreground="{DynamicResource MutedBrush}"/>
+        </Border>
+
+    </Grid>
+</UserControl>
