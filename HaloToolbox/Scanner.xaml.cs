@@ -85,12 +85,6 @@ public partial class Scanner : UserControl
         // exceptions that prevent the watcher from starting.
         _ = Dispatcher.InvokeAsync(() =>
         {
-            // Clear saved session data on every Toolbox startup. This prevents stale data from
-            // a previous Xbox account (or previous session) from interfering when the user
-            // launches the app fresh. The proxy will re-capture a new session when MCC makes
-            // its first request with the current account.
-            ClearRejoinData();
-
             LoadSavedHandle();
             LoadSavedMatchSession();
             _mccWatcher.Tick += MccWatcher_Tick;
@@ -1320,9 +1314,7 @@ public partial class Scanner : UserControl
             // If MCC crashes before a PUT is captured, _savedMatchSession could be null
             // even though the session file exists on disk. This ensures ghost mode can
             // activate by guaranteeing the session is loaded when needed.
-            // Only attempt if the file actually exists — avoids spamming LOAD[Match] "file not
-            // found" every tick when there is no session (e.g. after CLEAR[Rejoin]).
-            if (_savedMatchSession is null && File.Exists(MatchSessionFile))
+            if (_savedMatchSession is null)
                 LoadSavedMatchSession();
 
             bool running = Process.GetProcessesByName("MCC-Win64-Shipping").Length > 0
