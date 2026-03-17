@@ -14,7 +14,8 @@ namespace HaloToolbox;
 
 public partial class Scanner : UserControl
 {
-    // Dedicated client for MPSD control requests — bypasses our own proxy to avoid loops
+    // HttpClient for out-of-band MPSD/SmartMatch requests (auto-leave, hopper query)
+    // UseProxy=false to avoid routing through our own proxy.
     private static readonly HttpClient _mpsdClient = new(new HttpClientHandler { UseProxy = false })
     {
         Timeout = TimeSpan.FromSeconds(5)
@@ -40,21 +41,11 @@ public partial class Scanner : UserControl
     private string                     _ticketId          = "";
     private Dictionary<string, string> _ticketAuthHeaders = new();
 
-    // ── Rejoin Guard / MCC Crash Restore ───────────────────────────────────────
-    // NOTE: ProxyService saves to HaloMCCToolbox directory
-    private static readonly string HandleFile =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                     "HaloMCCToolbox", "last-handle.json");
-    private static readonly string MatchSessionFile =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                     "HaloMCCToolbox", "last-match-session.json");
-
-    private SavedHandleInfo? _savedHandle;
-    private SavedHandleInfo? _savedMatchSession;
+    // ── Rejoin Guard / MCC Crash Detection ────────────────────────────────────
     private readonly System.Windows.Threading.DispatcherTimer _mccWatcher =
-        new() { Interval = TimeSpan.FromSeconds(1) };  // CRITICAL FIX: 5s → 1s (catch fast restarts)
-    private bool _mccWasRunning = false;
-    private int _lastMccPid = 0;  // CRITICAL FIX: Track PID to detect fast MCC restarts
+        new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private bool _mccWasRunning    = false;
+    private int  _lastMccPid       = 0;   // Track PID to detect fast MCC restarts
     private bool _restoreInProgress = false;
 
     public Scanner()
@@ -67,10 +58,8 @@ public partial class Scanner : UserControl
         _proxy.WinHttpManualSetRequired += (_, _) =>
             Dispatcher.InvokeAsync(() => ProxyWinHttpNote.Visibility = Visibility.Visible);
 
-        // CRITICAL: When proxy saves a match session to disk, reload it and sync to proxy
-        // This ensures the in-memory ghost session is up-to-date for JIT injection on MCC restart
-        _proxy.OnMatchSessionSaved += (_, _) =>
-            Dispatcher.InvokeAsync(() => LoadSavedMatchSession());
+        _proxy.OnSessionCaptured += (_, _) =>
+            Dispatcher.InvokeAsync(() => UpdateRejoinGuardUi());
 
         _captureView = CollectionViewSource.GetDefaultView(_captureLog);
         _captureView.Filter = o => FilterCapture((ProxyCaptureEntry)o);
@@ -85,14 +74,7 @@ public partial class Scanner : UserControl
         // exceptions that prevent the watcher from starting.
         _ = Dispatcher.InvokeAsync(() =>
         {
-            // Clear saved session data on every Toolbox startup. This prevents stale data from
-            // a previous Xbox account (or previous session) from interfering when the user
-            // launches the app fresh. The proxy will re-capture a new session when MCC makes
-            // its first request with the current account.
-            ClearRejoinData();
-
-            LoadSavedHandle();
-            LoadSavedMatchSession();
+            UpdateRejoinGuardUi();
             _mccWatcher.Tick += MccWatcher_Tick;
             _mccWatcher.Start();
         }, System.Windows.Threading.DispatcherPriority.Normal);
@@ -199,50 +181,38 @@ public partial class Scanner : UserControl
 
     /// <summary>
     /// Updates internal rejoin guard state based on current proxy status.
-    /// Called after loading handles/sessions from disk to ensure state consistency.
+    /// Called to refresh the Rejoin Guard panel from proxy state.
     /// </summary>
     private void UpdateRejoinGuardUi()
     {
-        bool hasAny = _savedHandle is not null || _savedMatchSession is not null;
+        var captured = _proxy.CapturedSession;
 
-        if (_savedHandle is null)
-            RejoinSessionText.Text = "no session saved";
+        if (captured is null)
+        {
+            RejoinSessionText.Text = "no session captured";
+            RejoinMatchText.Text   = "";
+        }
         else
-            RejoinSessionText.Text = $"{_savedHandle.TemplateName} / {_savedHandle.SessionShort}   {_savedHandle.SavedAtStr}";
+        {
+            RejoinSessionText.Text = $"{captured.TemplateName} / {captured.SessionShort}   {captured.SavedAtStr}";
+            RejoinMatchText.Text   = _proxy.IsInCrashWindow
+                ? $"CRASH DETECTED — {CrashWindowSeconds}s injection window active"
+                : "";
+        }
 
-        if (_savedMatchSession is null)
-            RejoinMatchText.Text = "";
-        else
-            RejoinMatchText.Text = $"MATCH  {_savedMatchSession.TemplateName} / {_savedMatchSession.SessionShort}   {_savedMatchSession.SavedAtStr}";
-
-        // Show game server redirection status if active
-        if (_proxy.IsGameServerRedirectionActive)
-            RejoinStatusText.Text = "🎯 GAME SERVER REDIRECTED — connecting to original server…";
-        // Show if ghost mode is active
-        else if (_proxy.IsGhostSessionActive())
-            RejoinStatusText.Text = "⚡ GHOST MODE — syncing with MPSD…";
-        else
-            RejoinStatusText.Text = hasAny ? "" : "";
-
-        RejoinCheckBtn.IsEnabled   = hasAny;
-        RejoinRestoreBtn.IsEnabled = hasAny;
+        RejoinStatusText.Text      = "";
+        RejoinCheckBtn.IsEnabled   = false;
+        RejoinRestoreBtn.IsEnabled = false;
     }
 
-    /// <summary>
-    /// Clears all saved rejoin session data and cleans up proxy state.
-    /// Matches HaloIntel's RejoinClear_Click behavior.
-    /// </summary>
+    private const int CrashWindowSeconds = 30;
+
+    /// <summary>Clears the captured session and crash window from proxy state.</summary>
     public void ClearRejoinData()
     {
-        _savedHandle       = null;
-        _savedMatchSession = null;
-        _proxy.ClearSavedMatchSession();     // also clear proxy's in-memory copy (stops injection)
-        _proxy.ClearGameServerRedirection(); // also clear game server redirection
-        _proxy.ClearGhostSessionMode();      // clear any ghost mode state
-        try { File.Delete(HandleFile); }       catch { /* ignore */ }
-        try { File.Delete(MatchSessionFile); } catch { /* ignore */ }
+        _proxy.ClearCapturedSession();
         UpdateRejoinGuardUi();
-        AddDiag("CLEAR[Rejoin]", "Cleared all saved rejoin data from disk and proxy");
+        AddDiag("CLEAR[Rejoin]", "Cleared captured session from proxy");
     }
 
     // ── Capture entry management ──────────────────────────────────────────────
@@ -253,20 +223,6 @@ public partial class Scanner : UserControl
             _captureLog.RemoveAt(_captureLog.Count - 1);
 
         TryParseSessionEntry(entry);
-
-        // Reload saved handle from disk when a /handles POST is captured —
-        // PersistHandleToDisk already wrote it at request time, so the file is current.
-        if (entry.Method == "POST" &&
-            entry.Url.Contains("/handles", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(entry.RequestBody))
-            LoadSavedHandle();
-
-        // Same belt-and-suspenders reload for the matchmaking session file.
-        // PersistMatchSessionToDisk fires during request handling; by the time
-        // this capture entry arrives (response phase), the file is on disk.
-        if (entry.Method == "PUT" &&
-            entry.Url.Contains("/CascadeMatchmaking/sessions/", StringComparison.OrdinalIgnoreCase))
-            LoadSavedMatchSession();
 
     }
 
@@ -413,8 +369,7 @@ public partial class Scanner : UserControl
     // ── Capture filter ────────────────────────────────────────────────────────
     private static readonly string[] _rejoinMethods =
     {
-        "SAVE[", "LOAD[", "RESTORE[", "INJECT", "AUTO-BLOCK", "CACHE[",
-        "REDIRECT[", "GHOST[", "PUT[JIT", "POST[JIT", "ERROR[", "PASS[", "FAKE["
+        "CAPTURE[", "CRASH[", "DISCOVERY[", "WATCHER[",
     };
 
     private bool FilterCapture(ProxyCaptureEntry e)
@@ -966,116 +921,10 @@ public partial class Scanner : UserControl
         }
     }
 
-    // ── Rejoin Guard: Load/Save Handle and Match Session ────────────────────────
-    private void LoadSavedHandle()
-    {
-        try
-        {
-            if (!File.Exists(HandleFile))
-            {
-                AddDiag("LOAD[Handle]", "file not found", HandleFile);
-                return;
-            }
-            var json = File.ReadAllText(HandleFile);
-            _savedHandle = JsonSerializer.Deserialize<SavedHandleInfo>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            var h = _savedHandle;
-            AddDiag("LOAD[Handle]",
-                h is not null ? $"OK  {h.TemplateName}/{h.SessionShort}  saved={h.SavedAtStr}" : "deserialized to null",
-                HandleFile);
-        }
-        catch (Exception ex)
-        {
-            AddDiag("LOAD[Handle]", $"ERROR: {ex.GetType().Name}: {ex.Message}", HandleFile);
-        }
-        finally
-        {
-            UpdateRejoinGuardUi();
-        }
-    }
-
-    private void LoadSavedMatchSession()
-    {
-        try
-        {
-            if (!File.Exists(MatchSessionFile))
-            {
-                AddDiag("LOAD[Match]", "file not found", MatchSessionFile);
-                return;
-            }
-            var json = File.ReadAllText(MatchSessionFile);
-            _savedMatchSession = JsonSerializer.Deserialize<SavedHandleInfo>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            // Sync to proxy so session discovery injection works
-            _proxy.SetSavedMatchSession(_savedMatchSession);
-
-            var m = _savedMatchSession;
-            AddDiag("LOAD[Match]",
-                m is not null ? $"OK  {m.TemplateName}/{m.SessionShort}  saved={m.SavedAtStr}" : "deserialized to null",
-                MatchSessionFile);
-        }
-        catch (Exception ex)
-        {
-            AddDiag("LOAD[Match]", $"ERROR: {ex.GetType().Name}: {ex.Message}", MatchSessionFile);
-        }
-        finally
-        {
-            UpdateRejoinGuardUi();
-        }
-    }
-
-    // ── Rejoin Guard: Button Handlers ─────────────────────────────────────────────
-    private async void RejoinCheck_Click(object sender, RoutedEventArgs e)
-    {
-        if (_savedHandle is null && _savedMatchSession is null) return;
-        RejoinCheckBtn.IsEnabled   = false;
-        RejoinRestoreBtn.IsEnabled = false;
-        RejoinStatusText.Text      = "checking…";
-        try
-        {
-            if (_savedMatchSession is not null)
-                await CheckSessionAsync(_savedMatchSession);
-            else if (_savedHandle is not null)
-                await CheckSessionAsync(_savedHandle);
-        }
-        finally
-        {
-            bool hasAny = _savedHandle is not null || _savedMatchSession is not null;
-            RejoinCheckBtn.IsEnabled   = hasAny;
-            RejoinRestoreBtn.IsEnabled = hasAny;
-        }
-    }
-
-    private async void RejoinRestore_Click(object sender, RoutedEventArgs e)
-    {
-        if (_savedHandle is null && _savedMatchSession is null) return;
-        RejoinCheckBtn.IsEnabled   = false;
-        RejoinRestoreBtn.IsEnabled = false;
-        RejoinStatusText.Text      = "restoring…";
-        try
-        {
-            // Re-add to match session first (PUT /members/me)
-            if (_savedMatchSession is not null)
-                await ReaddToMatchSessionAsync(_savedMatchSession);
-            // Then POST activity handles
-            if (_savedMatchSession is not null)
-                await RestoreRejoinAsync(_savedMatchSession);
-            if (_savedHandle is not null)
-                await RestoreRejoinAsync(_savedHandle);
-        }
-        finally
-        {
-            bool hasAny = _savedHandle is not null || _savedMatchSession is not null;
-            RejoinCheckBtn.IsEnabled   = hasAny;
-            RejoinRestoreBtn.IsEnabled = hasAny;
-        }
-    }
-
-    private void RejoinClear_Click(object sender, RoutedEventArgs e)
-    {
-        ClearRejoinData();
-    }
+    // ── Rejoin Guard: Button Handlers ────────────────────────────────────────────
+    private void RejoinCheck_Click(object sender, RoutedEventArgs e)   { /* proxy handles discovery automatically */ }
+    private void RejoinRestore_Click(object sender, RoutedEventArgs e) { /* proxy handles discovery automatically */ }
+    private void RejoinClear_Click(object sender, RoutedEventArgs e)   { ClearRejoinData(); }
 
     /// <summary>Log a timestamp marker for when user closes MCC (debugging rejoin flow).</summary>
     private void LogQuit_Click(object sender, RoutedEventArgs e)
@@ -1137,177 +986,229 @@ public partial class Scanner : UserControl
         AddCaptureEntry(entry);
     }
 
-    // ── Rejoin Guard: Session Check & Restore ──────────────────────────────────────
-    private async Task CheckSessionAsync(SavedHandleInfo handle)
+    // ── AI Capture Analysis ───────────────────────────────────────────────────
+
+    private static readonly string ApiKeyPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "HaloMCCToolbox", "claude-api-key.txt");
+
+    private static readonly HttpClient _claudeClient =
+        new(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(60) };
+
+    private const string ClaudeSystemPrompt =
+        "You are analyzing network captures from Halo: MCC's multiplayer session system. " +
+        "The app is a MITM proxy that intercepts HTTPS traffic between Halo MCC and Xbox Live / PlayFab.\n\n" +
+        "Key concepts:\n" +
+        "- MPSD (sessiondirectory.xboxlive.com): Xbox Live Multiplayer Session Directory. Manages session membership.\n" +
+        "- connectionRequiredForActiveMembers=true: members must have a live RTA WebSocket connection GUID or MPSD evicts them.\n" +
+        "- RTA connection GUID: a UUID tied to the player's live Xbox Live WebSocket. Becomes stale/dead after a crash.\n" +
+        "- CascadeMatchmaking: the MPSD session template for active matches (8 players).\n" +
+        "- cascadesquadsession: the squad-level session (1-4 players, links to the match).\n" +
+        "- CAPTURE[Session]: proxy saved a CascadeMatchmaking session during normal play.\n" +
+        "- CRASH[Detected]: MCC process exited — crash recovery window armed (30s).\n" +
+        "- DISCOVERY[Found/Injected]: proxy handling /sessions? discovery response.\n" +
+        "- REJOIN[LeaveBlocked]: proxy blocked a PUT {members:{me:null}} leave during recovery.\n" +
+        "- REJOIN[ConnectionUpdate]: proxy fired background PUT to update stale RTA connection GUID in MPSD.\n" +
+        "- RequestParty (PlayFab): MCC requests the game server party. Validates MPSD membership.\n\n" +
+        "Analyze the capture entries provided. Focus on: whether the rejoin flow succeeded or failed, " +
+        "what HTTP status codes indicate, timing of key events, and what should be fixed or tried next. " +
+        "Be specific — cite entry methods, status codes, and timestamps from the data.";
+
+    private async void Analyze_Click(object sender, RoutedEventArgs e)
     {
-        int    code = 0;
-        string body = "";
+        AnalyzeBtn.IsEnabled = false;
+        AnalyzeBtn.Content   = "⏳ ANALYZING...";
+
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, handle.SessionUrl);
-            foreach (var (k, v) in handle.RequestHeaders)
-                if (k.StartsWith("x-",        StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    req.Headers.TryAddWithoutValidation(k, v);
+            var apiKey = await GetOrPromptApiKeyAsync();
+            if (string.IsNullOrEmpty(apiKey)) return;
 
-            using var resp = await _mpsdClient.SendAsync(req);
-            code = (int)resp.StatusCode;
-            body = await resp.Content.ReadAsStringAsync();
+            // Collect entries: from last CRASH[Detected] forward, or last 75 if no crash
+            var allEntries = _captureLog.ToList();
+            int crashIdx   = -1;
+            for (int i = allEntries.Count - 1; i >= 0; i--)
+            {
+                if (allEntries[i].Method.StartsWith("CRASH[", StringComparison.OrdinalIgnoreCase))
+                { crashIdx = i; break; }
+            }
+
+            var subset = crashIdx >= 0
+                ? allEntries.Skip(crashIdx).ToList()
+                : allEntries.TakeLast(75).ToList();
+
+            // Serialize entries compactly
+            var entrySummaries = subset.Select(en => new
+            {
+                t      = en.Timestamp.ToString("HH:mm:ss.fff"),
+                method = en.Method,
+                status = en.StatusCode,
+                path   = en.Path.Length > 120 ? en.Path[..120] + "…" : en.Path,
+                req    = en.RequestBody.Length  > 300 ? en.RequestBody[..300]  + "…" : en.RequestBody,
+                resp   = en.ResponseBody.Length > 300 ? en.ResponseBody[..300] + "…" : en.ResponseBody,
+            });
+
+            var captureJson = JsonSerializer.Serialize(entrySummaries,
+                new JsonSerializerOptions { WriteIndented = false });
+
+            var userMessage = $"Here are {subset.Count} capture entries" +
+                (crashIdx >= 0 ? " starting from the last crash detection" : " (last 75)") +
+                $":\n\n{captureJson}";
+
+            var analysis = await SendToClaudeAsync(apiKey, userMessage);
+            ShowAnalysisWindow(analysis, subset.Count);
         }
-        catch (Exception ex) { body = ex.Message; }
-
-        AddCaptureEntry(new ProxyCaptureEntry
+        catch (Exception ex)
         {
-            Method       = "GET",
-            Url          = handle.SessionUrl,
-            Host         = "sessiondirectory.xboxlive.com",
-            Path         = new Uri(handle.SessionUrl).AbsolutePath,
-            StatusCode   = code,
-            ResponseBody = body,
-        });
-
-        var (text, color) = code switch
+            ShowAnalysisWindow($"Error: {ex.Message}", 0);
+        }
+        finally
         {
-            200        => ("✓ session alive",                                   Color.FromRgb(0x3F, 0xB9, 0x50)),
-            401 or 403 => ("✗ auth expired — restart proxy to refresh",         Color.FromRgb(0xF8, 0x51, 0x49)),
-            404        => ("✗ session dead (expired after crash)",               Color.FromRgb(0xF8, 0x51, 0x49)),
-            0          => ("✗ request failed — check proxy / network",           Color.FromRgb(0xF8, 0x51, 0x49)),
-            _          => ($"HTTP {code}",                                       Color.FromRgb(0xD2, 0x99, 0x22)),
-        };
-        RejoinStatusText.Text       = text;
-        RejoinStatusText.Foreground = new SolidColorBrush(color);
+            AnalyzeBtn.IsEnabled = true;
+            AnalyzeBtn.Content   = "🤖 ANALYZE";
+        }
     }
 
-    /// <summary>
-    /// Re-adds the player to the matchmaking session by PUTting /members/me.
-    /// This ensures session discovery returns the match on MCC relaunch.
-    /// cascadesquadsession requires a live WebSocket (connectionRequiredForActiveMembers),
-    /// but CascadeMatchmaking may not — so we attempt the PUT there only.
-    /// </summary>
-    private async Task ReaddToMatchSessionAsync(SavedHandleInfo match)
+    private async Task<string> GetOrPromptApiKeyAsync()
     {
-        // Step 1: GET the session to verify it's alive and grab current ETag
-        string etag = "";
-        int getCode = 0;
-        try
+        if (File.Exists(ApiKeyPath))
         {
-            using var getReq = new HttpRequestMessage(HttpMethod.Get, match.SessionUrl);
-            foreach (var (k, v) in match.RequestHeaders)
-                if (k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    getReq.Headers.TryAddWithoutValidation(k, v);
-
-            using var getResp = await _mpsdClient.SendAsync(getReq);
-            getCode = (int)getResp.StatusCode;
-            etag = getResp.Headers.ETag?.Tag ?? "";
+            var stored = (await File.ReadAllTextAsync(ApiKeyPath)).Trim();
+            if (!string.IsNullOrEmpty(stored)) return stored;
         }
-        catch { return; }
 
-        AddCaptureEntry(new ProxyCaptureEntry
+        // Prompt for key
+        var win = new Window
         {
-            Method       = "GET[ETag]",
-            Url          = match.SessionUrl,
-            Host         = "sessiondirectory.xboxlive.com",
-            Path         = new Uri(match.SessionUrl).AbsolutePath,
-            RequestBody  = "Pre-PUT ETag fetch for member re-add",
-            StatusCode   = getCode,
-            ResponseBody = string.IsNullOrEmpty(etag) ? "[no ETag]" : $"ETag: {etag}",
-        });
-
-        if (getCode != 200 || string.IsNullOrEmpty(etag)) return;
-
-        // Step 2: PUT to session URL with members/me to re-add ourselves
-        // IMPORTANT: Do NOT change the connection GUID! The game server has the original GUID
-        // and validates rejoin attempts against it. Only set active:true without a new GUID.
-        var putBody = "{\"members\":{\"me\":{\"properties\":{\"system\":{\"active\":true},\"custom\":{}}}}}";
-
-        int putCode = 0;
-        string putResp = "";
-        try
-        {
-            using var putReq = new HttpRequestMessage(HttpMethod.Put, match.SessionUrl);
-            putReq.Content = new StringContent(putBody, System.Text.Encoding.UTF8, "application/json");
-            putReq.Headers.TryAddWithoutValidation("If-Match", etag);
-            foreach (var (k, v) in match.RequestHeaders)
-                if (k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    putReq.Headers.TryAddWithoutValidation(k, v);
-
-            using var resp = await _mpsdClient.SendAsync(putReq);
-            putCode = (int)resp.StatusCode;
-            putResp = await resp.Content.ReadAsStringAsync();
-        }
-        catch (Exception ex) { putResp = ex.Message; }
-
-        AddCaptureEntry(new ProxyCaptureEntry
-        {
-            Method       = "PUT[REJOIN]",
-            Url          = match.SessionUrl,
-            Host         = "sessiondirectory.xboxlive.com",
-            Path         = new Uri(match.SessionUrl).AbsolutePath,
-            RequestBody  = putBody,
-            StatusCode   = putCode,
-            ResponseBody = putResp,
-        });
-
-        var (text, color) = putCode switch
-        {
-            200 or 204 => ("✓ re-added to match session",                          Color.FromRgb(0x3F, 0xB9, 0x50)),
-            412        => ("✗ ETag conflict — session changed",                     Color.FromRgb(0xD2, 0x99, 0x22)),
-            404        => ("✗ match session expired",                               Color.FromRgb(0xF8, 0x51, 0x49)),
-            401 or 403 => ("✗ auth expired",                                        Color.FromRgb(0xF8, 0x51, 0x49)),
-            _          => ($"PUT /members/me → HTTP {putCode}",                     Color.FromRgb(0xD2, 0x99, 0x22)),
+            Title           = "Claude API Key",
+            Width           = 480, Height = 140,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner           = Window.GetWindow(this),
+            ResizeMode      = ResizeMode.NoResize,
+            Background      = new SolidColorBrush(Color.FromRgb(0x14, 0x18, 0x20)),
         };
-        RejoinStatusText.Text       = text;
-        RejoinStatusText.Foreground = new SolidColorBrush(color);
+        var box = new TextBox
+        {
+            Margin      = new Thickness(12, 16, 12, 8),
+            FontFamily  = new System.Windows.Media.FontFamily("Consolas"),
+            Background  = new SolidColorBrush(Color.FromRgb(0x0A, 0x0C, 0x10)),
+            Foreground  = new SolidColorBrush(Color.FromRgb(0xC8, 0xD8, 0xE8)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2A, 0x32, 0x38)),
+            Padding     = new Thickness(6, 4, 6, 4),
+            Text        = "",
+        };
+        var btn = new Button
+        {
+            Content             = "Save & Continue",
+            Margin              = new Thickness(12, 0, 12, 12),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Padding             = new Thickness(12, 4, 12, 4),
+        };
+        string result = "";
+        btn.Click += (_, _) => { result = box.Text.Trim(); win.Close(); };
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock
+        {
+            Text       = "Enter your Anthropic API key (saved locally, never transmitted elsewhere):",
+            Foreground = new SolidColorBrush(Color.FromRgb(0x7D, 0x85, 0x90)),
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+            FontSize   = 10,
+            Margin     = new Thickness(12, 12, 12, 0),
+        });
+        panel.Children.Add(box);
+        panel.Children.Add(btn);
+        win.Content = panel;
+        win.ShowDialog();
+
+        if (string.IsNullOrEmpty(result)) return "";
+        Directory.CreateDirectory(Path.GetDirectoryName(ApiKeyPath)!);
+        await File.WriteAllTextAsync(ApiKeyPath, result);
+        return result;
     }
 
-    private async Task RestoreRejoinAsync(SavedHandleInfo handle)
+    private static async Task<string> SendToClaudeAsync(string apiKey, string userMessage)
     {
-        // POST /handles — re-create the activity handle so MCC can find the session on relaunch.
-        var handleBody =
-            $$"""{"type":"activity","sessionRef":{"scid":"{{handle.Scid}}","templateName":"{{handle.TemplateName}}","name":"{{handle.SessionName}}"},"version":1}""";
-        int    handleCode = 0;
-        string handleResp = "";
-        try
+        var payload = JsonSerializer.Serialize(new
         {
-            using var req = new HttpRequestMessage(HttpMethod.Post,
-                "https://sessiondirectory.xboxlive.com/handles");
-            req.Content = new StringContent(handleBody, System.Text.Encoding.UTF8, "application/json");
-            foreach (var (k, v) in handle.RequestHeaders)
-                if (k.StartsWith("x-",        StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    req.Headers.TryAddWithoutValidation(k, v);
-            using var resp = await _mpsdClient.SendAsync(req);
-            handleCode = (int)resp.StatusCode;
-            handleResp = await resp.Content.ReadAsStringAsync();
-        }
-        catch (Exception ex) { handleResp = ex.Message; }
-
-        AddCaptureEntry(new ProxyCaptureEntry
-        {
-            Method       = "POST",
-            Url          = "https://sessiondirectory.xboxlive.com/handles",
-            Host         = "sessiondirectory.xboxlive.com",
-            Path         = "/handles",
-            RequestBody  = handleBody,
-            StatusCode   = handleCode,
-            ResponseBody = handleResp,
+            model      = "claude-opus-4-6",
+            max_tokens = 2048,
+            system     = ClaudeSystemPrompt,
+            messages   = new[] { new { role = "user", content = userMessage } },
         });
 
-        var (text, color) = handleCode switch
+        using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
         {
-            200 or 201 => ("✓ handle restored — launch MCC and accept rejoin",  Color.FromRgb(0x3F, 0xB9, 0x50)),
-            404        => ("✗ session expired — cannot restore",                 Color.FromRgb(0xF8, 0x51, 0x49)),
-            401 or 403 => ("✗ auth expired — restart proxy to refresh",          Color.FromRgb(0xF8, 0x51, 0x49)),
-            0          => ("✗ request failed — check proxy / network",           Color.FromRgb(0xF8, 0x51, 0x49)),
-            _          => ($"HTTP {handleCode}",                                 Color.FromRgb(0xD2, 0x99, 0x22)),
+            Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
         };
-        RejoinStatusText.Text       = text;
-        RejoinStatusText.Foreground = new SolidColorBrush(color);
+        req.Headers.TryAddWithoutValidation("x-api-key",          apiKey);
+        req.Headers.TryAddWithoutValidation("anthropic-version",  "2023-06-01");
+
+        var resp     = await _claudeClient.SendAsync(req);
+        var respBody = await resp.Content.ReadAsStringAsync();
+
+        if (!resp.IsSuccessStatusCode)
+            return $"API error {(int)resp.StatusCode}: {respBody}";
+
+        using var doc   = JsonDocument.Parse(respBody);
+        var       root  = doc.RootElement;
+        if (root.TryGetProperty("content", out var content) &&
+            content.GetArrayLength() > 0 &&
+            content[0].TryGetProperty("text", out var text))
+            return text.GetString() ?? "(empty response)";
+
+        return "(could not parse response)";
     }
 
-    // ── Rejoin Guard: MCC Process Monitor ───────────────────────────────────────
+    private void ShowAnalysisWindow(string analysis, int entryCount)
+    {
+        var win = new Window
+        {
+            Title                 = $"Claude Analysis — {entryCount} entries",
+            Width                 = 800, Height = 600,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner                 = Window.GetWindow(this),
+            Background            = new SolidColorBrush(Color.FromRgb(0x0A, 0x0C, 0x10)),
+        };
+
+        var copyBtn = new Button
+        {
+            Content             = "Copy",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin              = new Thickness(8),
+            Padding             = new Thickness(12, 4, 12, 4),
+        };
+        copyBtn.Click += (_, _) => Clipboard.SetText(analysis);
+
+        var textBox = new TextBox
+        {
+            Text            = analysis,
+            IsReadOnly      = true,
+            TextWrapping    = TextWrapping.Wrap,
+            AcceptsReturn   = true,
+            FontFamily      = new System.Windows.Media.FontFamily("Consolas"),
+            FontSize        = 11,
+            Background      = new SolidColorBrush(Color.FromRgb(0x0A, 0x0C, 0x10)),
+            Foreground      = new SolidColorBrush(Color.FromRgb(0xC8, 0xD8, 0xE8)),
+            BorderThickness = new Thickness(0),
+            Padding         = new Thickness(10),
+            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
+
+        var dock = new DockPanel();
+        DockPanel.SetDock(copyBtn, Dock.Bottom);
+        dock.Children.Add(copyBtn);
+        dock.Children.Add(new ScrollViewer
+        {
+            Content = textBox,
+            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        });
+        win.Content = dock;
+        win.Show();
+    }
+
+    // ── MCC Process Monitor ───────────────────────────────────────────────────
     private int _watcherTickCount = 0;
 
     private void MccWatcher_Tick(object? sender, EventArgs e)
@@ -1316,22 +1217,11 @@ public partial class Scanner : UserControl
         {
             _watcherTickCount++;
 
-            // DEFENSIVE LOAD: Ensure session is always fresh before crash detection.
-            // If MCC crashes before a PUT is captured, _savedMatchSession could be null
-            // even though the session file exists on disk. This ensures ghost mode can
-            // activate by guaranteeing the session is loaded when needed.
-            // Only attempt if the file actually exists -- avoids spamming LOAD[Match] "file not
-            // found" every tick when there is no session (e.g. after CLEAR[Rejoin]).
-            if (_savedMatchSession is null && File.Exists(MatchSessionFile))
-                LoadSavedMatchSession();
-
             bool running = Process.GetProcessesByName("MCC-Win64-Shipping").Length > 0
                         || Process.GetProcessesByName("MCC-Win64-Shipping-EAC").Length > 0;
 
-            // CRITICAL FIX: Track MCC process ID to detect fast restarts
-            // If MCC restarts within the watcher interval (now 1s), Process.GetProcessesByName
-            // might show it as "running" even though it's a NEW process with a different PID.
-            // This detects that scenario and triggers crash restore.
+            // Track PID to detect fast restarts: if MCC restarts within the 1s poll window,
+            // GetProcessesByName still returns "running" but with a different PID.
             int currentMccPid = 0;
             if (running)
             {
@@ -1342,55 +1232,39 @@ public partial class Scanner : UserControl
                     currentMccPid = mccProcess.Id;
             }
 
-            // Detect if MCC restarted (PID changed) while appearing "running"
             if (running && _mccWasRunning && _lastMccPid > 0 && currentMccPid != _lastMccPid && !_restoreInProgress)
             {
-                AddDiag("WATCHER[FastRestart]", $"MCC PID changed ({_lastMccPid} → {currentMccPid}) — treating as crash", "");
-                _mccWasRunning = false;  // Force the exit handler to trigger
+                AddDiag("WATCHER[FastRestart]", $"MCC PID changed ({_lastMccPid} → {currentMccPid}) — treating as crash");
+                _mccWasRunning = false;  // force the exit handler below to trigger
             }
 
             if (running)
-                _lastMccPid = currentMccPid;  // Update PID tracker
+                _lastMccPid = currentMccPid;
 
-            // Heartbeat: Log every 10 ticks so we can see watcher is alive and what state it sees
+            // Heartbeat every 10 ticks
             if (_watcherTickCount % 10 == 0)
-                AddDiag("WATCHER[Heartbeat]", $"tick={_watcherTickCount}  running={running}  wasRunning={_mccWasRunning}  session={(_savedMatchSession?.SessionShort ?? "null")}  inProgress={_restoreInProgress}", "");
+                AddDiag("WATCHER[Heartbeat]", $"tick={_watcherTickCount}  running={running}  wasRunning={_mccWasRunning}  captured={(_proxy.CapturedSession?.SessionShort ?? "null")}  crashWindow={_proxy.IsInCrashWindow}");
 
-            if (_mccWasRunning && !running && !_restoreInProgress &&
-                (_savedHandle is not null || _savedMatchSession is not null))
+            if (_mccWasRunning && !running && !_restoreInProgress)
             {
-                // MCC just exited — arm the proxy for just-in-time injection on restart
-                _mccWasRunning      = false;
-                _restoreInProgress  = true;
+                _mccWasRunning     = false;
+                _restoreInProgress = true;
 
-                // Diagnostic: log what state we have at restore time
-                AddDiag("RESTORE[Start]",
-                    $"handle={(_savedHandle is not null ? _savedHandle.TemplateName + "/" + _savedHandle.SessionShort : "null")}  " +
-                    $"match={(_savedMatchSession is not null ? _savedMatchSession.TemplateName + "/" + _savedMatchSession.SessionShort : "null")}");
+                var captured = _proxy.CapturedSession;
+                AddDiag("CRASH[Detected]",
+                    $"MCC exited  captured={captured?.TemplateName + "/" + (captured?.SessionShort ?? "null")}");
 
-                // Auto-arm block-match-leave: when MCC exits (whether clicked or crashed),
-                // arm the proxy to block the next leave request, keeping the session alive
-                _proxy.ForceBlockMatchLeave();
-                AddDiag("AUTO-BLOCK[Armed]", "MCC exit detected — block armed for next leave request", "");
-
-                // Arm the proxy: on MCC's first sessiondirectory request, the proxy will:
-                //   1. PUT /members/me to the match session (JIT, with MCC's fresh auth)
-                //   2. POST activity handle for the match session
-                //   3. Force-replace session discovery results (if MCC does discovery)
-                //   4. Background sync match to keep RTA connection alive
-                if (_savedMatchSession is not null)
-                    _proxy.SetPendingCrashRestore(_savedMatchSession);
-
-                // Pass saved squad handle so proxy can override handle POSTs
-                if (_savedHandle is not null)
-                    _proxy.SetSavedSquadHandle(_savedHandle);
+                // Open the 30s discovery-injection window.
+                // The proxy will inject sessionRef into /sessions? if MPSD no longer has us.
+                _proxy.SetCrashDetected();
+                UpdateRejoinGuardUi();
 
                 _restoreInProgress = false;
             }
             else if (running && !_mccWasRunning)
             {
-                // MCC just launched — clear the restore debounce
                 _restoreInProgress = false;
+                UpdateRejoinGuardUi();
             }
 
             _mccWasRunning = running;

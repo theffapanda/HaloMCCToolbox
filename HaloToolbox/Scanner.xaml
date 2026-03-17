@@ -483,6 +483,11 @@
                                     Style="{StaticResource FlatBtn}"
                                     Padding="6,2" FontSize="9"
                                     ToolTip="Click when you attempt rejoin"/>
+                            <Button x:Name="AnalyzeBtn"
+                                    Content="🤖 ANALYZE" Click="Analyze_Click"
+                                    Style="{StaticResource FlatBtn}"
+                                    Padding="6,2" FontSize="9" Margin="8,0,0,0"
+                                    ToolTip="Send capture log to Claude AI for analysis"/>
                         </StackPanel>
                     </Grid>
                 </Border>
