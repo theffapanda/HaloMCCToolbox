@@ -45,6 +45,11 @@ public class ProxyService : IDisposable
     private bool _jitPutDone;       // prevents repeating PUT /members/me
     private const int CRASH_RESTORE_TIMEOUT_MINUTES = 5;
 
+    // Saved squad handle — used to override handle POSTs during crash recovery
+    // MCC creates a NEW squad on restart; we replace the UUID with the saved one
+    // so the activity handle points to the original match's squad.
+    private SavedHandleInfo? _savedSquadHandle;
+
     // Player's XUID — captured from session discovery URL or handles response
     private string _playerXuid = "";
 
@@ -71,6 +76,24 @@ public class ProxyService : IDisposable
     private Task? _ghostSessionSyncTask;  // background sync task
     private bool _ghostSessionSyncSuccess = false;
 
+    // FIX #12: Captured connection GUID and subscription ID from MPSD PUTs.
+    // GetRequestBodyAsync() returns EMPTY in OnAfterResponse (proxy already forwarded body).
+    // We capture these in OnBeforeRequest while the body is still available.
+    private string _capturedConnectionGuid = "";
+    private string _capturedSubscriptionId = "";
+
+    // FIX #13: Last captured auth headers from MPSD requests, used by AutoSync background PUTs.
+    private Dictionary<string, string>? _lastCapturedAuthHeaders;
+
+    // FIX #16: GUID upgrade - when MCC restarts and creates a new RTA WebSocket,
+    // we capture the new connection GUID from its squad PUT and fire a single PUT
+    // to the CascadeMatchmaking session to replace the dead GUID with the live one.
+    // This prevents MPSD's inactiveRemovalTimeout from removing the player.
+    private bool _guidUpgradeDone = false;
+
+    // FIX #11: Raised when a squad session is persisted to disk
+    public event EventHandler? OnHandleSaved;
+
     // Game server redirection: cache the original game server info from RequestParty,
     // and redirect subsequent requests to use the same server (prevents PlayFab from
     // assigning a different server after restart, which breaks rejoin).
@@ -91,7 +114,7 @@ public class ProxyService : IDisposable
     /// <summary>Get the path to the cached game server file.</summary>
     private static string GetGameServerCacheFile() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                     "HaloIntel", "last-game-server.json");
+                     "HaloMCCToolbox", "last-game-server.json");
 
     /// <summary>Save the game server info to disk so it survives proxy restart.</summary>
     public void PersistGameServerToDisk(GameServerInfo serverInfo)
@@ -131,6 +154,12 @@ public class ProxyService : IDisposable
         }
     }
 
+    /// <summary>Sets the saved squad handle for override during crash recovery.</summary>
+    public void SetSavedSquadHandle(SavedHandleInfo? handle)
+    {
+        _savedSquadHandle = handle;
+    }
+
     /// <summary>Signals that MCC just crashed and we should force-inject on next discovery.</summary>
     public void SetPendingCrashRestore(SavedHandleInfo? matchSession = null)
     {
@@ -139,6 +168,7 @@ public class ProxyService : IDisposable
         _jitHandleDone = false;
         _jitPutDone = false;
         _blockMatchLeave = true;
+        _guidUpgradeDone = false;
         _cachedInjectedMatchBody = null;
         _cachedInjectedMatchEtag = "";
 
@@ -154,10 +184,11 @@ public class ProxyService : IDisposable
             }
         }
 
-        // RACE CONDITION FIX: Accept matchSession parameter from caller (MainWindow)
-        // to ensure we don't rely on _lastMatchSession timing. If caller provides it
-        // and it's null locally, set it. This handles initialization race conditions.
-        if (matchSession is not null && _lastMatchSession is null)
+        // CRITICAL FIX #6 (2026-03-15): Always use provided matchSession parameter during crash restore.
+        // The old condition `&& _lastMatchSession is null` failed when _lastMatchSession was already
+        // set during normal startup (SetSavedMatchSession sets it). This meant the parameter was
+        // ignored and ghost mode used a stale value.
+        if (matchSession is not null)
         {
             _lastMatchSession = matchSession;
             Debug.WriteLine($"[RESTORE] Match session restored from parameter: {matchSession.TemplateName}/{matchSession.SessionShort}");
@@ -241,7 +272,7 @@ public class ProxyService : IDisposable
     // ── Certificate storage ───────────────────────────────────────────────────
     private static string CertStorePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "HaloIntel", "proxy-root.pfx");
+        "HaloMCCToolbox", "proxy-root.pfx");
 
     // ── Start / Stop ──────────────────────────────────────────────────────────
     public async Task StartAsync()
@@ -371,7 +402,57 @@ public class ProxyService : IDisposable
 
             // Persist to disk IMMEDIATELY — before awaiting the response — so a game
             // crash between the request and response doesn't lose the game session ref.
-            PersistHandleToDisk(entry.RequestBody, headers);
+            // CRITICAL FIX #9a: Don't overwrite saved handle during crash recovery!
+            if (!_pendingCrashRestore)
+                PersistHandleToDisk(entry.RequestBody, headers);
+
+            // CRITICAL FIX #10: During crash recovery, override handle POSTs to use
+            // the SAVED squad UUID instead of MCC's newly-created one.
+            // MCC creates a new squad on restart, but the activity handle must point to
+            // the original squad so the rejoin flow connects to the right match.
+            if (_pendingCrashRestore && _savedSquadHandle is not null &&
+                req.Method == "POST" &&
+                !string.IsNullOrEmpty(entry.RequestBody) &&
+                entry.RequestBody.Contains("cascadesquadsession", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    string savedSessionName = _savedSquadHandle.SessionName;
+                    if (!string.IsNullOrEmpty(savedSessionName))
+                    {
+                        using var doc = JsonDocument.Parse(entry.RequestBody);
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("sessionRef", out var sessionRef) &&
+                            sessionRef.TryGetProperty("name", out var nameEl))
+                        {
+                            string originalName = nameEl.GetString() ?? "";
+                            if (!string.Equals(originalName, savedSessionName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                // Replace the session name in the body
+                                string newBody = entry.RequestBody.Replace(originalName, savedSessionName);
+                                var newBodyBytes = System.Text.Encoding.UTF8.GetBytes(newBody);
+                                e.SetRequestBody(newBodyBytes);
+                                entry.RequestBody = newBody;
+
+                                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                                {
+                                    Method       = "OVERRIDE[SquadHandle]",
+                                    Url          = req.Url,
+                                    Host         = req.RequestUri.Host,
+                                    Path         = req.RequestUri.AbsolutePath,
+                                    RequestBody  = $"Replaced squad UUID: {originalName[..13]}... -> {savedSessionName[..13]}...",
+                                    StatusCode   = 0,
+                                    ResponseBody = "Handle POST now points to saved squad (for match rejoin)",
+                                });
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[OVERRIDE] Handle override failed: {ex.Message}");
+                }
+            }
         }
 
         // ── Block match leave during crash restore ────────────────────────────
@@ -413,6 +494,82 @@ public class ProxyService : IDisposable
             return; // Skip ETag refresh, discovery, etc. — request is already handled
         }
 
+        // ─── FIX #12: Capture connection GUID + subscription ID from PUT bodies ──
+        // GetRequestBodyAsync() returns EMPTY in OnAfterResponse because the proxy
+        // already forwarded the body. Capture it HERE in OnBeforeRequest while the
+        // body is still available.
+        if (req.Method == "PUT" &&
+            req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
+            (req.RequestUri.AbsolutePath.Contains("/cascadematchmaking/sessions/", StringComparison.OrdinalIgnoreCase) ||
+             req.RequestUri.AbsolutePath.Contains("/cascadesquadsession/sessions/", StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                if (req.HasBody)
+                {
+                    var rawPutBytes = await e.GetRequestBody();
+                    e.SetRequestBody(rawPutBytes);
+                    string putBody = System.Text.Encoding.UTF8.GetString(rawPutBytes);
+                    if (!string.IsNullOrEmpty(putBody))
+                    {
+                        using var doc = JsonDocument.Parse(putBody);
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("members", out var members) &&
+                            members.TryGetProperty("me", out var me) &&
+                            me.TryGetProperty("properties", out var props) &&
+                            props.TryGetProperty("system", out var sys))
+                        {
+                            if (sys.TryGetProperty("connection", out var conn))
+                            {
+                                var val = conn.GetString() ?? "";
+                                if (!string.IsNullOrEmpty(val))
+                                    _capturedConnectionGuid = val;
+                            }
+                            if (sys.TryGetProperty("subscription", out var sub) &&
+                                sub.TryGetProperty("id", out var subId))
+                            {
+                                var val = subId.GetString() ?? "";
+                                if (!string.IsNullOrEmpty(val))
+                                    _capturedSubscriptionId = val;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { /* body parse failed - non-fatal */ }
+
+            // ─── FIX #16: GUID Upgrade ──────────────────────────────────────────────
+            // During crash recovery, MCC establishes a new RTA WebSocket (new GUID).
+            // We see the new GUID in its cascadesquadsession PUT. Fire a one-shot PUT
+            // to CascadeMatchmaking to replace the dead connection GUID with the live one.
+            // This prevents MPSD's inactiveRemovalTimeout from firing when the heartbeat
+            // detects the old WebSocket is dead.
+            if (_pendingCrashRestore && !_guidUpgradeDone &&
+                !string.IsNullOrEmpty(_capturedConnectionGuid) &&
+                _ghostSession is not null &&
+                req.RequestUri.AbsolutePath.Contains("/cascadesquadsession/", StringComparison.OrdinalIgnoreCase))
+            {
+                string savedGuid = _ghostSession.ConnectionGuid ?? "";
+                if (!string.Equals(_capturedConnectionGuid, savedGuid, StringComparison.OrdinalIgnoreCase))
+                {
+                    _guidUpgradeDone = true;
+                    // Capture fresh auth headers from this very request
+                    var upgradeHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var hdr in req.Headers)
+                    {
+                        if ((hdr.Name.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
+                             hdr.Name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)) &&
+                            !hdr.Name.Equals("Signature", StringComparison.OrdinalIgnoreCase))
+                            upgradeHeaders[hdr.Name] = hdr.Value;
+                    }
+                    string newGuid = _capturedConnectionGuid;
+                    string newSubId = _capturedSubscriptionId;
+                    string sessionUrl = _ghostSession.SessionUrl;
+                    _ = Task.Run(() => GuidUpgradeAsync(sessionUrl, newGuid, newSubId, upgradeHeaders));
+                }
+            }
+        }
+
         // ETag refresh: if MCC is PUTting a session document with a stale If-Match header,
         // silently do a fresh GET of the same URL, extract the current ETag, and swap it
         // in before the PUT reaches MPSD.  This converts a 412 Precondition Failed into a
@@ -436,7 +593,9 @@ public class ProxyService : IDisposable
                 headers.TryGetValue("content-encoding", out var ce);
                 matchSessionBody = TryDecompressGzip(rawBytes, ce);
             }
-            PersistMatchSessionToDisk(req.Url, headers, matchSessionBody);
+            // CRITICAL FIX #9b: Don't overwrite saved match session during crash recovery!
+            if (!_pendingCrashRestore)
+                PersistMatchSessionToDisk(req.Url, headers, matchSessionBody);
         }
 
         // ── JIT crash restore — PASSIVE MODE ─────────────────────────────────
@@ -507,8 +666,10 @@ public class ProxyService : IDisposable
             // Fresh GET — proxy-bypassing so we don't re-intercept ourselves
             using var getReq = new HttpRequestMessage(HttpMethod.Get, sessionUrl);
             foreach (var h in req.Headers)
-                if (h.Name.StartsWith("x-",        StringComparison.OrdinalIgnoreCase) ||
-                    h.Name.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+                // FIX #13: Skip Signature header - per-request crypto proof, causes 403 when replayed
+                if ((h.Name.StartsWith("x-",        StringComparison.OrdinalIgnoreCase) ||
+                     h.Name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)) &&
+                    !h.Name.Equals("Signature", StringComparison.OrdinalIgnoreCase))
                     getReq.Headers.TryAddWithoutValidation(h.Name, h.Value);
 
             using var getResp = await _refreshClient.SendAsync(getReq);
@@ -575,7 +736,7 @@ public class ProxyService : IDisposable
 
     /// <summary>
     /// Parses a /handles POST body and writes the session reference + auth headers to
-    /// %LocalAppData%\HaloIntel\last-handle.json. Called synchronously before the
+    /// %LocalAppData%\HaloMCCToolbox\last-handle.json. Called synchronously before the
     /// response arrives so the data survives a game crash. Best-effort; never throws.
     /// </summary>
     private static void PersistHandleToDisk(string bodyJson, Dictionary<string, string> requestHeaders)
@@ -624,6 +785,18 @@ public class ProxyService : IDisposable
                 {
                     using var doc = JsonDocument.Parse(requestBody);
                     var root = doc.RootElement;
+
+                    // CRITICAL FIX #7: Skip persistence of leave requests ({"members":{"me":null}}).
+                    // Race condition: leave PUT can arrive BEFORE _pendingCrashRestore is set
+                    // (within the 1-second watcher interval), overwriting saved connection GUID.
+                    if (root.TryGetProperty("members", out var leaveMembersEl) &&
+                        leaveMembersEl.TryGetProperty("me", out var leaveMeEl) &&
+                        leaveMeEl.ValueKind == JsonValueKind.Null)
+                    {
+                        Debug.WriteLine("[SAVE-Match] Skipping persistence of leave request (\"me\":null)");
+                        return;
+                    }
+
                     bool isClosed = false;
 
                     // Check direct structure: {"properties":{"system":{"closed":true}}}
@@ -729,6 +902,20 @@ public class ProxyService : IDisposable
                 }
             }
 
+            // FIX #12 fallback: If body parsing didn't find connection GUID or subscription ID,
+            // fall back to the values captured in OnBeforeRequest (GetRequestBody is empty in
+            // OnAfterResponse because the proxy already forwarded the body).
+            if (string.IsNullOrEmpty(connectionGuid) && !string.IsNullOrEmpty(_capturedConnectionGuid))
+            {
+                connectionGuid = _capturedConnectionGuid;
+                Debug.WriteLine($"[SAVE-Match] Using captured connection GUID fallback: {connectionGuid}");
+            }
+            if (string.IsNullOrEmpty(subscriptionId) && !string.IsNullOrEmpty(_capturedSubscriptionId))
+            {
+                subscriptionId = _capturedSubscriptionId;
+                Debug.WriteLine($"[SAVE-Match] Using captured subscription ID fallback: {subscriptionId}");
+            }
+
             var info = new SavedHandleInfo
             {
                 Scid           = scid,
@@ -791,6 +978,7 @@ public class ProxyService : IDisposable
     public void ClearSavedMatchSession()
     {
         _lastMatchSession = null;
+        _savedSquadHandle = null;
         _pendingCrashRestore = false;
         _pendingCrashRestoreStartedAt = DateTime.MinValue;  // Reset timeout clock
         _jitHandleDone = false;
@@ -823,22 +1011,26 @@ public class ProxyService : IDisposable
     /// rejoin attempts on stale sessions.</summary>
     public void SetSavedMatchSession(SavedHandleInfo? info)
     {
+        // CRITICAL FIX #5: During crash restore, freeze the old session. When MCC restarts,
+        // it creates a NEW match session and writes it to disk. LoadSavedMatchSession() reads
+        // the new file and calls this method with the NEW UUID. Without this guard, the new
+        // session would overwrite _lastMatchSession, disable ghost mode, and kill rejoin.
+        if (_pendingCrashRestore)
+        {
+            return;  // Freeze old session (any info value: non-null OR null)
+        }
+
         // CRITICAL FIX #3: Compare BOTH SessionName AND TemplateName to detect new games!
-        // When player joins NEW match (different TemplateName), old saved session is STALE.
-        // Example: Old squad session "cascadesquadsession/ece32fc2" vs new match "CascadeMatchmaking/bce79e38"
-        // Must clear ALL rejoin state (not just ghost mode) when game template changes.
         if (info is not null && _lastMatchSession is not null)
         {
             bool isDifferentSession =
-                info.SessionName != _lastMatchSession.SessionName ||
-                info.TemplateName != _lastMatchSession.TemplateName;
+                !string.Equals(info.SessionName, _lastMatchSession.SessionName, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(info.TemplateName, _lastMatchSession.TemplateName, StringComparison.OrdinalIgnoreCase);
 
             if (isDifferentSession)
             {
-                Debug.WriteLine($"[SESSION] New game detected: {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionName} → {info.TemplateName}/{info.SessionName}");
+                Debug.WriteLine($"[SESSION] New game detected: {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionName} -> {info.TemplateName}/{info.SessionName}");
                 Debug.WriteLine("[SESSION] Clearing ALL rejoin state and file to prevent stale session reuse");
-
-                // Call ClearSavedMatchSession to fully clear in-memory state AND delete stale file from disk
                 ClearSavedMatchSession();
             }
         }
@@ -874,15 +1066,17 @@ public class ProxyService : IDisposable
             // GET for current ETag
             using var getReq = new HttpRequestMessage(HttpMethod.Get, match.SessionUrl);
             foreach (var (k, v) in freshHeaders)
-                if (k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+                // FIX #13: Skip Signature header - per-request crypto proof
+                if ((k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
+                     k.Equals("Authorization", StringComparison.OrdinalIgnoreCase)) &&
+                    !k.Equals("Signature", StringComparison.OrdinalIgnoreCase))
                     getReq.Headers.TryAddWithoutValidation(k, v);
             using var getResp = await _refreshClient.SendAsync(getReq);
             string etag = getResp.Headers.ETag?.Tag ?? "";
 
             if (getResp.IsSuccessStatusCode && !string.IsNullOrEmpty(etag))
             {
-                // PUT /members/me — active:true + connection GUID (required by
+                // PUT /members/me -- active:true + connection GUID (required by
                 // connectionRequiredForActiveMembers capability)
                 string connGuid = Guid.NewGuid().ToString();
                 using var putReq = new HttpRequestMessage(HttpMethod.Put, match.SessionUrl);
@@ -891,8 +1085,10 @@ public class ProxyService : IDisposable
                     System.Text.Encoding.UTF8, "application/json");
                 putReq.Headers.TryAddWithoutValidation("If-Match", etag);
                 foreach (var (k, v) in freshHeaders)
-                    if (k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
-                        k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+                    // FIX #13: Skip Signature header on PUT too
+                    if ((k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
+                         k.Equals("Authorization", StringComparison.OrdinalIgnoreCase)) &&
+                        !k.Equals("Signature", StringComparison.OrdinalIgnoreCase))
                         putReq.Headers.TryAddWithoutValidation(k, v);
                 using var putResp = await _refreshClient.SendAsync(putReq);
                 code = (int)putResp.StatusCode;
@@ -944,6 +1140,26 @@ public class ProxyService : IDisposable
         foreach (var h in resp.Headers)
             headers[h.Name] = h.Value;
         entry.ResponseHeaders = headers;
+
+        // FIX #11b: Capture fresh auth headers from successful MPSD requests for AutoSync.
+        // AutoSync runs in the background and needs valid Authorization tokens.
+        // Signature is per-request crypto proof and MUST NOT be captured (FIX #13).
+        if (resp.StatusCode >= 200 && resp.StatusCode < 300 &&
+            entry.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var freshAuth = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var h in entry.RequestHeaders)
+            {
+                if ((h.Key.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
+                     h.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)) &&
+                    !h.Key.Equals("Signature", StringComparison.OrdinalIgnoreCase))
+                {
+                    freshAuth[h.Key] = h.Value;
+                }
+            }
+            if (freshAuth.Count > 0)
+                _lastCapturedAuthHeaders = freshAuth;
+        }
 
         // Capture gamertag from X-Xbl-Debug header (format: "user0=...; gamertag=Foo; privilege=...")
         if (string.IsNullOrEmpty(_playerGamertag) &&
@@ -1304,33 +1520,11 @@ public class ProxyService : IDisposable
                         }
                     }
 
-                    // On first match: cache the server info
-                    if (_cachedGameServerInfo == null && !_gameServerRedirectionActive)
-                    {
-                        _cachedGameServerInfo = serverInfo;
-                        _gameServerRedirectionActive = false;  // Not active yet; only activate on crash restore
-
-                        // PERSISTENCE: Save the game server to disk so it survives proxy restart/crash
-                        PersistGameServerToDisk(serverInfo);
-
-                        entry.ResponseBody = $"CACHED game server: {serverInfo.ServerShort}";
-
-                        OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
-                        {
-                            Method = "CACHE[GameServer]",
-                            Url = entry.Url,
-                            Host = entry.Host,
-                            Path = entry.Path,
-                            RequestBody = "Game server info cached from RequestParty response",
-                            StatusCode = 200,
-                            ResponseBody = $"Server: {serverInfo.IPv4Address}:{serverInfo.Ports.FirstOrDefault()?.Num ?? 0} | ServerId: {serverInfo.ServerId[..13]}…",
-                        });
-                        return;  // Skip normal body capture, we already have the data
-                    }
-                    // On restart: if we have cached server info, redirect to it
-                    // CRITICAL FIX: Also redirect if injection is active, even if _pendingCrashRestore somehow missed
-                    // (defense-in-depth against watcher timing misses). INJECT[Member] fires independently of _pendingCrashRestore.
-                    else if (_cachedGameServerInfo is not null && (_pendingCrashRestore || _cachedInjectedMatchBody is not null))
+                    // REDIRECT PATH: During crash restore, redirect to cached server.
+                    // Check this FIRST so it fires even on the first RequestParty after restore.
+                    // _cachedGameServerInfo is set either from memory (normal gameplay capture)
+                    // or from disk (LoadPersistedGameServer in SetPendingCrashRestore).
+                    if (_cachedGameServerInfo is not null && (_pendingCrashRestore || _cachedInjectedMatchBody is not null))
                     {
                         _gameServerRedirectionActive = true;
                         // CRITICAL FIX: Do NOT clear _pendingCrashRestore here!
@@ -1356,6 +1550,28 @@ public class ProxyService : IDisposable
                             RequestBody = $"Redirecting to cached server instead of new assignment",
                             StatusCode = 200,
                             ResponseBody = $"Cached: {_cachedGameServerInfo.IPv4Address}:{_cachedGameServerInfo.Ports.FirstOrDefault()?.Num ?? 0}",
+                        });
+                        return;  // Skip normal body capture
+                    }
+                    // CACHE PATH: Normal gameplay — first time seeing a RequestParty response
+                    else if (_cachedGameServerInfo == null && !_gameServerRedirectionActive)
+                    {
+                        _cachedGameServerInfo = serverInfo;
+
+                        // PERSISTENCE: Save the game server to disk so it survives proxy restart/crash
+                        PersistGameServerToDisk(serverInfo);
+
+                        entry.ResponseBody = $"CACHED game server: {serverInfo.ServerShort}";
+
+                        OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                        {
+                            Method = "CACHE[GameServer]",
+                            Url = entry.Url,
+                            Host = entry.Host,
+                            Path = entry.Path,
+                            RequestBody = "Game server info cached from RequestParty response",
+                            StatusCode = 200,
+                            ResponseBody = $"Server: {serverInfo.IPv4Address}:{serverInfo.Ports.FirstOrDefault()?.Num ?? 0} | ServerId: {serverInfo.ServerId[..13]}…",
                         });
                         return;  // Skip normal body capture
                     }
@@ -1578,7 +1794,15 @@ public class ProxyService : IDisposable
             {
                 string fakeSessionBody = GenerateFakeSessionDocument();
                 e.Ok(fakeSessionBody);
-                LogGhostRequest("GHOST[Match-Get]", req.Url, "200", "Fake match document");
+
+                // CRITICAL: Cache the fake body so the game server redirect condition is met.
+                // The redirect checks (_pendingCrashRestore || _cachedInjectedMatchBody is not null).
+                // Without this, ghost mode intercepts the GET (so OnAfterResponse never fires),
+                // _cachedInjectedMatchBody stays null, and the redirect never triggers.
+                _cachedInjectedMatchBody = fakeSessionBody;
+                _cachedInjectedMatchEtag = $"\"{Guid.NewGuid():N}\"";
+
+                LogGhostRequest("GHOST[Match-Get]", req.Url, "200", "Fake match document (cached for redirect)");
                 return true;
             }
 
@@ -1617,6 +1841,10 @@ public class ProxyService : IDisposable
             // GET squad session — return fake "squad is valid"
             if (method == "GET" && !url.Contains("/members/"))
             {
+                // FIX #15: Use real connection GUID (prefer MCC's new GUID if available)
+                string squadConnGuid = !string.IsNullOrEmpty(_capturedConnectionGuid)
+                    ? _capturedConnectionGuid
+                    : _ghostSession?.ConnectionGuid ?? Guid.NewGuid().ToString();
                 string fakeSquadBody = $$"""
 {
   "contractVersion": 1,
@@ -1629,7 +1857,7 @@ public class ProxyService : IDisposable
       "properties": {
         "system": {
           "active": true,
-          "connection": "12345678-1234-1234-1234-123456789abc"
+          "connection": "{{squadConnGuid}}"
         }
       }
     }
@@ -1682,14 +1910,11 @@ public class ProxyService : IDisposable
     {
         if (_ghostSession is null) return "{}";
 
-        // CRITICAL FIX #1: Use the REAL connection GUID that was captured when the player
-        // originally joined the match. MPSD validates rejoin attempts using this GUID.
-        // A fake GUID will cause rejoin validation to fail.
-        // If not captured, generate a fresh GUID rather than using a hardcoded fallback
-        // (hardcoded fallback would make all ghost sessions appear as the same member).
+        // Use the SAVED connection GUID - this proves session continuity.
+        // Per technical writeup: "The game server validates rejoin attempts using this GUID."
         string connectionGuid = string.IsNullOrEmpty(_ghostSession.ConnectionGuid)
-            ? Guid.NewGuid().ToString()              // Generate fresh fallback
-            : _ghostSession.ConnectionGuid;             // Real captured GUID
+            ? Guid.NewGuid().ToString()              // Fallback only if never captured
+            : _ghostSession.ConnectionGuid;          // Original saved GUID
 
         // CRITICAL FIX #2: Include RTA subscription object for connection validation!
         string subscriptionField = "";
@@ -1744,14 +1969,10 @@ public class ProxyService : IDisposable
     /// <summary>Generate a fake member document showing player is active.</summary>
     private string GenerateFakeMemberDocument()
     {
-        // CRITICAL FIX #1: Use the REAL connection GUID that was captured when the player
-        // originally joined the match. MPSD validates rejoin attempts using this GUID.
-        // A fake GUID will cause rejoin validation to fail.
-        // If not captured, generate a fresh GUID rather than using a hardcoded fallback
-        // (hardcoded fallback would make all ghost sessions appear as the same member).
+        // Use the SAVED connection GUID - proves session continuity.
         string connectionGuid = _ghostSession is null || string.IsNullOrEmpty(_ghostSession.ConnectionGuid)
-            ? Guid.NewGuid().ToString()              // Generate fresh fallback
-            : _ghostSession.ConnectionGuid;             // Real captured GUID
+            ? Guid.NewGuid().ToString()              // Fallback only if never captured
+            : _ghostSession.ConnectionGuid;          // Original saved GUID
 
         // CRITICAL FIX #2: Include RTA subscription object for connection validation!
         // When the session template has connectionRequiredForActiveMembers=true,
@@ -1802,8 +2023,20 @@ public class ProxyService : IDisposable
     }
 
     /// <summary>
-    /// Background task: automatically sync the ghost session with real MPSD.
-    /// Once sync succeeds, disable ghost mode.
+    /// Background task: ONE-SHOT sync of the ghost session with real MPSD.
+    /// Matches PortableCLEAN's proven approach: single GET + PUT at +2s, then DONE.
+    ///
+    /// CRITICAL INSIGHT: The looping AutoSync was CAUSING session death!
+    /// - inactiveRemovalTimeout=0 fires "immediately before a read or write request"
+    /// - Ghost mode blocks all MCC requests from reaching real MPSD
+    /// - AutoSync loop was the ONLY real MPSD access during recovery
+    /// - At ~28s, MPSD heartbeat detects dead WebSocket, marks member inactive
+    /// - Our own PUT at ~28s triggers the timeout check, removing the player
+    /// - Without the loop, nobody touches the session, timeout never fires
+    ///
+    /// The saved connection GUID is CORRECT per the technical writeup:
+    /// "The game server validates rejoin attempts using this GUID. If we omit
+    /// or change it, the game server will reject the rejoin."
     /// </summary>
     private async Task AutoSyncGhostSessionAsync()
     {
@@ -1811,103 +2044,233 @@ public class ProxyService : IDisposable
 
         try
         {
-            // Wait 2 seconds before starting sync — let MCC settle after restart
+            // Wait 2 seconds before sync - let MCC settle after restart
             await Task.Delay(2000);
 
-            // Attempt GET to check if session is alive
+            // Use fresh auth headers if available, fall back to saved headers
+            var authHeaders = _lastCapturedAuthHeaders ?? _ghostSession.RequestHeaders;
+
+            // ── GET: check session is alive and get ETag ──
             using var getReq = new HttpRequestMessage(HttpMethod.Get, _ghostSession.SessionUrl);
-            foreach (var (k, v) in _ghostSession.RequestHeaders)
-                if (k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+            foreach (var (k, v) in authHeaders)
+                // FIX #13: Skip Signature header - per-request crypto proof, causes 403 when replayed
+                if ((k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
+                     k.Equals("Authorization", StringComparison.OrdinalIgnoreCase)) &&
+                    !k.Equals("Signature", StringComparison.OrdinalIgnoreCase))
                     getReq.Headers.TryAddWithoutValidation(k, v);
 
             using var getResp = await new HttpClient(new HttpClientHandler { UseProxy = false })
                 .SendAsync(getReq);
 
-            if (!getResp.IsSuccessStatusCode) return;  // Session dead, keep ghost mode
-
-            string etag = getResp.Headers.ETag?.Tag ?? "";
-            if (string.IsNullOrEmpty(etag)) return;  // No ETag, can't proceed
-
-            // Session is alive! Now PUT /members/me to re-add player as active
-            // CRITICAL FIX #1: Include the ACTUAL captured connection GUID from when the player originally joined!
-            // This GUID proves continuity to MPSD - it's the key validation that allows rejoin.
-            // If the GUID is empty or wrong, MPSD will reject or remove the member.
-
-            // Build the PUT body with connection GUID and subscription
-            string connectionGuid = _ghostSession.ConnectionGuid ?? "";
-
-            // CRITICAL FIX #2: Include RTA subscription object for connection validation!
-            // When the session template has connectionRequiredForActiveMembers=true,
-            // MPSD validates that active members have valid RTA subscriptions.
-            // Without the subscription ID, the game server's connection validation fails.
-            // The subscription ID must match what was captured during the original join.
-            string subscriptionJson = "";
-            if (!string.IsNullOrEmpty(_ghostSession.SubscriptionId))
+            if (!getResp.IsSuccessStatusCode)
             {
-                var changeTypesList = string.Join("\", \"", _ghostSession.ChangeTypes);
-                subscriptionJson = $@",
-    ""subscription"": {{
-      ""id"": ""{_ghostSession.SubscriptionId}"",
-      ""changeTypes"": [""{changeTypesList}""]
-    }}";
+                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                {
+                    Method       = "GHOST[AutoSync-GET-Fail]",
+                    Url          = _ghostSession.SessionUrl,
+                    Host         = "sessiondirectory.xboxlive.com",
+                    Path         = new Uri(_ghostSession.SessionUrl).AbsolutePath,
+                    RequestBody  = "One-shot GET failed",
+                    StatusCode   = (int)getResp.StatusCode,
+                    ResponseBody = "Session may be dead or auth expired - ghost mode stays ON",
+                });
+                return;  // Session dead, keep ghost mode for faking
             }
 
-            // MPSD API: PUT /sessions/{id}/members/me expects member properties directly (no "members" wrapper)
+            string etag = getResp.Headers.ETag?.Tag ?? "";
+            if (string.IsNullOrEmpty(etag)) return;
+
+            // ── PUT: re-add player with SAVED connection GUID ──
+            // CRITICAL: Use the ORIGINAL saved GUID, not MCC's new one.
+            // The game server validates using this GUID (per technical writeup).
+            string connectionGuid = _ghostSession.ConnectionGuid ?? "";
+
+            // Connection field - required by connectionRequiredForActiveMembers
+            string connectionField = string.IsNullOrEmpty(connectionGuid)
+                ? ""
+                : $",\"connection\":\"{connectionGuid}\"";
+
             var putBody = $$"""
 {
-  "properties": {
-    "system": {
-      "active": true{{subscriptionJson}}
-    },
-    "custom": {}
+  "members": {
+    "me": {
+      "properties": {
+        "system": {
+          "active": true{{connectionField}}
+        },
+        "custom": {}
+      }
+    }
   }
 }
 """;
 
-            // PUT to /members/me endpoint, not the session root
-            string memberUrl = _ghostSession.SessionUrl + "/members/me";
-            using var putReq = new HttpRequestMessage(HttpMethod.Put, memberUrl);
+            using var putReq = new HttpRequestMessage(HttpMethod.Put, _ghostSession.SessionUrl);
             putReq.Content = new StringContent(putBody, System.Text.Encoding.UTF8, "application/json");
             putReq.Headers.TryAddWithoutValidation("If-Match", etag);
-            foreach (var (k, v) in _ghostSession.RequestHeaders)
-                if (k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+            foreach (var (k, v) in authHeaders)
+                // FIX #13: Skip Signature header on PUT too
+                if ((k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
+                     k.Equals("Authorization", StringComparison.OrdinalIgnoreCase)) &&
+                    !k.Equals("Signature", StringComparison.OrdinalIgnoreCase))
                     putReq.Headers.TryAddWithoutValidation(k, v);
 
             using var putResp = await new HttpClient(new HttpClientHandler { UseProxy = false })
                 .SendAsync(putReq);
 
-            if (putResp.IsSuccessStatusCode || putResp.StatusCode == System.Net.HttpStatusCode.NoContent)
+        if (putResp.IsSuccessStatusCode || putResp.StatusCode == System.Net.HttpStatusCode.NoContent)
+        {
+            _ghostSessionSyncSuccess = true;
+            OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
             {
-                // Sync succeeded! Keep ghost mode ON permanently - MCC needs it during rejoin
-                _ghostSessionSyncSuccess = true;
-                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
-                {
-                    Method       = "GHOST[AutoSync-Permanent]",
-                    Url          = _ghostSession.SessionUrl,
-                    Host         = "sessiondirectory.xboxlive.com",
-                    Path         = new Uri(_ghostSession.SessionUrl).AbsolutePath,
-                    RequestBody  = "Background automatic sync: GET + PUT succeeded",
-                    StatusCode   = (int)putResp.StatusCode,
-                    ResponseBody = "PERMANENT: Ghost mode stays ON to support rejoin flow",
-                });
+                Method       = "GHOST[AutoSync-OneShot]",
+                Url          = _ghostSession.SessionUrl,
+                Host         = "sessiondirectory.xboxlive.com",
+                Path         = new Uri(_ghostSession.SessionUrl).AbsolutePath,
+                RequestBody  = $"One-shot sync: GET + PUT succeeded | conn={connectionGuid[..Math.Min(8, connectionGuid.Length)]}... (saved)",
+                StatusCode   = (int)putResp.StatusCode,
+                ResponseBody = "ONE-SHOT DONE: No more MPSD access (prevents inactiveRemovalTimeout trigger)",
+            });
+        }
+        else
+        {
+            string respBody = "";
+            try { respBody = await putResp.Content.ReadAsStringAsync(); } catch { }
 
-                // DO NOT disable ghost mode - MCC needs it to be active during the rejoin window
-                // Disabling it too early breaks the rejoin process
-                // _ghostSessionMode = false;  ← KEEP THIS COMMENTED
-            }
+            OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+            {
+                Method       = "GHOST[AutoSync-PUT-Fail]",
+                Url          = _ghostSession.SessionUrl,
+                Host         = "sessiondirectory.xboxlive.com",
+                Path         = new Uri(_ghostSession.SessionUrl).AbsolutePath,
+                RequestBody  = $"One-shot PUT failed conn={connectionGuid[..Math.Min(8, connectionGuid.Length)]}...",
+                StatusCode   = (int)putResp.StatusCode,
+                ResponseBody = respBody.Length > 300 ? respBody[..300] : respBody,
+            });
+        }
         }
         catch (Exception ex)
         {
-            // Sync failed, keep ghost mode active for retry
             OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
             {
                 Method       = "GHOST[SyncError]",
                 Url          = _ghostSession?.SessionUrl ?? "unknown",
                 Host         = "sessiondirectory.xboxlive.com",
                 Path         = "",
-                RequestBody  = "Background sync failed (will retry on next request)",
+                RequestBody  = "One-shot sync failed unexpectedly",
+                StatusCode   = 0,
+                ResponseBody = ex.Message,
+            });
+        }
+    }
+
+    /// <summary>
+    /// FIX #16: GUID Upgrade - replaces the dead connection GUID on the CascadeMatchmaking
+    /// session with MCC's new live GUID. This is triggered when we see MCC's first
+    /// cascadesquadsession PUT during crash recovery, which contains the new RTA WebSocket GUID.
+    /// Without this, MPSD's heartbeat detects the dead WebSocket at ~30s and marks the member
+    /// inactive. With the upgrade, MPSD sees a valid live connection and never triggers
+    /// inactiveRemovalTimeout.
+    /// </summary>
+    private async Task GuidUpgradeAsync(string sessionUrl, string newGuid, string newSubId,
+        Dictionary<string, string> authHeaders)
+    {
+        try
+        {
+            // GET the current ETag first
+            using var getReq = new HttpRequestMessage(HttpMethod.Get, sessionUrl);
+            foreach (var (k, v) in authHeaders)
+                getReq.Headers.TryAddWithoutValidation(k, v);
+
+            using var httpClient = new HttpClient(new HttpClientHandler { UseProxy = false });
+            using var getResp = await httpClient.SendAsync(getReq);
+
+            if (!getResp.IsSuccessStatusCode)
+            {
+                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                {
+                    Method       = "UPGRADE[GUID-GET-Fail]",
+                    Url          = sessionUrl,
+                    Host         = "sessiondirectory.xboxlive.com",
+                    Path         = new Uri(sessionUrl).AbsolutePath,
+                    RequestBody  = $"GET failed for GUID upgrade | newGuid={newGuid[..Math.Min(8, newGuid.Length)]}...",
+                    StatusCode   = (int)getResp.StatusCode,
+                    ResponseBody = "Cannot upgrade - player may already be removed",
+                });
+                return;
+            }
+
+            string etag = getResp.Headers.ETag?.Tag ?? "";
+            if (string.IsNullOrEmpty(etag)) return;
+
+            // Build PUT body with the NEW live connection GUID and subscription
+            string subscriptionBlock = string.IsNullOrEmpty(newSubId)
+                ? ""
+                : $",\"subscription\":{{\"id\":\"{newSubId}\",\"changeTypes\":[\"everything\"]}}";
+
+            var putBody = $$"""
+{
+  "members": {
+    "me": {
+      "properties": {
+        "system": {
+          "active": true,
+          "connection": "{{newGuid}}"{{subscriptionBlock}}
+        },
+        "custom": {}
+      }
+    }
+  }
+}
+""";
+
+            using var putReq = new HttpRequestMessage(HttpMethod.Put, sessionUrl);
+            putReq.Content = new StringContent(putBody, System.Text.Encoding.UTF8, "application/json");
+            putReq.Headers.TryAddWithoutValidation("If-Match", etag);
+            foreach (var (k, v) in authHeaders)
+                putReq.Headers.TryAddWithoutValidation(k, v);
+
+            using var httpClient2 = new HttpClient(new HttpClientHandler { UseProxy = false });
+            using var putResp = await httpClient2.SendAsync(putReq);
+
+            if (putResp.IsSuccessStatusCode || putResp.StatusCode == System.Net.HttpStatusCode.NoContent)
+            {
+                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                {
+                    Method       = "UPGRADE[GUID-Success]",
+                    Url          = sessionUrl,
+                    Host         = "sessiondirectory.xboxlive.com",
+                    Path         = new Uri(sessionUrl).AbsolutePath,
+                    RequestBody  = $"GUID upgraded: old -> {newGuid[..Math.Min(8, newGuid.Length)]}... | sub={newSubId[..Math.Min(8, newSubId.Length)]}...",
+                    StatusCode   = (int)putResp.StatusCode,
+                    ResponseBody = "Connection GUID now points to live RTA WebSocket - inactiveRemovalTimeout should NOT fire",
+                });
+            }
+            else
+            {
+                string respBody = "";
+                try { respBody = await putResp.Content.ReadAsStringAsync(); } catch { }
+                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                {
+                    Method       = "UPGRADE[GUID-PUT-Fail]",
+                    Url          = sessionUrl,
+                    Host         = "sessiondirectory.xboxlive.com",
+                    Path         = new Uri(sessionUrl).AbsolutePath,
+                    RequestBody  = $"GUID upgrade PUT failed | newGuid={newGuid[..Math.Min(8, newGuid.Length)]}...",
+                    StatusCode   = (int)putResp.StatusCode,
+                    ResponseBody = respBody.Length > 300 ? respBody[..300] : respBody,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+            {
+                Method       = "UPGRADE[GUID-Error]",
+                Url          = sessionUrl,
+                Host         = "sessiondirectory.xboxlive.com",
+                Path         = "",
+                RequestBody  = $"GUID upgrade exception | newGuid={newGuid[..Math.Min(8, newGuid.Length)]}...",
                 StatusCode   = 0,
                 ResponseBody = ex.Message,
             });

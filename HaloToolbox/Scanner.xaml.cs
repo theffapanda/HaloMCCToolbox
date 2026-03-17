@@ -267,6 +267,7 @@ public partial class Scanner : UserControl
         if (entry.Method == "PUT" &&
             entry.Url.Contains("/CascadeMatchmaking/sessions/", StringComparison.OrdinalIgnoreCase))
             LoadSavedMatchSession();
+
     }
 
     private void ProxyCaptureList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -412,8 +413,8 @@ public partial class Scanner : UserControl
     // ── Capture filter ────────────────────────────────────────────────────────
     private static readonly string[] _rejoinMethods =
     {
-        "SAVE[", "LOAD[", "RESTORE[", "INJECT", "PASS[", "BLOCK[",
-        "PUT[JIT", "POST[JIT", "PATCH[", "GET[ETag", "FAKE["
+        "SAVE[", "LOAD[", "RESTORE[", "INJECT", "AUTO-BLOCK", "CACHE[",
+        "REDIRECT[", "GHOST[", "PUT[JIT", "POST[JIT", "ERROR[", "PASS[", "FAKE["
     };
 
     private bool FilterCapture(ProxyCaptureEntry e)
@@ -988,7 +989,10 @@ public partial class Scanner : UserControl
         {
             AddDiag("LOAD[Handle]", $"ERROR: {ex.GetType().Name}: {ex.Message}", HandleFile);
         }
-        finally { UpdateRejoinGuardUi(); }
+        finally
+        {
+            UpdateRejoinGuardUi();
+        }
     }
 
     private void LoadSavedMatchSession()
@@ -1015,7 +1019,10 @@ public partial class Scanner : UserControl
         {
             AddDiag("LOAD[Match]", $"ERROR: {ex.GetType().Name}: {ex.Message}", MatchSessionFile);
         }
-        finally { UpdateRejoinGuardUi(); }
+        finally
+        {
+            UpdateRejoinGuardUi();
+        }
     }
 
     // ── Rejoin Guard: Button Handlers ─────────────────────────────────────────────
@@ -1370,8 +1377,13 @@ public partial class Scanner : UserControl
                 //   1. PUT /members/me to the match session (JIT, with MCC's fresh auth)
                 //   2. POST activity handle for the match session
                 //   3. Force-replace session discovery results (if MCC does discovery)
+                //   4. Background sync match to keep RTA connection alive
                 if (_savedMatchSession is not null)
                     _proxy.SetPendingCrashRestore(_savedMatchSession);
+
+                // Pass saved squad handle so proxy can override handle POSTs
+                if (_savedHandle is not null)
+                    _proxy.SetSavedSquadHandle(_savedHandle);
 
                 _restoreInProgress = false;
             }
@@ -1388,4 +1400,6 @@ public partial class Scanner : UserControl
             Debug.WriteLine($"[ERROR] MccWatcher_Tick: {ex.GetType().Name}: {ex.Message}");
         }
     }
+
 }
+

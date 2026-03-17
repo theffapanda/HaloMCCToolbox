@@ -82,6 +82,9 @@ public class SavedHandleInfo
     [JsonPropertyName("changeTypes")]
     public List<string> ChangeTypes { get; set; } = new() { "everything" };  // RTA change types
 
+    [JsonPropertyName("playerXuid")]
+    public string PlayerXuid { get; set; } = "";  // Player's Xbox Live User ID - CRITICAL for member injection
+
     // Display helpers
     public string SessionShort => SessionName.Length > 13 ? SessionName[..13] + "…" : SessionName;
     public string SavedAtStr   => SavedAt.ToLocalTime().ToString("HH:mm:ss");
@@ -89,6 +92,9 @@ public class SavedHandleInfo
         $"https://sessiondirectory.xboxlive.com/serviceconfigs/{Scid}" +
         $"/sessionTemplates/{TemplateName}/sessions/{SessionName}";
     public string MemberUrl    => SessionUrl + "/members/me";
+
+    /// <summary>True if this is a solo squad (cascadesquadsession with 1 member).</summary>
+    public bool IsSoloSquad => TemplateName?.Equals("cascadesquadsession", StringComparison.OrdinalIgnoreCase) == true;
 }
 
 // ── Game Server Redirection ───────────────────────────────────────────────────

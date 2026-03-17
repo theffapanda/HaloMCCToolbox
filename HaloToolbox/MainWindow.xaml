@@ -26,6 +26,104 @@
                 </DrawingGroup>
             </DrawingBrush.Drawing>
         </DrawingBrush>
+        <!-- Basic/Advanced mode converters -->
+        <local:IntToVisibilityConverter x:Key="IntToVisibilityConverter"/>
+        <local:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+
+        <!-- ComboBox style for dark mode -->
+        <Style x:Key="DarkComboBox" TargetType="ComboBox">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter Grid.Column="0" Content="{TemplateBinding Content}" Margin="8,4" VerticalAlignment="Center" HorizontalAlignment="Left" TextBlock.Foreground="{DynamicResource TextBrush}"/>
+                                                <Path Grid.Column="1" Data="M0,0 L4,4 L8,0 Z" Fill="{DynamicResource MutedBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            </Grid>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                                <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
+                            </ToggleButton>
+                            <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" PopupAnimation="Fade" Margin="0">
+                                <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                    <ScrollViewer SnapsToDevicePixels="True">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ComboBoxItem style for proper text color in dark mode -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        </Style>
+
+        <!-- Mode Toggle Button (Binary toggle for Basic/Advanced) -->
+        <Style x:Key="ModeToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="2">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <!-- Basic Button (left side) -->
+                                <Border Grid.Column="0" Background="{TemplateBinding Background}" Padding="0">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="Transparent"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="False">
+                                                    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="Basic" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}" Padding="8,4"/>
+                                </Border>
+                                <!-- Advanced Button (right side) -->
+                                <Border Grid.Column="1" Background="{TemplateBinding Background}" Padding="0" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1,0,0,0">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="Transparent"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="Advanced" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}" Padding="8,4"/>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <!-- Outer chrome -->
@@ -174,7 +272,9 @@
             </Border>
 
             <!-- ══ MAIN CONTENT ══ -->
-            <TabControl Grid.Row="1"
+            <Grid Grid.Row="1">
+                <!-- TabControl fills the grid -->
+                <TabControl
                         Style="{StaticResource DarkTab}"
                         Background="{DynamicResource BgBrush}"
                         Margin="0">
@@ -320,7 +420,8 @@
                                 BorderThickness="1"
                                 CornerRadius="3"
                                 Padding="20"
-                                Margin="0,0,0,14">
+                                Margin="0,0,0,14"
+                                Visibility="{Binding ElementName=AdvancedMode, Path=IsChecked, Converter={StaticResource BoolToVisibilityConverter}}">
                             <Border.Effect>
                                 <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="0" Opacity="0.5"/>
                             </Border.Effect>
@@ -332,14 +433,14 @@
                                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,20,0">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
                                         <TextBlock Text="↻ " FontSize="16" VerticalAlignment="Center"/>
-                                        <TextBlock Text="FIX REJOINS"
+                                        <TextBlock Text="FIX REJOINS: EXPERIMENTAL, SOLO ONLY"
                                                    FontFamily="Consolas"
                                                    FontSize="13"
                                                    FontWeight="Bold"
                                                    Foreground="White"
                                                    VerticalAlignment="Center"/>
                                     </StackPanel>
-                                    <TextBlock Text="EXPERIMENTAL: Activates the network proxy to capture and display rejoin requests, team assignments, and player skill distribution. Helps debug session invites and rejoin guards. Restart MCC after starting the proxy. This may impact other applications, use at your own risk."
+                                    <TextBlock Text="EXPERIMENTAL: Activates the network proxy to capture and display rejoin requests, team assignments, and player skill distribution. Helps debug session invites and rejoin guards. Restart MCC after starting the proxy. This may impact other applications, use at your own risk. WILL NOT WORK IN PARTIES"
                                                FontFamily="Consolas"
                                                FontSize="11"
                                                Foreground="{DynamicResource MutedBrush}"
@@ -1407,7 +1508,8 @@
                 </TabItem>
 
                 <!-- ═══ TAB 5: SCANNER ═══ -->
-                <TabItem Header="🔍  SCANNER" Style="{StaticResource DarkTabItem}">
+                <TabItem Header="🔍  SCANNER" Style="{StaticResource DarkTabItem}"
+                         Visibility="{Binding ElementName=AdvancedMode, Path=IsChecked, Converter={StaticResource BoolToVisibilityConverter}}">
                     <local:Scanner x:Name="ScannerTab" />
                 </TabItem>
 
@@ -1518,7 +1620,71 @@
                     </Grid>
                 </TabItem>
 
-            </TabControl>
+                </TabControl>
+
+                <!-- Basic/Advanced Mode Selector (overlaid on TabControl) -->
+                <Border Width="140"
+                        Height="28"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Margin="0,8,12,0"
+                        Background="{DynamicResource SurfaceBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="2">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="1"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <!-- Basic Mode RadioButton -->
+                        <RadioButton Grid.Column="0" x:Name="BasicMode" GroupName="ModeGroup" IsChecked="True"
+                                     VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Focusable="False">
+                            <RadioButton.Template>
+                                <ControlTemplate TargetType="RadioButton">
+                                    <Border Padding="0" CornerRadius="0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="True">
+                                                        <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="Basic" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource TextBrush}" Padding="8,0" FontSize="12"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </RadioButton.Template>
+                        </RadioButton>
+                        <!-- Divider -->
+                        <Border Grid.Column="1" Background="{DynamicResource BorderBrush}"/>
+                        <!-- Advanced Mode RadioButton -->
+                        <RadioButton Grid.Column="2" x:Name="AdvancedMode" GroupName="ModeGroup"
+                                     VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Focusable="False">
+                            <RadioButton.Template>
+                                <ControlTemplate TargetType="RadioButton">
+                                    <Border Padding="0" CornerRadius="0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="True">
+                                                        <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="Advanced" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource TextBrush}" Padding="8,0" FontSize="12"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </RadioButton.Template>
+                        </RadioButton>
+                    </Grid>
+                </Border>
+            </Grid>
 
             <!-- ══ STATUS BAR ══ -->
             <Border Grid.Row="2"

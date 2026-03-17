@@ -2389,4 +2389,35 @@ echo All tasks complete.
         public string   Totals  { get; set; } = "";
         public DateTime Added   { get; set; }
     }
+
+    // ------------------------------------------
+    // Basic/Advanced mode toggle converter
+    // ------------------------------------------
+    public class IntToVisibilityConverter : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            // 0 = Basic (hide Advanced sections), 1 = Advanced (show all)
+            return (int)value == 1 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    public class BoolToVisibilityConverter : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            // false = Basic (hide Advanced), true = Advanced (show)
+            return (bool)value ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            throw new NotImplementedException();
+        }
+    }
 }

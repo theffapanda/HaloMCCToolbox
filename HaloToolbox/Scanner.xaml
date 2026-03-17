@@ -1,6 +1,7 @@
 <UserControl x:Class="HaloToolbox.Scanner"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:HaloToolbox"
              Foreground="#C8D8E8"
              FontFamily="Consolas"
              FontSize="11"
@@ -97,7 +98,7 @@
 
     <Grid Background="#0A0C10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="220" MinHeight="80"/>  <!-- Session Intel panel — resizable -->
+            <RowDefinition Height="Auto"/>                <!-- Session Intel panel — minimal -->
             <RowDefinition Height="5"/>                   <!-- Drag splitter -->
             <RowDefinition Height="*"/>                   <!-- Proxy capture panel -->
         </Grid.RowDefinitions>
@@ -177,7 +178,8 @@
                     </ScrollViewer>
                 </Border>
 
-                <!-- Column headers -->
+
+                <!-- Session Members Display (moved to togglable section) -->
                 <Border DockPanel.Dock="Top" Background="#141820"
                         BorderBrush="#2A3238"
                         BorderThickness="0,1,0,1"
