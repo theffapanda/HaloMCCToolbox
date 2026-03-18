@@ -61,6 +61,9 @@ public partial class Scanner : UserControl
         _proxy.OnSessionCaptured += (_, _) =>
             Dispatcher.InvokeAsync(() => UpdateRejoinGuardUi());
 
+        _proxy.OnPartyCacheChanged += (_, _) =>
+            Dispatcher.InvokeAsync(() => UpdateRejoinGuardUi());
+
         _captureView = CollectionViewSource.GetDefaultView(_captureLog);
         _captureView.Filter = o => FilterCapture((ProxyCaptureEntry)o);
 
@@ -203,9 +206,76 @@ public partial class Scanner : UserControl
         RejoinStatusText.Text      = "";
         RejoinCheckBtn.IsEnabled   = false;
         RejoinRestoreBtn.IsEnabled = false;
+
+        var cachedAt  = _proxy.PartyCachedAt;
+        var tsStr     = cachedAt.HasValue ? $"  {cachedAt.Value:HH:mm:ss}" : "";
+
+        // Determine if the party predates the current session capture.
+        // If it does, warn: the cached party might be from a different match.
+        bool partyPredatesSession = cachedAt.HasValue &&
+                                    captured is not null &&
+                                    cachedAt.Value < captured.SavedAt.ToLocalTime();
+
+        switch (_proxy.PartyCache)
+        {
+            case ProxyService.PartyCacheState.None:
+                RejoinPartyText.Text       = "party: not cached";
+                RejoinPartyText.Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0x7D, 0x85, 0x90));
+                break;
+            case ProxyService.PartyCacheState.Priming:
+                RejoinPartyText.Text       = "party: priming…";
+                RejoinPartyText.Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0xFF, 0xC0, 0x30));
+                break;
+            case ProxyService.PartyCacheState.Stale:
+                RejoinPartyText.Text       = $"party: stale (not cached){tsStr}";
+                RejoinPartyText.Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0xFF, 0x7B, 0x25));
+                break;
+            case ProxyService.PartyCacheState.Ready:
+            {
+                var cachedIp = _proxy.CachedPartyIp;
+                var liveIp   = _proxy.LivePartyIp;
+                bool ipsKnown = !string.IsNullOrEmpty(cachedIp) && !string.IsNullOrEmpty(liveIp);
+                bool ipMatch  = ipsKnown && string.Equals(cachedIp, liveIp, StringComparison.OrdinalIgnoreCase);
+
+                if (ipsKnown && !ipMatch)
+                {
+                    // We know both — they differ. Cache will redirect on crash.
+                    RejoinPartyText.Text       = $"party: cached={cachedIp}  live={liveIp}{tsStr}  (redirect on crash)";
+                    RejoinPartyText.Foreground = new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0xFF, 0xC0, 0x30));
+                }
+                else if (ipsKnown)
+                {
+                    // Both known, match — ideal.
+                    RejoinPartyText.Text       = $"party: ready ✓  {cachedIp}{tsStr}";
+                    RejoinPartyText.Foreground = new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0x3F, 0xB9, 0x50));
+                }
+                else if (partyPredatesSession)
+                {
+                    var lag    = captured!.SavedAt.ToLocalTime() - cachedAt!.Value;
+                    var lagStr = lag.TotalMinutes >= 1
+                        ? $"{(int)lag.TotalMinutes}m before session"
+                        : $"{(int)lag.TotalSeconds}s before session";
+                    RejoinPartyText.Text       = $"party: old ⚠  {cachedIp}  {cachedAt!.Value:HH:mm:ss}  ({lagStr})";
+                    RejoinPartyText.Foreground = new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0xFF, 0x7B, 0x25));
+                }
+                else
+                {
+                    RejoinPartyText.Text       = $"party: ready ✓  {cachedIp}{tsStr}";
+                    RejoinPartyText.Foreground = new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0x3F, 0xB9, 0x50));
+                }
+                break;
+            }
+        }
     }
 
-    private const int CrashWindowSeconds = 30;
+    private const int CrashWindowSeconds = 60;
 
     /// <summary>Clears the captured session and crash window from proxy state.</summary>
     public void ClearRejoinData()
@@ -925,6 +995,22 @@ public partial class Scanner : UserControl
     private void RejoinCheck_Click(object sender, RoutedEventArgs e)   { /* proxy handles discovery automatically */ }
     private void RejoinRestore_Click(object sender, RoutedEventArgs e) { /* proxy handles discovery automatically */ }
     private void RejoinClear_Click(object sender, RoutedEventArgs e)   { ClearRejoinData(); }
+
+    private async void PrimeParty_Click(object sender, RoutedEventArgs e)
+    {
+        PrimePartyBtn.IsEnabled = false;
+        PrimePartyBtn.Content   = "⚡ PRIMING…";
+        try
+        {
+            await _proxy.PrimeCacheAsync(auto: false);
+            UpdateRejoinGuardUi();
+        }
+        finally
+        {
+            PrimePartyBtn.IsEnabled = true;
+            PrimePartyBtn.Content   = "⚡ PRIME PARTY";
+        }
+    }
 
     /// <summary>Log a timestamp marker for when user closes MCC (debugging rejoin flow).</summary>
     private void LogQuit_Click(object sender, RoutedEventArgs e)

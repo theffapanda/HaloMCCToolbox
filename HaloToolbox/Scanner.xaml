@@ -457,6 +457,9 @@
                             <TextBlock x:Name="RejoinStatusText"
                                        Text=""
                                        FontFamily="Consolas" FontSize="9" Foreground="#7D8590"/>
+                            <TextBlock x:Name="RejoinPartyText"
+                                       Text="party: not cached"
+                                       FontFamily="Consolas" FontSize="9" Foreground="#7D8590"/>
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal"
@@ -473,7 +476,12 @@
                                     Padding="6,2" FontSize="9" Margin="0,0,4,0"/>
                             <Button Content="CLEAR" Click="RejoinClear_Click"
                                     Style="{StaticResource FlatBtn}"
-                                    Padding="6,2" FontSize="9" Margin="0,0,8,0"/>
+                                    Padding="6,2" FontSize="9" Margin="0,0,4,0"/>
+                            <Button x:Name="PrimePartyBtn"
+                                    Content="⚡ PRIME PARTY" Click="PrimeParty_Click"
+                                    Style="{StaticResource FlatBtn}"
+                                    Padding="6,2" FontSize="9" Margin="0,0,8,0"
+                                    ToolTip="Force-cache the party server now so crash rejoin works without a prior manual rejoin"/>
                             <!-- Timestamp buttons for debugging -->
                             <Button Content="📍 LOG QUIT" Click="LogQuit_Click"
                                     Style="{StaticResource FlatBtn}"

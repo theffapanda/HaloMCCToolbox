@@ -56,8 +56,9 @@ public class ProxyService : IDisposable
     private SavedHandleInfo? _capturedSession;
     private DateTime?        _crashDetectedAt;
 
-    // Single window for both injection and leave blocking
-    private const int CrashWindowSeconds = 30;
+    // Single window for both injection and leave blocking.
+    // MCC takes ~34s from crash to RequestParty on rejoin — 60s gives safe margin.
+    private const int CrashWindowSeconds = 60;
 
     // How many leaves we've blocked this recovery (diagnostic)
     private int _leaveBlockCount = 0;
@@ -75,7 +76,30 @@ public class ProxyService : IDisposable
     private string _playerXuid     = "";
     private string _playerGamertag = "";
 
+    // PlayFab entity token + host captured from MCC's own requests.
+    // Used to make background RequestParty calls to prime the party cache
+    // before a crash ever happens.
+    private string _capturedEntityToken      = "";
+    private string _capturedPlayFabHost      = "";
+    private string _capturedPartyRequestBody = "";  // exact body MCC sends to /Party/RequestParty
+
     public SavedHandleInfo? CapturedSession => _capturedSession;
+
+    /// <summary>
+    /// Party cache status for display in the Rejoin Guard panel.
+    /// </summary>
+    public enum PartyCacheState { None, Priming, Stale, Ready }
+    private PartyCacheState _partyCacheState  = PartyCacheState.None;
+    private DateTime?       _partyCachedAt    = null;
+    private string          _cachedPartyIp    = "";   // IP in _cachedPartyResponse
+    private string          _livePartyIp      = "";   // IP MCC last received from PlayFab directly
+    public  PartyCacheState PartyCache        => _partyCacheState;
+    public  DateTime?       PartyCachedAt     => _partyCachedAt;
+    public  string          CachedPartyIp     => _cachedPartyIp;
+    public  string          LivePartyIp       => _livePartyIp;
+
+    /// <summary>Raised when party cache state changes so the UI can refresh.</summary>
+    public event EventHandler? OnPartyCacheChanged;
 
     public bool IsInCrashWindow =>
         _crashDetectedAt.HasValue &&
@@ -147,8 +171,9 @@ public class ProxyService : IDisposable
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "HaloMCCToolbox");
 
-    private static string CertStorePath    => Path.Combine(DataDir, "proxy-root.pfx");
-    private static string PartyResponsePath => Path.Combine(DataDir, "last-party-response.json");
+    private static string CertStorePath        => Path.Combine(DataDir, "proxy-root.pfx");
+    private static string PartyResponsePath    => Path.Combine(DataDir, "last-party-response.json");
+    private static string PartyRequestBodyPath => Path.Combine(DataDir, "last-party-request-body.json");
 
     // ── Start / Stop ──────────────────────────────────────────────────────────
     public async Task StartAsync()
@@ -316,6 +341,72 @@ public class ProxyService : IDisposable
             }
         }
 
+        // Capture PlayFab entity token + host from any PlayFab request during active play.
+        // Used to prime the party cache before a crash happens.
+        if (req.RequestUri.Host.EndsWith("playfabapi.com", StringComparison.OrdinalIgnoreCase) &&
+            headers.TryGetValue("X-EntityToken", out var entityToken) &&
+            !string.IsNullOrEmpty(entityToken))
+        {
+            _capturedEntityToken = entityToken;
+            _capturedPlayFabHost = req.RequestUri.Host;
+
+            // Capture the exact request body MCC uses for RequestParty so we can
+            // replay it verbatim in background prime calls. PlayFab requires fields
+            // like "Version" or "Build" that an empty {} body omits.
+            if (req.Method == "POST" &&
+                req.RequestUri.AbsolutePath.Contains("/Party/RequestParty", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrEmpty(entry.RequestBody))
+            {
+                _capturedPartyRequestBody = entry.RequestBody;
+                // Persist so the body survives proxy restarts — once captured, prime works forever.
+                try { File.WriteAllText(PartyRequestBodyPath, entry.RequestBody, System.Text.Encoding.UTF8); }
+                catch { /* best-effort */ }
+            }
+        }
+
+        // ── PartyId swap: replace new post-crash UUID with saved original ─────
+        // When MCC crashes, it loses party state and generates a new PartyId on
+        // restart. PlayFab allocates a fresh empty server for the new ID instead
+        // of returning the original match party. Replace MCC's new PartyId with
+        // the one from our cached party response so PlayFab routes back to the
+        // original party server where the match is still happening.
+        if (IsInCrashWindow &&
+            req.Method == "POST" &&
+            req.RequestUri.Host.EndsWith("playfabapi.com", StringComparison.OrdinalIgnoreCase) &&
+            req.RequestUri.AbsolutePath.Contains("/Party/RequestParty", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrEmpty(entry.RequestBody) &&
+            !string.IsNullOrEmpty(_cachedPartyResponse))
+        {
+            var cachedPartyId = TryExtractPartyId(_cachedPartyResponse);
+            if (!string.IsNullOrEmpty(cachedPartyId))
+            {
+                try
+                {
+                    var bodyNode  = JsonNode.Parse(entry.RequestBody)?.AsObject();
+                    var newPartyId = bodyNode?["PartyId"]?.GetValue<string>() ?? "";
+                    if (bodyNode is not null &&
+                        !string.Equals(newPartyId, cachedPartyId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        bodyNode["PartyId"] = cachedPartyId;
+                        var modifiedBody = bodyNode.ToJsonString();
+                        e.SetRequestBody(System.Text.Encoding.UTF8.GetBytes(modifiedBody));
+                        entry.RequestBody = modifiedBody;
+                        OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                        {
+                            Method       = "REJOIN[PartyIdSwap]",
+                            Url          = entry.Url,
+                            Host         = entry.Host,
+                            Path         = entry.Path,
+                            RequestBody  = modifiedBody,
+                            StatusCode   = 0,
+                            ResponseBody = $"Swapped new PartyId {newPartyId[..Math.Min(8, newPartyId.Length)]}… → cached {cachedPartyId[..Math.Min(8, cachedPartyId.Length)]}… so PlayFab routes to original match party",
+                        });
+                    }
+                }
+                catch { /* best-effort — don't break the request on parse failure */ }
+            }
+        }
+
         // Stash for OnBeforeResponseAsync
         e.HttpClient.UserData = entry;
     }
@@ -387,10 +478,21 @@ public class ProxyService : IDisposable
 
             if (sessionInResults)
             {
-                // Session still alive in MPSD — pass through, no interference.
-                // MCC will find it with real member data and rejoin natively.
-                e.SetResponseBodyString(body);
-                entry.ResponseBody = body;
+                // Session still alive in MPSD — but the raw response may include OTHER
+                // sessions (e.g. a cascadesquadsession with "closed":true) that cause MCC
+                // to skip the rejoin prompt and start fresh matchmaking instead.
+                // Fix: return the same minimal injected format as the Injected path —
+                // only the CascadeMatchmaking sessionRef, nothing else.
+                var filteredBody =
+                    "{\"results\":[{\"xuid\":\"" + _playerXuid +
+                    "\",\"startTime\":\"" + _capturedSession.SavedAt.ToString("O") +
+                    "\",\"sessionRef\":{\"scid\":\"" + _capturedSession.Scid +
+                    "\",\"templateName\":\"" + _capturedSession.TemplateName +
+                    "\",\"name\":\"" + _capturedSession.SessionName +
+                    "\"}}]}";
+
+                e.SetResponseBodyString(filteredBody);
+                entry.ResponseBody = filteredBody;
 
                 OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
                 {
@@ -399,7 +501,7 @@ public class ProxyService : IDisposable
                     Host         = entry.Host,
                     Path         = entry.Path,
                     StatusCode   = 200,
-                    ResponseBody = $"Session still in MPSD — passing through real response. MCC should rejoin natively.",
+                    ResponseBody = $"Session still in MPSD — filtered to match-only sessionRef (strips closed squad) for {_capturedSession.TemplateName}/{_capturedSession.SessionShort}",
                 });
             }
             else
@@ -438,6 +540,15 @@ public class ProxyService : IDisposable
         // Inject the player's XUID back into the GET response so MCC shows
         // the rejoin button. The actual MPSD state is fixed ~200ms later by
         // UpdateMatchSessionConnectionAsync when the squad PUT arrives.
+
+        // DEBUG: Log why member injection may or may not fire
+        bool debugMemberInjection = !injected && _capturedSession is not null && !string.IsNullOrEmpty(_playerXuid) &&
+                                    req.Method == "GET" && req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase);
+        if (debugMemberInjection)
+        {
+            Debug.WriteLine($"[INJECT-DEBUG] CascadeMatchmaking GET detected. IsInCrashWindow={IsInCrashWindow}, _crashDetectedAt={_crashDetectedAt}, elapsed={(DateTime.UtcNow - (_crashDetectedAt ?? DateTime.UtcNow)).TotalSeconds}s");
+        }
+
         if (!injected &&
             _capturedSession is not null &&
             IsInCrashWindow &&
@@ -506,6 +617,7 @@ public class ProxyService : IDisposable
                 if (serversDiffer)
                 {
                     // PlayFab returned the wrong server — redirect to the original party server.
+                    _livePartyIp = realIp;   // record what PlayFab sent before we overwrote it
                     e.SetResponseBodyString(_cachedPartyResponse);
                     entry.ResponseBody = _cachedPartyResponse;
                     OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
@@ -523,6 +635,9 @@ public class ProxyService : IDisposable
                     // PlayFab already returned the correct server — pass real response through
                     // so MCC gets fresh party credentials. Update the cache with the fresh response.
                     _cachedPartyResponse = partyBody;
+                    _cachedPartyIp       = realIp;
+                    _livePartyIp         = realIp;
+                    SetPartyState(PartyCacheState.Ready);
                     try { File.WriteAllText(PartyResponsePath, partyBody, System.Text.Encoding.UTF8); }
                     catch { /* best-effort */ }
                     OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
@@ -542,18 +657,55 @@ public class ProxyService : IDisposable
                 // RequestParty only fires during the rejoin flow (never during passive play),
                 // so we must capture it whenever we see it — crash or not — so it's available
                 // for the NEXT crash recovery via disk.
-                _cachedPartyResponse = partyBody;
-                try { File.WriteAllText(PartyResponsePath, partyBody, System.Text.Encoding.UTF8); }
-                catch { /* best-effort */ }
-                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                //
+                // Staleness check: skip caching if the party server has been idle for >1 hour
+                // with zero connected players — PlayFab sometimes returns recycled stale
+                // assignments that will reject DTLS connections from MCC.
+                if (IsStaleParty(partyBody))
                 {
-                    Method       = "CAPTURE[Party]",
-                    Url          = entry.Url,
-                    Host         = entry.Host,
-                    Path         = entry.Path,
-                    StatusCode   = 200,
-                    ResponseBody = $"Cached party for crash recovery: {partyBody[..Math.Min(120, partyBody.Length)]}",
-                });
+                    OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                    {
+                        Method       = "PARTY[Stale]",
+                        Url          = entry.Url,
+                        Host         = entry.Host,
+                        Path         = entry.Path,
+                        StatusCode   = 200,
+                        ResponseBody = $"Skipped stale party (LastStateTransitionTime >1h old): {partyBody[..Math.Min(120, partyBody.Length)]}",
+                    });
+                }
+                else
+                {
+                    _cachedPartyResponse = partyBody;
+                    _cachedPartyIp       = TryExtractPartyIp(partyBody);
+                    _livePartyIp         = _cachedPartyIp;   // MCC's actual call — live = cached
+                    SetPartyState(PartyCacheState.Ready);
+                    try { File.WriteAllText(PartyResponsePath, partyBody, System.Text.Encoding.UTF8); }
+                    catch { /* best-effort */ }
+
+                    // Option B fallback: if we have the response but missed the request body,
+                    // construct a body from the BuildId in the response so future primes work.
+                    if (string.IsNullOrEmpty(_capturedPartyRequestBody))
+                    {
+                        var buildId = TryExtractBuildId(partyBody);
+                        if (!string.IsNullOrEmpty(buildId))
+                        {
+                            _capturedPartyRequestBody = $"{{\"Build\":\"{buildId}\"}}";
+                            try { File.WriteAllText(PartyRequestBodyPath, _capturedPartyRequestBody, System.Text.Encoding.UTF8); }
+                            catch { /* best-effort */ }
+                            Debug.WriteLine($"[PARTY] Constructed RequestParty body from BuildId: {buildId}");
+                        }
+                    }
+
+                    OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                    {
+                        Method       = "CAPTURE[Party]",
+                        Url          = entry.Url,
+                        Host         = entry.Host,
+                        Path         = entry.Path,
+                        StatusCode   = 200,
+                        ResponseBody = $"Cached party for crash recovery: {partyBody[..Math.Min(120, partyBody.Length)]}",
+                    });
+                }
             }
 
             OnRequestCaptured?.Invoke(this, entry);
@@ -597,6 +749,16 @@ public class ProxyService : IDisposable
             if (string.IsNullOrEmpty(scid) || string.IsNullOrEmpty(sessionName)) return;
 
             bool isNew = _capturedSession?.SessionName != sessionName;
+
+            // During crash window, MCC cleans up old session residue from previous runs.
+            // Ignore any session that differs from the crash session — do not overwrite
+            // _capturedSession or clear _crashDetectedAt until the window expires.
+            if (isNew && IsInCrashWindow)
+            {
+                Debug.WriteLine($"[CAPTURE] Ignoring session change to {sessionName[..Math.Min(13, sessionName.Length)]}… during crash window (protecting {_capturedSession?.SessionName?[..Math.Min(13, _capturedSession.SessionName.Length)] ?? "null"})");
+                return;
+            }
+
             _capturedSession = new SavedHandleInfo
             {
                 Scid         = scid,
@@ -608,8 +770,10 @@ public class ProxyService : IDisposable
             if (isNew)
             {
                 // New session = MCC found a different match. Crash recovery is over.
-                // Clear crash state so subsequent RequestParty calls get cached normally.
-                _crashDetectedAt = null;
+                // CRITICAL FIX: Do NOT clear _crashDetectedAt here. The 60s crash window
+                // must stay open throughout the entire rejoin process so party redirect
+                // works (line 595 requires _crashDetectedAt.HasValue). The window will
+                // expire naturally on its own schedule.
 
                 OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
                 {
@@ -621,6 +785,16 @@ public class ProxyService : IDisposable
                     ResponseBody = $"Captured {templateName}/{sessionName[..Math.Min(13, sessionName.Length)]}…",
                 });
                 OnSessionCaptured?.Invoke(this, EventArgs.Empty);
+
+                // Auto-prime the party cache: fire a background RequestParty call using
+                // MCC's current entity token so any subsequent crash has a valid party
+                // cached without requiring a manual rejoin first.
+                // Delay 5s to let PlayFab associate the entity with the new match.
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(5000);
+                    await PrimeCacheAsync(auto: true);
+                });
             }
         }
         catch { /* best-effort */ }
@@ -726,6 +900,23 @@ public class ProxyService : IDisposable
     // ── Party helpers ─────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Extracts the PartyId from a PlayFab RequestParty response body (data.PartyId).
+    /// Returns empty string if not found or on parse failure.
+    /// </summary>
+    private static string TryExtractPartyId(string partyJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(partyJson);
+            if (doc.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("PartyId", out var partyId))
+                return partyId.GetString() ?? "";
+        }
+        catch { }
+        return "";
+    }
+
+    /// <summary>
     /// Extracts IPV4Address from a PlayFab RequestParty response body.
     /// Returns empty string if not found or on parse failure.
     /// </summary>
@@ -742,6 +933,176 @@ public class ProxyService : IDisposable
         return "";
     }
 
+    /// <summary>
+    /// Returns true if the party response is stale and should not be cached.
+    /// Stale = LastStateTransitionTime is >1 hour ago.
+    /// NOTE: ConnectedPlayers is always empty in MCC captures regardless of match state —
+    /// it is NOT a reliable staleness indicator and must not be used.
+    /// </summary>
+    private static bool IsStaleParty(string partyJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(partyJson);
+            if (!doc.RootElement.TryGetProperty("data", out var data)) return false;
+
+            // Only check LastStateTransitionTime — ConnectedPlayers is always [] in MCC
+            if (data.TryGetProperty("LastStateTransitionTime", out var lstt) &&
+                DateTime.TryParse(lstt.GetString(), null,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var transitionTime))
+            {
+                return (DateTime.UtcNow - transitionTime) > TimeSpan.FromHours(1);
+            }
+        }
+        catch { /* malformed — treat as non-stale to be safe */ }
+        return false;
+    }
+
+    // ── Party cache priming ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Makes a background RequestParty call using MCC's captured entity token
+    /// to prime the party cache before any crash occurs.
+    /// Called automatically 5s after a new session is captured, and available
+    /// as a public method for the UI "Prime Party Cache" button.
+    /// </summary>
+    public async Task PrimeCacheAsync(bool auto = false)
+    {
+        if (string.IsNullOrEmpty(_capturedEntityToken) || string.IsNullOrEmpty(_capturedPlayFabHost))
+        {
+            OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+            {
+                Method       = auto ? "PARTY[PrimeSkipped]" : "PARTY[PrimeFailed]",
+                Url          = "",
+                Host         = "local",
+                Path         = "",
+                StatusCode   = 0,
+                ResponseBody = "No entity token captured yet — cannot prime party cache",
+            });
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_capturedPartyRequestBody))
+        {
+            OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+            {
+                Method       = auto ? "PARTY[PrimeSkipped]" : "PARTY[PrimeFailed]",
+                Url          = "",
+                Host         = "local",
+                Path         = "",
+                StatusCode   = 0,
+                ResponseBody = "No RequestParty body captured yet — MCC hasn't called RequestParty this session. Play until matchmaking then retry.",
+            });
+            return;
+        }
+
+        SetPartyState(PartyCacheState.Priming);
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post,
+                $"https://{_capturedPlayFabHost}/Party/RequestParty");
+            req.Headers.Add("X-EntityToken", _capturedEntityToken);
+            req.Headers.Add("Accept", "application/json");
+            // Use MCC's own request body verbatim — PlayFab requires Version/Build fields
+            // that an empty {} body omits, causing a 400 BadRequest.
+            // Also swap PartyId to the cached original so PlayFab routes to the real match party.
+            var primeBody = string.IsNullOrEmpty(_capturedPartyRequestBody) ? "{}" : _capturedPartyRequestBody;
+            if (!string.IsNullOrEmpty(_cachedPartyResponse))
+            {
+                var cachedPartyId = TryExtractPartyId(_cachedPartyResponse);
+                if (!string.IsNullOrEmpty(cachedPartyId))
+                {
+                    try
+                    {
+                        var bodyNode = JsonNode.Parse(primeBody)?.AsObject();
+                        if (bodyNode is not null)
+                        {
+                            bodyNode["PartyId"] = cachedPartyId;
+                            primeBody = bodyNode.ToJsonString();
+                        }
+                    }
+                    catch { /* best-effort */ }
+                }
+            }
+            req.Content = new StringContent(primeBody, System.Text.Encoding.UTF8, "application/json");
+
+            var resp = await _mpsdBackgroundClient.SendAsync(req);
+            var body = await resp.Content.ReadAsStringAsync();
+
+            if ((int)resp.StatusCode == 200 && !string.IsNullOrEmpty(body))
+            {
+                if (IsStaleParty(body))
+                {
+                    SetPartyState(PartyCacheState.Stale);
+                    OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                    {
+                        Method       = "PARTY[PrimeStale]",
+                        Url          = $"https://{_capturedPlayFabHost}/Party/RequestParty",
+                        Host         = _capturedPlayFabHost,
+                        Path         = "/Party/RequestParty",
+                        StatusCode   = 200,
+                        ResponseBody = $"Background RequestParty returned stale party — not caching: {body[..Math.Min(120, body.Length)]}",
+                    });
+                }
+                else
+                {
+                    _cachedPartyResponse = body;
+                    _cachedPartyIp       = TryExtractPartyIp(body);
+                    try { File.WriteAllText(PartyResponsePath, body, System.Text.Encoding.UTF8); }
+                    catch { /* best-effort */ }
+                    SetPartyState(PartyCacheState.Ready);
+                    OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                    {
+                        Method       = auto ? "PARTY[AutoPrimed]" : "PARTY[ManualPrimed]",
+                        Url          = $"https://{_capturedPlayFabHost}/Party/RequestParty",
+                        Host         = _capturedPlayFabHost,
+                        Path         = "/Party/RequestParty",
+                        StatusCode   = 200,
+                        ResponseBody = $"Party cache primed — crash recovery ready: {body[..Math.Min(120, body.Length)]}",
+                    });
+                }
+            }
+            else
+            {
+                SetPartyState(PartyCacheState.None);
+                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                {
+                    Method       = "PARTY[PrimeFailed]",
+                    Url          = $"https://{_capturedPlayFabHost}/Party/RequestParty",
+                    Host         = _capturedPlayFabHost,
+                    Path         = "/Party/RequestParty",
+                    StatusCode   = (int)resp.StatusCode,
+                    ResponseBody = $"Background RequestParty failed ({(int)resp.StatusCode}): {body[..Math.Min(200, body.Length)]}",
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            SetPartyState(PartyCacheState.None);
+            OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+            {
+                Method       = "PARTY[PrimeFailed]",
+                Url          = $"https://{_capturedPlayFabHost}/Party/RequestParty",
+                Host         = _capturedPlayFabHost,
+                Path         = "/Party/RequestParty",
+                StatusCode   = 0,
+                ResponseBody = $"Background RequestParty exception: {ex.Message}",
+            });
+        }
+    }
+
+    private void SetPartyState(PartyCacheState state)
+    {
+        _partyCacheState = state;
+        if (state == PartyCacheState.Ready)
+            _partyCachedAt = DateTime.Now;
+        else if (state == PartyCacheState.None)
+            _partyCachedAt = null;
+        // Priming and Stale leave the timestamp alone so the last-good time stays visible.
+        OnPartyCacheChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     // ── Party persistence ─────────────────────────────────────────────────────
 
     /// <summary>
@@ -752,6 +1113,7 @@ public class ProxyService : IDisposable
     /// </summary>
     private void TryLoadPartyResponseFromDisk()
     {
+        // Load persisted party response.
         try
         {
             if (File.Exists(PartyResponsePath))
@@ -759,21 +1121,76 @@ public class ProxyService : IDisposable
                 var saved = File.ReadAllText(PartyResponsePath, System.Text.Encoding.UTF8);
                 if (!string.IsNullOrWhiteSpace(saved))
                 {
-                    _cachedPartyResponse = saved;
-                    Debug.WriteLine($"[PARTY] Loaded saved party response from disk ({saved.Length} chars)");
-                    OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                    if (IsStaleParty(saved))
                     {
-                        Method       = "PARTY[LoadedFromDisk]",
-                        Url          = PartyResponsePath,
-                        Host         = "local",
-                        Path         = PartyResponsePath,
-                        StatusCode   = 0,
-                        ResponseBody = $"Party response loaded from disk ({saved.Length} chars) — ready for crash recovery redirect",
-                    });
+                        Debug.WriteLine("[PARTY] Disk party is stale (LastStateTransitionTime >1h old) — discarding");
+                        try { File.Delete(PartyResponsePath); } catch { /* best-effort */ }
+                    }
+                    else
+                    {
+                        _cachedPartyResponse = saved;
+                        _cachedPartyIp       = TryExtractPartyIp(saved);
+                        _partyCacheState     = PartyCacheState.Ready;
+                        _partyCachedAt       = File.GetLastWriteTime(PartyResponsePath);
+                        Debug.WriteLine($"[PARTY] Loaded saved party response from disk ({saved.Length} chars)");
+                        OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                        {
+                            Method       = "PARTY[LoadedFromDisk]",
+                            Url          = PartyResponsePath,
+                            Host         = "local",
+                            Path         = PartyResponsePath,
+                            StatusCode   = 0,
+                            ResponseBody = $"Party response loaded from disk ({saved.Length} chars) — ready for crash recovery redirect",
+                        });
+                    }
                 }
             }
         }
         catch { /* best-effort */ }
+
+        // Load persisted RequestParty request body.
+        // Once captured from any MCC session, this body works forever across restarts
+        // because the Version/Build fields don't change between matches (only game updates).
+        try
+        {
+            if (File.Exists(PartyRequestBodyPath))
+            {
+                var body = File.ReadAllText(PartyRequestBodyPath, System.Text.Encoding.UTF8);
+                if (!string.IsNullOrWhiteSpace(body))
+                {
+                    _capturedPartyRequestBody = body;
+                    Debug.WriteLine($"[PARTY] Loaded saved RequestParty request body from disk ({body.Length} chars)");
+                }
+            }
+        }
+        catch { /* best-effort */ }
+
+        // Option B: if we still have no request body, try to construct one from the
+        // BuildId embedded in the cached party response. PlayFab accepts {"Build":"<id>"}
+        // as a valid RequestParty body when the title uses build-based party routing.
+        if (string.IsNullOrEmpty(_capturedPartyRequestBody) && !string.IsNullOrEmpty(_cachedPartyResponse))
+        {
+            var buildId = TryExtractBuildId(_cachedPartyResponse);
+            if (!string.IsNullOrEmpty(buildId))
+            {
+                _capturedPartyRequestBody = $"{{\"Build\":\"{buildId}\"}}";
+                Debug.WriteLine($"[PARTY] Constructed RequestParty body from cached BuildId: {buildId}");
+            }
+        }
+    }
+
+    /// <summary>Extracts the BuildId field from a PlayFab RequestParty response body.</summary>
+    private static string TryExtractBuildId(string partyJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(partyJson);
+            if (doc.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("BuildId", out var buildId))
+                return buildId.GetString() ?? "";
+        }
+        catch { }
+        return "";
     }
 
     // ── Member injection helper ───────────────────────────────────────────────
@@ -840,6 +1257,9 @@ public class ProxyService : IDisposable
         if (path.Contains("/handles", StringComparison.OrdinalIgnoreCase)) return true;
         // PUT to any session URL — includes /members/me (needed for leave detection)
         if (req.Method == "PUT" && path.Contains("/sessions/", StringComparison.OrdinalIgnoreCase)) return true;
+        // PlayFab /Party/RequestParty POST — capture body so we can replay it in background prime calls.
+        // Without this, _capturedPartyRequestBody is never populated and all prime attempts fail with 400.
+        if (req.Method == "POST" && path.Contains("/Party/RequestParty", StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 
