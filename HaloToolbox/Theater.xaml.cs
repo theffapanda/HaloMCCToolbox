@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -77,6 +78,116 @@ public partial class Theater : UserControl
         ("asq_s3d_wat", "Waterfall"),
     ];
 
+    // Map file ids are taken from Halopedia's Map_file reference:
+    // https://www.halopedia.org/Map_file
+    private static readonly Dictionary<string, (string MapId, string DisplayName)[]> _knownMapFiles = new()
+    {
+        ["Halo2A"] =
+        [
+            ("ca_coagulation", "Bloodline"),
+            ("ca_lockout", "Lockdown"),
+            ("ca_sanctuary", "Shrine"),
+            ("ca_zanzibar", "Stonetown"),
+            ("ca_warlock", "Warlord"),
+            ("ca_ascension", "Zenith"),
+            ("ca_forge_skybox01", "Awash"),
+            ("ca_forge_skybox02", "Nebula"),
+            ("ca_forge_skybox03", "Skyward"),
+            ("ca_relic", "Remnant"),
+        ],
+        ["Halo3ODST"] =
+        [
+            ("sc150", "Kikowani Station"),
+            ("sc140", "NMPD HQ"),
+            ("sc130", "ONI Alpha Site"),
+            ("sc120", "Kizingo Boulevard"),
+            ("sc110", "Uplift Reserve"),
+            ("sc100", "Tayari Plaza"),
+            ("h100", "Mombasa Streets"),
+            ("l300", "Coastal Highway"),
+            ("l200", "Data Hive"),
+            ("c200", "Epilogue"),
+            ("c100", "Prepare To Drop"),
+        ],
+        ["Halo4"] =
+        [
+            ("ca_deadlycrossing", "Monolith"),
+            ("ca_forge_island", "Forge Island"),
+            ("ca_forge_bonanza", "Impact"),
+            ("ca_forge_erosion", "Erosion"),
+            ("ca_blood_cavern", "Abandon"),
+            ("ca_blood_crash", "Exile"),
+            ("ca_gore_valley", "Longbow"),
+            ("ca_spiderweb", "Daybreak"),
+            ("ca_highrise", "Perdition"),
+            ("ca_dropoff", "Vertigo"),
+            ("ca_creeper", "Pitfall"),
+            ("ca_rattler", "Skyline"),
+            ("ca_redoubt", "Vortex"),
+            ("ca_warhouse", "Adrift"),
+            ("ca_forge_ravine", "Ravine"),
+            ("ca_canyon", "Meltdown"),
+            ("ca_tower", "Solace"),
+            ("ca_basin", "Outcast"),
+            ("ca_port", "Landfall"),
+            ("wraparound", "Haven"),
+            ("z05_cliffside", "Complex"),
+            ("z11_valhalla", "Ragnarok"),
+            ("zd_02_grind", "Harvest"),
+            ("dlc_dejewel", "Shatter"),
+            ("dlc_dejunkyard", "Wreckage"),
+            ("dlc_forge_island", "Forge Island"),
+            ("ff87_chopperbowl", "Quarry"),
+            ("ff86_sniperally", "Sniper Alley"),
+            ("ff90_fortsw", "Fortress"),
+            ("ff84_temple", "The Refuge"),
+            ("ff81_scurve", "The Cauldron"),
+            ("ff81_courtyard", "The Gate"),
+            ("ff91_complex", "Galileo Base"),
+            ("ff92_valhalla", "Two Giants"),
+            ("ff151_mezzanine", "Control"),
+            ("ff153_caverns", "Warrens"),
+            ("ff152_vortex", "Cyclone"),
+            ("ff155_breach", "Harvester"),
+            ("ff154_hillside", "Apex"),
+            ("dlc01_factory", "Lockup"),
+            ("dlc01_engine", "Infinity"),
+        ],
+        ["HaloReach"] =
+        [
+            ("20_sword_slayer", "Sword Base"),
+            ("45_launch_station", "Countdown"),
+            ("50_panopticon", "Boardwalk"),
+            ("52_ivory_tower", "Reflection"),
+            ("70_boneyard", "Boneyard"),
+            ("45_aftship", "Zealot"),
+            ("35_island", "Spire"),
+            ("30_settlement", "Powerhouse"),
+            ("forge_halo", "Forge World"),
+            ("dlc_slayer", "Anchor 9"),
+            ("dlc_invasion", "Breakpoint"),
+            ("dlc_medium", "Tempest"),
+            ("trainingpreserve", "Highlands"),
+            ("condemned", "Condemned"),
+            ("cex_beavercreek", "Battle Canyon"),
+            ("cex_headlong", "Breakneck"),
+            ("cex_hangemhigh", "High Noon"),
+            ("cex_damnation", "Penance"),
+            ("cex_timberland", "Ridgeline"),
+            ("cex_prisoner", "Solitary"),
+            ("ff50_park", "Beachhead"),
+            ("ff45_corvette", "Corvette"),
+            ("ff20_cortyard", "Courtyard"),
+            ("ff60_icecave", "Glacier"),
+            ("ff70_holdout", "Holdout"),
+            ("ff60_airview", "Outpost"),
+            ("ff10_prototype", "Overlook"),
+            ("ff30_waterfront", "Waterfront"),
+            ("ff_unearthed", "Unearthed"),
+            ("cex_ff_halo", "Installation 04"),
+        ],
+    };
+
     /// <summary>
     /// Returns a human-readable map name for a theater .mov file.
     /// Halo 3: exact prefix lookup from known asq_* naming convention.
@@ -93,8 +204,125 @@ public partial class Theater : UserControl
                     return displayName;
         }
 
+        if (TryResolveKnownMapName(gameKey, noExt, out var resolved))
+            return resolved;
+
         return CleanMapFileName(noExt);
     }
+
+    private static bool TryResolveKnownMapName(string gameKey, string noExt, out string displayName)
+    {
+        displayName = "";
+        if (!_knownMapFiles.TryGetValue(gameKey, out var knownMaps))
+            return false;
+
+        var candidates = BuildLookupCandidates(noExt);
+        var bestMatch = knownMaps
+            .Select(map => new
+            {
+                map.DisplayName,
+                MapId = NormalizeLookupKey(map.MapId),
+                Score = candidates
+                    .Where(candidate => MatchesMapId(candidate, map.MapId))
+                    .Select(candidate => NormalizeLookupKey(candidate).Length)
+                    .DefaultIfEmpty(0)
+                    .Max()
+            })
+            .Where(match => match.Score > 0)
+            .OrderByDescending(match => match.Score)
+            .ThenByDescending(match => match.MapId.Length)
+            .FirstOrDefault();
+
+        if (bestMatch is null)
+            return false;
+
+        displayName = bestMatch.DisplayName;
+        return true;
+    }
+
+    private static List<string> BuildLookupCandidates(string rawName)
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddCandidate(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            var trimmed = value.Trim('_', '-', ' ');
+            if (!string.IsNullOrWhiteSpace(trimmed))
+                candidates.Add(trimmed);
+        }
+
+        AddCandidate(rawName);
+
+        var stripped = Regex.Replace(rawName, @"(?i)\bmglo[-_]*\d+\b", "_");
+        AddCandidate(stripped);
+
+        foreach (var prefix in new[] { "asq_", "dlc_", "mp_", "ffa_", "coop_", "ms_" })
+            if (stripped.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                AddCandidate(stripped[prefix.Length..]);
+
+        var cleaned = CleanMapFileName(stripped);
+        AddCandidate(cleaned);
+
+        var tokens = ExtractMeaningfulTokens(stripped);
+        for (int start = 0; start < tokens.Count; start++)
+        {
+            for (int length = 1; length <= tokens.Count - start; length++)
+            {
+                var slice = tokens.Skip(start).Take(length).ToArray();
+                AddCandidate(string.Join("_", slice));
+                AddCandidate(string.Concat(slice));
+            }
+        }
+
+        return candidates.OrderByDescending(candidate => NormalizeLookupKey(candidate).Length).ToList();
+    }
+
+    private static List<string> ExtractMeaningfulTokens(string value)
+    {
+        var sanitized = Regex.Replace(value, @"(?i)\bmglo[-_]*\d+\b", "_");
+        sanitized = Regex.Replace(sanitized, @"[^a-zA-Z0-9]+", "_");
+
+        var tokens = new List<string>();
+        foreach (var token in sanitized.Split('_', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (LooksLikeHashOrTimestamp(token))
+                break;
+
+            if (token.Equals("asq", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            tokens.Add(token);
+        }
+
+        return tokens;
+    }
+
+    private static bool MatchesMapId(string candidate, string mapId)
+    {
+        var candidateKey = NormalizeLookupKey(candidate);
+        var mapKey = NormalizeLookupKey(mapId);
+
+        if (candidateKey.Length == 0 || mapKey.Length == 0)
+            return false;
+
+        if (candidateKey.Equals(mapKey, StringComparison.Ordinal))
+            return true;
+
+        if (candidateKey.Length >= 5 && candidateKey.Contains(mapKey, StringComparison.Ordinal))
+            return true;
+
+        return candidateKey.Length >= 5 && mapKey.StartsWith(candidateKey, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeLookupKey(string value)
+        => new(value.Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant)
+            .ToArray());
+
+    private static bool LooksLikeHashOrTimestamp(string value)
+        => value.Length >= 6 && value.All(c => char.IsDigit(c) ||
+            (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'));
 
     /// <summary>
     /// Generic cleanup: strip engine prefixes, level-number prefixes (Reach),
@@ -118,8 +346,7 @@ public partial class Theater : UserControl
         var meaningful = new List<string>();
         foreach (var part in s.Split('_', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (part.Length >= 6 && part.All(c => char.IsDigit(c) ||
-                (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+            if (LooksLikeHashOrTimestamp(part))
                 break; // hit a hash/timestamp — stop
 
             meaningful.Add(char.ToUpperInvariant(part[0]) + part[1..].ToLowerInvariant());
@@ -277,6 +504,7 @@ public partial class Theater : UserControl
         ApplySort();
         RebuildByGameMenu();
         UpdateStatus();
+        UpdateSelectAllButton();
     }
 
     private TheaterClip BuildClip(string key, FileInfo fi, bool sourcePresent)
@@ -414,7 +642,10 @@ public partial class Theater : UserControl
         // Skip on double-click (ClickCount == 2) — rename is handled in MouseLeftButtonDown
         if (e.ClickCount >= 2) return;
         if ((sender as FrameworkElement)?.DataContext is TheaterClip clip)
+        {
             clip.IsSelected = !clip.IsSelected;
+            UpdateSelectAllButton();
+        }
     }
 
     private void Row_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -526,6 +757,7 @@ public partial class Theater : UserControl
         int count = ExecuteRestore(clips);
         foreach (var c in clips) c.IsSelected = false;
         UpdateStatus($"Restored {count} clip(s) to source folders.");
+        UpdateSelectAllButton();
     }
 
     /// <summary>
@@ -693,9 +925,18 @@ public partial class Theater : UserControl
 
     private void BtnSelectAll_Click(object sender, RoutedEventArgs e)
     {
-        bool anyUnselected = _clips.Any(c => !c.IsSelected);
-        foreach (var c in _clips) c.IsSelected = anyUnselected;
-        BtnSelectAll.Content = anyUnselected ? "DESELECT ALL" : "SELECT ALL";
+        var visibleClips = GetVisibleClips();
+        if (visibleClips.Count == 0)
+        {
+            UpdateSelectAllButton();
+            return;
+        }
+
+        bool shouldSelectAll = visibleClips.Any(c => !c.IsSelected);
+        foreach (var clip in visibleClips)
+            clip.IsSelected = shouldSelectAll;
+
+        UpdateSelectAllButton();
     }
 
     private void CboGame_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -704,16 +945,39 @@ public partial class Theater : UserControl
             ? ""
             : GameKeys[CboGame.SelectedIndex - 1];
         _view?.Refresh();
+        UpdateSelectAllButton();
     }
 
     private void TxtSearch_TextChanged(object sender, TextChangedEventArgs e)
     {
         _filterSearch = TxtSearch.Text.Trim();
         _view?.Refresh();
+        UpdateSelectAllButton();
     }
 
     private void CboSort_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         ApplySort();
+    }
+
+    private List<TheaterClip> GetVisibleClips()
+        => _view.Cast<TheaterClip>().ToList();
+
+    private void UpdateSelectAllButton()
+    {
+        if (BtnSelectAll is null) return;
+
+        var visibleClips = GetVisibleClips();
+        if (visibleClips.Count == 0)
+        {
+            BtnSelectAll.Content = "SELECT ALL";
+            BtnSelectAll.IsEnabled = false;
+            return;
+        }
+
+        BtnSelectAll.IsEnabled = true;
+        BtnSelectAll.Content = visibleClips.All(c => c.IsSelected)
+            ? "DESELECT ALL"
+            : "SELECT ALL";
     }
 }

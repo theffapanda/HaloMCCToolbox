@@ -2337,7 +2337,7 @@ echo All tasks complete.
         public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
         {
             // 0 = Basic (hide Advanced sections), 1 = Advanced (show all)
-            return (int)value == 1 ? Visibility.Visible : Visibility.Collapsed;
+            return (int)value == 0 ? Visibility.Collapsed : Visibility.Collapsed;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)

@@ -18,4 +18,15 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <PortableZipPath>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\HaloMCCToolbox-Portable.zip'))</PortableZipPath>
+    <PortableZipStagingPath>$([System.IO.Path]::Combine('$(TargetDir)', 'HaloMCCToolbox-Portable.zip'))</PortableZipStagingPath>
+  </PropertyGroup>
+
+  <Target Name="CreatePortableZip" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <Delete Files="$(PortableZipStagingPath)" ContinueOnError="true" />
+    <Delete Files="$(PortableZipPath)" ContinueOnError="true" />
+    <ZipDirectory SourceDirectory="$(TargetDir)" DestinationFile="$(PortableZipPath)" Overwrite="true" />
+  </Target>
+
 </Project>

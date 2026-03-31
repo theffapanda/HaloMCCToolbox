@@ -76,54 +76,6 @@
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         </Style>
 
-        <!-- Mode Toggle Button (Binary toggle for Basic/Advanced) -->
-        <Style x:Key="ModeToggleButtonStyle" TargetType="ToggleButton">
-            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
-            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ToggleButton">
-                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="2">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <!-- Basic Button (left side) -->
-                                <Border Grid.Column="0" Background="{TemplateBinding Background}" Padding="0">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Background" Value="Transparent"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="False">
-                                                    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <TextBlock Text="Basic" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}" Padding="8,4"/>
-                                </Border>
-                                <!-- Advanced Button (right side) -->
-                                <Border Grid.Column="1" Background="{TemplateBinding Background}" Padding="0" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1,0,0,0">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Background" Value="Transparent"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="True">
-                                                    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <TextBlock Text="Advanced" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}" Padding="8,4"/>
-                                </Border>
-                            </Grid>
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
     </Window.Resources>
 
     <!-- Outer chrome -->
@@ -533,7 +485,7 @@
                         </StackPanel>
 
                         <!-- Map list — fills all remaining vertical space -->
-                        <Border Grid.Row="7"
+                        <Border Grid.Row="6"
                                 Background="{DynamicResource SurfaceBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -724,7 +676,7 @@
                         </Border>
 
                         <!-- Status -->
-                        <TextBlock Grid.Row="8"
+                        <TextBlock Grid.Row="7"
                                    x:Name="TxtMapStatus"
                                    FontFamily="Consolas"
                                    FontSize="11"
@@ -1615,7 +1567,7 @@
 
                 </TabControl>
 
-                <!-- Basic/Advanced Mode Selector (overlaid on TabControl) -->
+                <!-- Scrollbar layout spacer (required for Tools tab map list scrollbar) -->
                 <Border Width="140"
                         Height="28"
                         HorizontalAlignment="Right"
@@ -1624,59 +1576,8 @@
                         Background="{DynamicResource SurfaceBrush}"
                         BorderBrush="{DynamicResource BorderBrush}"
                         BorderThickness="1"
-                        CornerRadius="2">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="1"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <!-- Basic Mode RadioButton -->
-                        <RadioButton Grid.Column="0" x:Name="BasicMode" GroupName="ModeGroup" IsChecked="True"
-                                     VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Focusable="False">
-                            <RadioButton.Template>
-                                <ControlTemplate TargetType="RadioButton">
-                                    <Border Padding="0" CornerRadius="0">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="True">
-                                                        <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <TextBlock Text="Basic" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource TextBrush}" Padding="8,0" FontSize="12"/>
-                                    </Border>
-                                </ControlTemplate>
-                            </RadioButton.Template>
-                        </RadioButton>
-                        <!-- Divider -->
-                        <Border Grid.Column="1" Background="{DynamicResource BorderBrush}"/>
-                        <!-- Advanced Mode RadioButton -->
-                        <RadioButton Grid.Column="2" x:Name="AdvancedMode" GroupName="ModeGroup"
-                                     VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Focusable="False">
-                            <RadioButton.Template>
-                                <ControlTemplate TargetType="RadioButton">
-                                    <Border Padding="0" CornerRadius="0">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="True">
-                                                        <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <TextBlock Text="Advanced" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource TextBrush}" Padding="8,0" FontSize="12"/>
-                                    </Border>
-                                </ControlTemplate>
-                            </RadioButton.Template>
-                        </RadioButton>
-                    </Grid>
-                </Border>
+                        CornerRadius="2"/>
+
             </Grid>
 
             <!-- ══ STATUS BAR ══ -->
