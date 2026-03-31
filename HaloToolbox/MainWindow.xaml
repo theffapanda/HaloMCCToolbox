@@ -310,7 +310,6 @@
                             <RowDefinition Height="Auto"/>  <!-- section label: Fix & Repair -->
                             <RowDefinition Height="Auto"/>  <!-- credentials card -->
                             <RowDefinition Height="Auto"/>  <!-- EAC card -->
-                            <RowDefinition Height="Auto"/>  <!-- Fix Rejoins card -->
                             <RowDefinition Height="Auto"/>  <!-- section label: Map Selector -->
                             <RowDefinition Height="Auto"/>  <!-- map header + path -->
                             <RowDefinition Height="Auto"/>  <!-- button row -->
@@ -421,7 +420,7 @@
                                 CornerRadius="3"
                                 Padding="20"
                                 Margin="0,0,0,14"
-                                Visibility="{Binding ElementName=AdvancedMode, Path=IsChecked, Converter={StaticResource BoolToVisibilityConverter}}">
+                                Visibility="Collapsed">
                             <Border.Effect>
                                 <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="0" Opacity="0.5"/>
                             </Border.Effect>
@@ -448,11 +447,11 @@
                                                LineHeight="18"/>
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        x:Name="BtnFixRejoins"
+                                        x:Name="BtnRejoinInfoRemoved"
                                         Content="RUN FIX"
                                         Style="{StaticResource OrangeButton}"
                                         Width="110"
-                                        Click="BtnFixRejoins_Click"
+                                        IsEnabled="False"
                                         VerticalAlignment="Center"/>
                             </Grid>
                         </Border>
@@ -1505,12 +1504,6 @@
                 <!-- ═══ TAB 4: THEATER ═══ -->
                 <TabItem Header="🎬  THEATER" Style="{StaticResource DarkTabItem}">
                     <local:Theater x:Name="TheaterTab"/>
-                </TabItem>
-
-                <!-- ═══ TAB 5: SCANNER ═══ -->
-                <TabItem Header="🔍  SCANNER" Style="{StaticResource DarkTabItem}"
-                         Visibility="{Binding ElementName=AdvancedMode, Path=IsChecked, Converter={StaticResource BoolToVisibilityConverter}}">
-                    <local:Scanner x:Name="ScannerTab" />
                 </TabItem>
 
                 <!-- ═══ TAB 5: ABOUT ═══ -->

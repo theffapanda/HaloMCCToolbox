@@ -123,9 +123,6 @@ namespace HaloToolbox
         // ── Stats Tab — UI collection ────────────────────────────────────────
         private readonly ObservableCollection<StatsPlayerRow> _statsLobbyRows = new();
 
-        // ── Proxy button state sync ──────────────────────────────────────────
-        private System.Threading.Timer? _proxyButtonSyncTimer;
-
         // ── Per-game multiplayer map lists (Report tab) ──────────────────────
         private static readonly Dictionary<string, List<string>> GameMaps =
             new(StringComparer.OrdinalIgnoreCase)
@@ -212,12 +209,6 @@ namespace HaloToolbox
             // Initialize the Stats tab (lobby monitor)
             StatsInitialize();
 
-            // Handle application close to clean up proxy
-            Closing += (_, _) =>
-            {
-                try { ScannerTab.DisposeProxy(); }
-                catch { }
-            };
         }
 
         // ------------------------------------------
@@ -476,58 +467,6 @@ echo All tasks complete.
                 SetStatus("Failed to launch EAC setup.", "#FF2D55");
                 MessageBox.Show($"Could not launch EasyAntiCheat setup:\n\n{ex.Message}",
                     "Error -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        // ------------------------------------------
-        // TOOL: Fix Rejoins (Start Proxy)
-        // ------------------------------------------
-        private async void BtnFixRejoins_Click(object sender, RoutedEventArgs e)
-        {
-            AppendLog("[RUN]", "Starting rejoin proxy via Fix Rejoins...", "#FF6A00");
-            SetStatus("Starting rejoin proxy...", "#FF6A00");
-            BtnFixRejoins.IsEnabled = false;
-
-            try
-            {
-                // Call the Scanner tab's StartProxyAsync method
-                bool success = await ScannerTab.StartProxyAsync();
-
-                if (success)
-                {
-                    AppendLog("[DONE]", "Proxy started. Restart MCC to apply WinHTTP settings.", "#39FF14");
-                    SetStatus("Proxy running (Fix Rejoins). Restart MCC.", "#39FF14");
-                    ScannerTab.UpdateFixRejoinsButtonState(BtnFixRejoins);
-
-                    // Start timer to sync button state when proxy stops
-                    _proxyButtonSyncTimer?.Dispose();
-                    _proxyButtonSyncTimer = new System.Threading.Timer(_ =>
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            if (!ScannerTab.IsProxyRunning)
-                            {
-                                ScannerTab.UpdateFixRejoinsButtonState(BtnFixRejoins);
-                                _proxyButtonSyncTimer?.Dispose();
-                                _proxyButtonSyncTimer = null;
-                            }
-                        });
-                    }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
-                }
-                else
-                {
-                    AppendLog("[ERROR]", "Failed to start proxy.", "#FF2D55");
-                    SetStatus("Failed to start proxy.", "#FF2D55");
-                }
-            }
-            catch (Exception ex)
-            {
-                AppendLog("[ERROR]", $"Exception while starting proxy: {ex.Message}", "#FF2D55");
-                SetStatus("Error starting proxy.", "#FF2D55");
-            }
-            finally
-            {
-                BtnFixRejoins.IsEnabled = true;
             }
         }
 
