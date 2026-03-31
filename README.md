@@ -1,12 +1,12 @@
-# 🐼 Halo MCC Toolbox
+# ðŸ¼ Halo MCC Toolbox
 
-> A Windows utility for Halo: The Master Chief Collection players — fix common issues, manage your map rotation, and build structured cheater reports with evidence.
+> A Windows utility for Halo: The Master Chief Collection players â€” fix common issues, manage your map rotation, and build structured cheater reports with evidence.
 
 **Made by The FFA Panda**
 
 ---
 
-![Main Window — Tools Tab](screenshots/tools_tab.png)
+![Main Window â€” Tools Tab](screenshots/tools_tab.png)
 
 ---
 
@@ -17,8 +17,10 @@
 | **Fix Login Issues** | Clears stored Xbox Live credentials and MCC webcache to resolve sign-in / matchmaking errors |
 | **Repair EasyAntiCheat** | Launches the EAC repair tool with one click |
 | **Map Selector** | Enable or disable any Halo 3 multiplayer map from matchmaking without touching game files |
+| **Live Stats Scanner** | Tracks your session, scans lobby players, and shows lifetime/recent K/D data from external stat sources |
 | **Carnage Report Loader** | Parses your last game's XML carnage report and displays a full scoreboard |
 | **Cheater Evidence ZIP** | Packages the carnage report XML + theater `.mov` files into a ZIP for submission |
+| **Theater Backups** | Automatically backs up MCC theater clips, lets you rename them, and restore them later by selection or game |
 | **Halo Support Integration** | Opens the Halo Waypoint report form pre-filled with all player/game details |
 | **Persistent Login** | Remembers your Halo Support login so you don't re-authenticate every time |
 | **Session Status Indicator** | Shows whether your Halo Support session is active before you open the form |
@@ -28,8 +30,8 @@
 ## Requirements
 
 - **Windows 10 / 11** (x64)
-- **[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)** — required to run the app
-- **[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)** — required for the Halo Support browser (usually already installed on Windows 11)
+- **[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)** â€” required to run the app
+- **[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)** â€” required for the Halo Support browser (usually already installed on Windows 11)
 - **Halo: The Master Chief Collection** installed via Steam
 
 > **Note:** The app does not require administrator rights for most features. The EasyAntiCheat repair will request UAC elevation when launched.
@@ -48,7 +50,7 @@ No installer needed.
 
 ## Usage Guide
 
-### ⚙ Tools Tab
+### âš™ Tools Tab
 
 ![Tools Tab](screenshots/tools_tab.png)
 
@@ -90,20 +92,20 @@ C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\i
 
 ![Map Selector](screenshots/map_selector.png)
 
-Lets you control which Halo 3 multiplayer maps appear in your matchmaking rotation. This works by renaming disabled map files with a `REMOVED_` prefix — MCC skips any `.map` file with that prefix when building playlists.
+Lets you control which Halo 3 multiplayer maps appear in your matchmaking rotation. This works by renaming disabled map files with a `REMOVED_` prefix â€” MCC skips any `.map` file with that prefix when building playlists.
 
 > **Why only Halo 3?** Removing maps from other games causes disconnects. Halo 3's playlist system gracefully ignores `REMOVED_` maps without kicking you.
 
 **How to use:**
 
 1. Set your **MCC Installation Path** (defaults to the Steam path automatically)
-2. Click **⟳ LOAD MAPS** — all Halo 3 multiplayer maps appear in the list
+2. Click **âŸ³ LOAD MAPS** â€” all Halo 3 multiplayer maps appear in the list
 3. Click any row to toggle it **enabled / disabled**
 4. Use the quick-action buttons:
-   - **✓ ENABLE ALL** — re-enables every map
-   - **✕ DISABLE ALL** — disables every map
-   - **🚫 DISABLE 343 MAPS** — disables the three MCC-exclusive maps added by 343/Saber3D (Edge, Waterfall, Icebox)
-5. Click **💾 APPLY** to rename the files on disk
+   - **âœ“ ENABLE ALL** â€” re-enables every map
+   - **âœ• DISABLE ALL** â€” disables every map
+   - **ðŸš« DISABLE 343 MAPS** â€” disables the three MCC-exclusive maps added by 343/Saber3D (Edge, Waterfall, Icebox)
+5. Click **ðŸ’¾ APPLY** to rename the files on disk
 
 **Official maps supported (25 total):**
 
@@ -121,15 +123,15 @@ Modded/custom `.map` files are detected automatically and listed under a **MODDE
 
 ---
 
-### 🚨 Report Tab
+### ðŸš¨ Report Tab
 
-The Report tab is a full cheater-reporting pipeline — from loading the carnage report to submitting the ticket on Halo Waypoint.
+The Report tab is a full cheater-reporting pipeline â€” from loading the carnage report to submitting the ticket on Halo Waypoint.
 
-#### Step 1 — Load the Game
+#### Step 1 â€” Load the Game
 
 ![Report Scoreboard](screenshots/report_scoreboard.png)
 
-Click **⟳ LOAD LAST GAME**. The tool automatically finds the most recent `mpcarnagereport*.xml` in:
+Click **âŸ³ LOAD LAST GAME**. The tool automatically finds the most recent `mpcarnagereport*.xml` in:
 ```
 %userprofile%\AppData\LocalLow\MCC\Temporary\
 ```
@@ -140,7 +142,7 @@ Once loaded, the full scoreboard appears showing each player's **Gamertag, Score
 
 ---
 
-#### Step 2 — Fill In the Report Form
+#### Step 2 â€” Fill In the Report Form
 
 ![Report Form](screenshots/report_form.png)
 
@@ -168,17 +170,17 @@ After selecting a player, fill in the details:
 
 ---
 
-#### Step 3 — Build the Evidence ZIP
+#### Step 3 â€” Build the Evidence ZIP
 
-Click **📦 BUILD REPORT ZIP**. A save dialog opens and the tool packages:
+Click **ðŸ“¦ BUILD REPORT ZIP**. A save dialog opens and the tool packages:
 
 ```
 CheatReport_[Gamertag]_[timestamp].zip
-├── report.txt                         ← Human-readable summary
-├── carnage_report/
-│   └── mpcarnagereportXXX.xml         ← Raw game data from MCC
-└── theater_files/
-    └── asq_[map]_[hash].mov           ← Theater recordings (if found)
+â”œâ”€â”€ report.txt                         â† Human-readable summary
+â”œâ”€â”€ carnage_report/
+â”‚   â””â”€â”€ mpcarnagereportXXX.xml         â† Raw game data from MCC
+â””â”€â”€ theater_files/
+    â””â”€â”€ asq_[map]_[hash].mov           â† Theater recordings (if found)
 ```
 
 `report.txt` includes the full scoreboard, Xbox User IDs for every player (persistent across renames), cheat type, game details, and your notes.
@@ -187,11 +189,11 @@ After the ZIP is built, Explorer opens with it selected so you can drag it direc
 
 ---
 
-#### Step 4 — Submit to Halo Support
+#### Step 4 â€” Submit to Halo Support
 
 ![Halo Support Window](screenshots/halo_support_window.png)
 
-Click **🌐 OPEN HALO SUPPORT**. An embedded browser opens the Halo Waypoint support form and automatically fills in:
+Click **ðŸŒ OPEN HALO SUPPORT**. An embedded browser opens the Halo Waypoint support form and automatically fills in:
 
 - **Game title:** Halo: The Master Chief Collection
 - **Behavior type:** Cheating
@@ -207,14 +209,14 @@ Attach your evidence ZIP using the form's file upload area, check the **Media At
 
 #### Session Status Indicator
 
-The **🌐 OPEN HALO SUPPORT** button shows a small status pill below it:
+The **ðŸŒ OPEN HALO SUPPORT** button shows a small status pill below it:
 
 | Indicator | Meaning |
 |---|---|
-| `● session active` (green) | A Halo Waypoint / Microsoft Account login is saved locally — you'll go straight to the form |
-| `● login required` (red) | No saved session found — you'll need to sign in when the window opens |
-| `● checking session…` (gray) | Status check in progress on startup |
-| `● status unknown` (orange) | Could not read session data (harmless — the form will still open) |
+| `â— session active` (green) | A Halo Waypoint / Microsoft Account login is saved locally â€” you'll go straight to the form |
+| `â— login required` (red) | No saved session found â€” you'll need to sign in when the window opens |
+| `â— checking sessionâ€¦` (gray) | Status check in progress on startup |
+| `â— status unknown` (orange) | Could not read session data (harmless â€” the form will still open) |
 
 The indicator updates automatically when the support window closes, so it reflects a fresh login immediately.
 
@@ -222,7 +224,71 @@ The indicator updates automatically when the support window closes, so it reflec
 
 ---
 
-### 📋 Log Tab
+### Stats Tab
+
+![Stats Tab](screenshots/stats_tab.png)
+
+The Stats tab is a live lobby scanner and session tracker for MCC. It lets you save a primary gamertag, pull lifetime K/D, watch your current session record, and compare the players from your most recent carnage report.
+
+#### What it shows
+
+- **Lifetime K/D** and total kills / deaths for the gamertag in the top bar
+- **Session record** with wins, losses, games played, and running K/D for the matches you've logged this session
+- **Lobby table** showing each player's K/D, kills / deaths, games played, team, and recent 100-game trend when Halo Waypoint auth is available
+- **Team summary** for team games, including weighted average K/D and a quick favored indicator
+
+#### How to use it
+
+1. Enter your gamertag and click **APPLY**
+2. Click **SYNC** to refresh your own stats manually
+3. Click **LAST GAME** to load the latest `mpcarnagereport*.xml` from `%userprofile%\AppData\LocalLow\MCC\Temporary\`
+4. Click **SCAN LOBBY** to fetch stats for the players found in that carnage report
+5. Turn **AUTO: ON** if you want the tool to auto-scan each newly detected match after it is logged
+
+#### Buttons and actions
+
+- **RESET SESSION** clears the current session wins, losses, and running K/D
+- **MATCH HISTORY** opens detailed recent match history for your saved gamertag
+- **HW AUTH** captures a Halo Waypoint token so the app can load recent 100-game data and open per-player match history
+- Double-clicking a player row opens that player's match history when HW auth is active
+
+If Halo Waypoint auth is unavailable, the tab still works for session logging and can fall back to basic lifetime stat lookups where possible.
+
+---
+
+### Theater Tab
+
+![Theater Tab](screenshots/theater_tab.png)
+
+The Theater tab watches MCC's theater folders, backs up every `.mov` clip it finds, and gives you a searchable library you can restore later. It is designed to protect clips before MCC rotates them out or a reinstall wipes the local files.
+
+#### What it does
+
+- Scans supported MCC theater folders for **Halo 2: Anniversary, Halo 3, Halo 3: ODST, Halo 4, and Halo: Reach**
+- Automatically copies new clips into a backup library at `%LocalAppData%\HaloMCCToolbox\TheaterBackups\`
+- Tracks whether the original source file still exists in MCC or only the backup copy remains
+- Resolves Halo 3 clip filenames into friendly map names when possible
+- Lets you assign custom names to clips by double-clicking a row
+
+#### How to use it
+
+1. Open the **Theater** tab and let the initial scan finish
+2. Use the **game filter**, **search box**, and **sort** menu to narrow the list
+3. Click rows to select clips, or use **SELECT ALL**
+4. Use **RESTORE SELECTED** to copy backups back into the original MCC theater folders
+5. Use **OPEN FOLDER** to jump straight to the backup library, or **SCAN NOW** to refresh immediately
+
+#### Extra actions
+
+- Right-click a clip to open the source folder, open the backup folder, copy the backup path, restore a single clip, or delete it
+- The status column shows whether the original source clip is still present in MCC
+- Restore options support selected clips, all clips, or all clips for a specific game
+
+The tab monitors `%userprofile%\AppData\LocalLow\MCC\Temporary\UserContent\` while it is open, so newly created clips are picked up and backed up automatically.
+
+---
+
+### Log Tab
 
 ![Log Tab](screenshots/log_tab.png)
 
@@ -252,8 +318,8 @@ MCC reads the Halo 3 map list from the `halo3\maps\` folder. Any `.map` file who
 The toolbox renames files rather than deleting them:
 
 ```
-guardian.map          ← enabled (MCC loads it)
-REMOVED_guardian.map  ← disabled (MCC ignores it)
+guardian.map          â† enabled (MCC loads it)
+REMOVED_guardian.map  â† disabled (MCC ignores it)
 ```
 
 Clicking **APPLY** iterates every map in the list and renames it to match its current enabled/disabled state. No files are ever deleted. Re-enable a map and apply again to restore it instantly.
@@ -263,20 +329,20 @@ Clicking **APPLY** iterates every map in the list and renames it to match its cu
 ## How the Cheater Report System Works
 
 ```
-Load carnage XML  →  Select player  →  Fill form  →  Build ZIP  →  Submit ticket
-       ↑                                                                   ↑
+Load carnage XML  â†’  Select player  â†’  Fill form  â†’  Build ZIP  â†’  Submit ticket
+       â†‘                                                                   â†‘
 %AppData%\LocalLow\MCC\Temporary\           Embedded WebView2 browser
 mpcarnagereport*.xml                        (auto-filled via JS injection)
 ```
 
-The carnage report XML is written by MCC after every multiplayer match. It contains each player's **Gamertag, Xbox User ID, and all match statistics**. The Xbox User ID is important for reports because it is persistent and cannot be changed by renaming — even if a cheater changes their Gamertag after the match, the ID stays the same.
+The carnage report XML is written by MCC after every multiplayer match. It contains each player's **Gamertag, Xbox User ID, and all match statistics**. The Xbox User ID is important for reports because it is persistent and cannot be changed by renaming â€” even if a cheater changes their Gamertag after the match, the ID stays the same.
 
 Theater `.mov` files are located at:
 ```
 %userprofile%\AppData\LocalLow\MCC\Temporary\UserContent\
-├── Halo3\Movie\        ← asq_[mapname]_[hash].mov
-├── HaloReach\Movie\
-└── Halo4\Movie\
+â”œâ”€â”€ Halo3\Movie\        â† asq_[mapname]_[hash].mov
+â”œâ”€â”€ HaloReach\Movie\
+â””â”€â”€ Halo4\Movie\
 ```
 
 For Halo 3 specifically, the toolbox uses a prefix mapping to match the cryptic internal filenames (e.g. `asq_guardia_xxxx.mov`) to friendly map names like "Guardian".
@@ -296,7 +362,7 @@ cd HaloMCCToolbox\HaloToolbox
 start HaloToolbox.sln
 ```
 
-Build → Run (`F5`). No extra configuration needed.
+Build â†’ Run (`F5`). No extra configuration needed.
 
 **Dependencies (NuGet):**
 - `Microsoft.Web.WebView2` v1.0.2903.40
@@ -307,13 +373,13 @@ Build → Run (`F5`). No extra configuration needed.
 
 ```
 HaloToolbox/
-├── HaloToolbox.sln
-└── HaloToolbox/
-    ├── App.xaml / App.xaml.cs              ← App-level styles and dark theme
-    ├── MainWindow.xaml / .cs               ← Main UI (all 4 tabs + core logic)
-    ├── HaloReportWindow.xaml / .cs         ← WebView2 popup for Halo Support form
-    ├── WebViewEnvironmentManager.cs        ← Persistent WebView2 session singleton
-    └── HaloToolbox.csproj
+â”œâ”€â”€ HaloToolbox.sln
+â””â”€â”€ HaloToolbox/
+    â”œâ”€â”€ App.xaml / App.xaml.cs              â† App-level styles and dark theme
+    â”œâ”€â”€ MainWindow.xaml / .cs               â† Main UI (all 4 tabs + core logic)
+    â”œâ”€â”€ HaloReportWindow.xaml / .cs         â† WebView2 popup for Halo Support form
+    â”œâ”€â”€ WebViewEnvironmentManager.cs        â† Persistent WebView2 session singleton
+    â””â”€â”€ HaloToolbox.csproj
 ```
 
 ---
@@ -323,14 +389,14 @@ HaloToolbox/
 - **Map Selector is Halo 3 only.** Disabling maps for other MCC games will cause disconnects from lobbies. This is a limitation of how those games handle their map lists in MCC.
 - **Carnage reports are Halo 3 only** (the XML format used by the parser). Other games in MCC may use different formats or may not write carnage reports to the same location.
 - **Theater detection is best-effort.** The `.mov` filename-to-map mapping for Halo 3 was reverse-engineered from the internal map names. Reach and Halo 4 return all `.mov` files in the game's folder since those don't have the same prefix naming scheme.
-- **The Halo Support form auto-fill** depends on Zendesk's field IDs staying consistent. If 343/Halo Support redesigns their form, the auto-fill may stop working — you can always fill the fields manually in the embedded browser.
+- **The Halo Support form auto-fill** depends on Zendesk's field IDs staying consistent. If 343/Halo Support redesigns their form, the auto-fill may stop working â€” you can always fill the fields manually in the embedded browser.
 - **Session persistence** stores data in `%LocalAppData%\HaloMCCToolbox\WebView2\`. Deleting this folder will clear your saved login.
 
 ---
 
 ## License
 
-BSD3 License — see [LICENSE](LICENSE) for details.
+BSD3 License â€” see [LICENSE](LICENSE) for details.
 
 Free to use, modify, and distribute. Credit appreciated but not required.
 
@@ -338,13 +404,13 @@ Free to use, modify, and distribute. Credit appreciated but not required.
 
 ## Credits
 
-**The FFA Panda** — design, development, and testing
+**The FFA Panda** â€” design, development, and testing
 
 Built with:
 - [WPF / .NET 8](https://dotnet.microsoft.com/)
 - [Microsoft Edge WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
-- Consolas — the only acceptable monospace font
+- Consolas â€” the only acceptable monospace font
 
 ---
 
-*If this tool helped you report a cheater, that's a win. 🐼*
+*If this tool helped you report a cheater, that's a win. ðŸ¼*
