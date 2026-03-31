@@ -409,7 +409,7 @@
                         </Border>
 
                         <!-- Section: Map Selector -->
-                        <TextBlock Grid.Row="4"
+                        <TextBlock Grid.Row="3"
                                    Text="— MAP SELECTOR"
                                    FontFamily="Consolas"
                                    FontSize="10"
@@ -418,7 +418,7 @@
                                    Margin="0,0,0,10"/>
 
                         <!-- Map header + path -->
-                        <StackPanel Grid.Row="5" Margin="0,0,0,10">
+                        <StackPanel Grid.Row="4" Margin="0,0,0,10">
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                 <TextBlock Text="🗺 " FontSize="16" VerticalAlignment="Center"/>
                                 <TextBlock Text="HALO 3 MULTIPLAYER MAP SELECTOR"
@@ -460,7 +460,7 @@
                         </StackPanel>
 
                         <!-- All action buttons in one row -->
-                        <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,0,0,10">
+                        <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,10">
                             <Button Content="⟳  LOAD MAPS"
                                     Style="{StaticResource PrimaryButton}"
                                     Click="BtnLoadMaps_Click"
