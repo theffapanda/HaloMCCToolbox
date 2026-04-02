@@ -1458,7 +1458,12 @@
                     <local:Theater x:Name="TheaterTab"/>
                 </TabItem>
 
-                <!-- ═══ TAB 5: ABOUT ═══ -->
+                <!-- ═══ TAB 5: PLAYLISTS ═══ -->
+                <TabItem Header="🗂  PLAYLISTS" Style="{StaticResource DarkTabItem}">
+                    <local:Playlists x:Name="PlaylistsTab"/>
+                </TabItem>
+
+                <!-- ═══ TAB 6: ABOUT ═══ -->
                 <TabItem Header="ℹ  ABOUT" Style="{StaticResource DarkTabItem}">
                     <Grid>
                         <StackPanel VerticalAlignment="Center"
@@ -1507,11 +1512,14 @@
                                         <Run Foreground="{DynamicResource AccentBrush}" Text="Cheater Report"/>
                                         <Run Text=" — Load a carnage report XML, review the scoreboard, build a ZIP evidence package with theater files, and submit directly to Halo Support&#x0a;"/>
                                         <Run Text="• "/>
-                                        <Run Foreground="{DynamicResource AccentBrush}" Text="Live Stats"/>
-                                        <Run Text=" — Real-time lobby scanner that shows K/D, win rate, and recent form for every player in your game; tracks session W/L and supports Halo Waypoint authentication for full stats&#x0a;"/>
+                                        <Run Foreground="{DynamicResource AccentBrush}" Text="Stats"/>
+                                        <Run Text=" — Lobby scanner that shows K/D, win rate, and recent form for every player in your game; tracks session W/L and supports Halo Waypoint authentication for full stats&#x0a;"/>
                                         <Run Text="• "/>
-                                        <Run Foreground="{DynamicResource AccentBrush}" Text="Threat Scanner"/>
-                                        <Run Text=" — Quick lobby threat analysis tool that fetches player stats and calculates team threat verdict based on average K/D ratio"/>
+                                        <Run Foreground="{DynamicResource AccentBrush}" Text="Theater Backups"/>
+                                        <Run Text=" — Automatically backs up MCC theater clips, lets you rename them, search them, and restore them later by game or selection&#x0a;"/>
+                                        <Run Text="• "/>
+                                        <Run Foreground="{DynamicResource AccentBrush}" Text="Playlist Explorer"/>
+                                        <Run Text=" — Visualizes MCC playlist XML, featured rotation history, and weighted map/mode combinations with filters for playlists, titles, and categories&#x0a;"/>
                                     </TextBlock>
                                 </StackPanel>
                             </Border>
@@ -1521,16 +1529,28 @@
                                     BorderThickness="1"
                                     CornerRadius="3"
                                     Padding="20">
-                                <TextBlock FontFamily="Consolas" FontSize="11"
-                                           Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
-                                           LineHeight="18"
-                                           Text="Only Halo 3 maps can be safely removed from matchmaking rotation without getting kicked. Removing maps for other games may result in disconnects."/>
+                                <StackPanel>
+                                    <TextBlock Text="CONTACT"
+                                               FontFamily="Consolas"
+                                               FontSize="10"
+                                               Foreground="{DynamicResource AccentBrush}"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock FontFamily="Consolas" FontSize="11"
+                                               Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
+                                               LineHeight="18">
+                                        <Run Text="Discord: "/><Run Foreground="{DynamicResource TextBrush}" Text="theffapanda"/><Run Text="&#x0a;"/>
+                                        <Run Text="Twitch: "/><Run Foreground="{DynamicResource TextBrush}" Text="theffapanda"/><Run Text="&#x0a;"/>
+                                        <Run Text="Twitter/X: "/><Run Foreground="{DynamicResource TextBrush}" Text="theffapanda"/><Run Text="&#x0a;"/>
+                                        <Run Text="YouTube: "/><Run Foreground="{DynamicResource TextBrush}" Text="The FFA Panda"/><Run Text="&#x0a;&#x0a;"/>
+                                        <Run Text="Only Halo 3 maps can be safely removed from matchmaking rotation without getting kicked. Removing maps for other games may result in disconnects."/>
+                                    </TextBlock>
+                                </StackPanel>
                             </Border>
                         </StackPanel>
                     </Grid>
                 </TabItem>
 
-                <!-- ═══ TAB 6: LOG ═══ -->
+                <!-- ═══ TAB 7: LOG ═══ -->
                 <TabItem Header="📋  LOG" Style="{StaticResource DarkTabItem}">
                     <Grid Margin="20">
                         <Grid.RowDefinitions>
@@ -1556,27 +1576,23 @@
                             </ScrollViewer>
                         </Border>
 
-                        <Button Grid.Row="1"
-                                Content="CLEAR LOG"
-                                Style="{StaticResource PrimaryButton}"
-                                HorizontalAlignment="Right"
-                                Margin="0,10,0,0"
-                                Click="BtnClearLog_Click"/>
+                        <StackPanel Grid.Row="1"
+                                    Orientation="Horizontal"
+                                    HorizontalAlignment="Right"
+                                    Margin="0,10,0,0">
+                            <Button x:Name="BtnExportLogs"
+                                    Content="EXPORT LOGS"
+                                    Style="{StaticResource OrangeButton}"
+                                    Margin="0,0,10,0"
+                                    Click="BtnExportLogs_Click"/>
+                            <Button Content="CLEAR LOG"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Click="BtnClearLog_Click"/>
+                        </StackPanel>
                     </Grid>
                 </TabItem>
 
                 </TabControl>
-
-                <!-- Scrollbar layout spacer (required for Tools tab map list scrollbar) -->
-                <Border Width="140"
-                        Height="28"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Top"
-                        Margin="0,8,12,0"
-                        Background="{DynamicResource SurfaceBrush}"
-                        BorderBrush="{DynamicResource BorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="2"/>
 
             </Grid>
 

@@ -122,6 +122,13 @@ namespace HaloToolbox
 
         // ── Stats Tab — UI collection ────────────────────────────────────────
         private readonly ObservableCollection<StatsPlayerRow> _statsLobbyRows = new();
+        private readonly List<string> _sessionLogLines = new();
+
+        private const long MaxDiagnosticExportBytes = 25L * 1024 * 1024;
+        private static readonly string[] DiagnosticExtensions =
+        {
+            ".log", ".txt", ".xml", ".json", ".dmp", ".runtime-xml", ".ue4stats"
+        };
 
         // ── Per-game multiplayer map lists (Report tab) ──────────────────────
         private static readonly Dictionary<string, List<string>> GameMaps =
@@ -240,7 +247,9 @@ namespace HaloToolbox
             Dispatcher.Invoke(() =>
             {
                 var ts = DateTime.Now.ToString("HH:mm:ss");
+                var line = $"[{ts}] {tag} {message}";
                 var color = Brush(colorHex);
+                _sessionLogLines.Add(line);
                 TxtLog.Inlines.Add(new Run($"[{ts}] ") { Foreground = Brush("#4A5A6A") });
                 TxtLog.Inlines.Add(new Run($"{tag} ") { Foreground = color, FontWeight = FontWeights.Bold });
                 TxtLog.Inlines.Add(new Run(message + "\n") { Foreground = Brush("#C8D8E8") });
@@ -260,8 +269,308 @@ namespace HaloToolbox
         private void BtnClearLog_Click(object sender, RoutedEventArgs e)
         {
             TxtLog.Inlines.Clear();
+            _sessionLogLines.Clear();
             AppendLog("[INFO]", "Log cleared.", "#4A5A6A");
         }
+
+        private void BtnExportLogs_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new SaveFileDialog
+            {
+                Title            = "Save Diagnostics ZIP",
+                Filter           = "ZIP Archive (*.zip)|*.zip",
+                FileName         = $"MCC_Logs_{DateTime.Now:yyyyMMdd_HHmmss}.zip",
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+            };
+            if (dlg.ShowDialog() != true) return;
+
+            var zipPath = dlg.FileName;
+            var mccPath = TxtMccPath.Text.Trim();
+            BtnExportLogs.IsEnabled = false;
+            AppendLog("[RUN]", "Building diagnostics log bundle...", "#FF6A00");
+            SetStatus("Exporting diagnostics logs...", "#FF6A00");
+
+            Task.Run(() =>
+            {
+                try
+                {
+                    if (File.Exists(zipPath)) File.Delete(zipPath);
+
+                    var manifest = new StringBuilder();
+                    var exportTime = DateTime.Now;
+                    var sessionLog = GetSessionLogSnapshot();
+
+                    WriteManifestHeader(manifest, exportTime, mccPath);
+
+                    using var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create);
+
+                    AddTextEntry(zip, "toolbox/session_log.txt", sessionLog);
+                    AppendManifestInclude(manifest, "toolbox/session_log.txt", sessionLog.Length, exportTime, "current session log");
+                    AppendLog("[ZIP]", "toolbox/session_log.txt", "#C8D8E8");
+
+                    var probeRoots = BuildDiagnosticProbeRoots();
+                    foreach (var probe in probeRoots)
+                    {
+                        AppendManifestProbe(manifest, probe.Label, probe.RootPath);
+
+                        if (!Directory.Exists(probe.RootPath))
+                        {
+                            AppendManifestMissing(manifest, probe.RootPath);
+                            continue;
+                        }
+
+                        var files = SafeEnumerateFiles(probe.RootPath)
+                            .Where(path => probe.Include(path))
+                            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+
+                        if (probe.LimitToLatest && files.Count > 1)
+                        {
+                            var latest = files
+                                .Select(path => new FileInfo(path))
+                                .OrderByDescending(info => info.LastWriteTimeUtc)
+                                .First();
+
+                            foreach (var skipped in files.Where(path => !path.Equals(latest.FullName, StringComparison.OrdinalIgnoreCase)))
+                                AppendManifestSkipped(manifest, skipped, "Skipped because only the latest file from this source is exported.");
+
+                            files = new List<string> { latest.FullName };
+                        }
+
+                        if (files.Count == 0)
+                        {
+                            AppendManifestSkipped(manifest, probe.RootPath, "No matching diagnostic files found.");
+                            continue;
+                        }
+
+                        foreach (var file in files)
+                        {
+                            try
+                            {
+                                var fileInfo = new FileInfo(file);
+                                if (fileInfo.Length > MaxDiagnosticExportBytes)
+                                {
+                                    AppendManifestSkipped(manifest, file,
+                                        $"Skipped oversized file ({FormatSize(fileInfo.Length)} > {FormatSize(MaxDiagnosticExportBytes)}).");
+                                    continue;
+                                }
+
+                                var relative = Path.GetRelativePath(probe.RootPath, file);
+                                var entryPath = CombineZipPath(probe.ZipRoot, relative);
+                                zip.CreateEntryFromFile(file, entryPath, CompressionLevel.Fastest);
+                                AppendManifestInclude(manifest, entryPath, fileInfo.Length, fileInfo.LastWriteTime, file);
+                                AppendLog("[ZIP]", entryPath, "#C8D8E8");
+                            }
+                            catch (Exception ex)
+                            {
+                                AppendManifestError(manifest, file, ex.Message);
+                                AppendLog("[WARN]", $"Skipped {Path.GetFileName(file)}: {ex.Message}", "#FF6A00");
+                            }
+                        }
+                    }
+
+                    AppendManifestPrivacyNotes(manifest);
+                    AddTextEntry(zip, "manifest.txt", manifest.ToString());
+                    AppendLog("[ZIP]", "manifest.txt", "#C8D8E8");
+
+                    var info = new FileInfo(zipPath);
+                    var sizeTxt = FormatSize(info.Length);
+                    AppendLog("[DONE]", $"Diagnostics ZIP created: {sizeTxt}  =>  {zipPath}", "#39FF14");
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        SetStatus("Diagnostics ZIP created.", "#39FF14");
+                        var open = MessageBox.Show(
+                            $"Diagnostics ZIP created.\n\nSaved to:\n{zipPath}\n\nOpen containing folder?",
+                            "Logs Exported -- Halo MCC Toolbox",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Information);
+
+                        if (open == MessageBoxResult.Yes)
+                            Process.Start("explorer.exe", $"/select,\"{zipPath}\"");
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppendLog("[ERROR]", $"Log export failed: {ex.Message}", "#FF2D55");
+                    Dispatcher.Invoke(() =>
+                    {
+                        SetStatus("Failed to export diagnostics logs.", "#FF2D55");
+                        MessageBox.Show($"Failed to export logs:\n\n{ex.Message}",
+                            "Error -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Error);
+                    });
+                }
+                finally
+                {
+                    Dispatcher.Invoke(() => BtnExportLogs.IsEnabled = true);
+                }
+            });
+        }
+
+        private string GetSessionLogSnapshot()
+        {
+            return Dispatcher.Invoke(() =>
+            {
+                var lines = _sessionLogLines.Count == 0
+                    ? new[] { $"[{DateTime.Now:HH:mm:ss}] [INFO] Log export started before any session entries existed." }
+                    : _sessionLogLines.ToArray();
+
+                return string.Join(Environment.NewLine, lines) + Environment.NewLine;
+            });
+        }
+
+        private static void AddTextEntry(ZipArchive zip, string entryPath, string contents)
+        {
+            var entry = zip.CreateEntry(entryPath, CompressionLevel.Fastest);
+            using var writer = new StreamWriter(entry.Open(), Encoding.UTF8);
+            writer.Write(contents);
+        }
+
+        private static IEnumerable<string> SafeEnumerateFiles(string rootPath)
+        {
+            try
+            {
+                return Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories);
+            }
+            catch
+            {
+                return Enumerable.Empty<string>();
+            }
+        }
+
+        private static List<DiagnosticProbeRoot> BuildDiagnosticProbeRoots()
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            var mccCrashReportPath = Path.Combine(programFilesX86,
+                @"Steam\steamapps\common\Halo The Master Chief Collection\crash_report");
+
+            var probes = new List<DiagnosticProbeRoot>
+            {
+                new("MCC Crash Report", mccCrashReportPath, "mcc/crash_report",
+                    path => IsMccCrashReportFile(path), true),
+                new("Easy Anti-Cheat", Path.Combine(appData, "EasyAntiCheat"), "eac",
+                    path => IsDiagnosticFile(path)),
+                new("Steam Logs", Path.Combine(programFilesX86, @"Steam\logs"), "steam/logs",
+                    path => IsRelevantSteamLog(path)),
+            };
+
+            return probes;
+        }
+
+        private static bool IsDiagnosticFile(string path)
+        {
+            var ext = Path.GetExtension(path);
+            if (DiagnosticExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
+                return true;
+
+            var fileName = Path.GetFileName(path);
+            return fileName.Contains(".log.", StringComparison.OrdinalIgnoreCase)
+                || fileName.Contains("crash", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsMccCrashReportFile(string path)
+        {
+            var ext = Path.GetExtension(path);
+            return ext.Equals(".dmp", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".bmp", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".png", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsRelevantSteamLog(string path)
+        {
+            var fileName = Path.GetFileName(path);
+            return fileName.Equals("gameprocess_log.txt", StringComparison.OrdinalIgnoreCase)
+                || fileName.Equals("gameprocess_log.previous.txt", StringComparison.OrdinalIgnoreCase)
+                || fileName.Equals("content_log.txt", StringComparison.OrdinalIgnoreCase)
+                || fileName.Equals("content_log.previous.txt", StringComparison.OrdinalIgnoreCase)
+                || fileName.Equals("appinfo_log.txt", StringComparison.OrdinalIgnoreCase)
+                || fileName.Equals("appinfo_log.previous.txt", StringComparison.OrdinalIgnoreCase)
+                || fileName.Equals("cloud_log.txt", StringComparison.OrdinalIgnoreCase)
+                || fileName.Equals("cloud_log.previous.txt", StringComparison.OrdinalIgnoreCase)
+                || fileName.StartsWith("connection_log_976730", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string CombineZipPath(string zipRoot, string relativePath)
+        {
+            var normalized = relativePath.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
+            return $"{zipRoot.TrimEnd('/')}/{normalized}";
+        }
+
+        private static string FormatSize(long bytes)
+        {
+            double size = bytes;
+            string[] units = { "B", "KB", "MB", "GB" };
+            int unit = 0;
+            while (size >= 1024 && unit < units.Length - 1)
+            {
+                size /= 1024;
+                unit++;
+            }
+
+            return unit == 0 ? $"{size:0} {units[unit]}" : $"{size:0.0} {units[unit]}";
+        }
+
+        private static void WriteManifestHeader(StringBuilder manifest, DateTime exportTime, string mccPath)
+        {
+            manifest.AppendLine("HALO MCC TOOLBOX -- DIAGNOSTICS EXPORT");
+            manifest.AppendLine($"Generated: {exportTime:yyyy-MM-dd HH:mm:ss}");
+            manifest.AppendLine($"Configured MCC Path: {mccPath}");
+            manifest.AppendLine($"Per-file size cap: {FormatSize(MaxDiagnosticExportBytes)}");
+            manifest.AppendLine();
+        }
+
+        private static void AppendManifestProbe(StringBuilder manifest, string label, string rootPath)
+        {
+            manifest.AppendLine($"[PROBE] {label}");
+            manifest.AppendLine($"Path: {rootPath}");
+        }
+
+        private static void AppendManifestInclude(StringBuilder manifest, string entryPath, long size, DateTime lastWrite, string source)
+        {
+            manifest.AppendLine($"[INCLUDED] {entryPath}");
+            manifest.AppendLine($"  Source: {source}");
+            manifest.AppendLine($"  Size: {FormatSize(size)}");
+            manifest.AppendLine($"  Last Write: {lastWrite:yyyy-MM-dd HH:mm:ss}");
+        }
+
+        private static void AppendManifestMissing(StringBuilder manifest, string path)
+        {
+            manifest.AppendLine($"[MISSING] {path}");
+            manifest.AppendLine();
+        }
+
+        private static void AppendManifestSkipped(StringBuilder manifest, string path, string reason)
+        {
+            manifest.AppendLine($"[SKIPPED] {path}");
+            manifest.AppendLine($"  Reason: {reason}");
+        }
+
+        private static void AppendManifestError(StringBuilder manifest, string path, string error)
+        {
+            manifest.AppendLine($"[ERROR] {path}");
+            manifest.AppendLine($"  Message: {error}");
+        }
+
+        private static void AppendManifestPrivacyNotes(StringBuilder manifest)
+        {
+            manifest.AppendLine();
+            manifest.AppendLine("[EXCLUDED BY DEFAULT]");
+            manifest.AppendLine("- MCC Saved\\webcache, mcc/logs, and temp_reports");
+            manifest.AppendLine("- MCC carnagereports and gamecollections");
+            manifest.AppendLine("- Steam userdata");
+            manifest.AppendLine("- Steam logs not clearly tied to Halo MCC");
+            manifest.AppendLine("- Generic caches unrelated to diagnostics");
+        }
+
+        private sealed record DiagnosticProbeRoot(
+            string Label,
+            string RootPath,
+            string ZipRoot,
+            Func<string, bool> Include,
+            bool LimitToLatest = false);
 
         // ------------------------------------------
         // TOOL: Clean XBL credentials + webcache
@@ -408,10 +717,10 @@ echo All tasks complete.
             // Find EAC setup relative to the configured MCC path first,
             // then fall back to the Steam default.
             var mccBase      = TxtMccPath.Text.Trim();
-            var eacInMcc     = Path.Combine(mccBase, "installers", "easyanticheat_setup.exe");
+            var eacInMcc     = Path.Combine(mccBase, "EasyAntiCheat", "EasyAntiCheat_EOS_Setup.exe");
             var eacDefault   = Path.Combine(
                 @"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection",
-                "installers", "easyanticheat_setup.exe");
+                "EasyAntiCheat", "EasyAntiCheat_EOS_Setup.exe");
 
             var eacPath = File.Exists(eacInMcc)   ? eacInMcc
                         : File.Exists(eacDefault)  ? eacDefault
@@ -419,18 +728,18 @@ echo All tasks complete.
 
             if (eacPath == null)
             {
-                var msg = "EasyAntiCheat setup executable not found.\n\n" +
+                var msg = "EasyAntiCheat EOS setup executable not found.\n\n" +
                           "Expected location:\n" +
                           $"{eacInMcc}\n\n" +
                           "Make sure your MCC installation path is set correctly.";
-                AppendLog("[ERROR]", "easyanticheat_setup.exe not found.", "#FF2D55");
+                AppendLog("[ERROR]", "EasyAntiCheat_EOS_Setup.exe not found.", "#FF2D55");
                 MessageBox.Show(msg, "EAC Not Found -- Halo MCC Toolbox",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             var confirm = MessageBox.Show(
-                "This will launch the EasyAntiCheat setup tool.\n\n" +
+                "This will launch the EasyAntiCheat EOS setup tool.\n\n" +
                 "When it opens:\n" +
                 "  1. Click  \"Repair Service\"\n" +
                 "  2. Wait for it to complete\n" +
@@ -446,8 +755,8 @@ echo All tasks complete.
                 return;
             }
 
-            AppendLog("[RUN]", $"Launching EAC setup: {eacPath}", "#FF6A00");
-            SetStatus("Launching EasyAntiCheat repair...", "#FF6A00");
+            AppendLog("[RUN]", $"Launching EAC EOS setup: {eacPath}", "#FF6A00");
+            SetStatus("Launching EasyAntiCheat EOS repair...", "#FF6A00");
 
             try
             {
@@ -458,14 +767,14 @@ echo All tasks complete.
                     Verb            = "runas" // request UAC elevation
                 };
                 Process.Start(psi);
-                AppendLog("[INFO]", "EAC setup launched. Follow the on-screen prompts to Repair Service.", "#39FF14");
-                SetStatus("EAC setup launched.", "#39FF14");
+                AppendLog("[INFO]", "EAC EOS setup launched. Follow the on-screen prompts to Repair Service.", "#39FF14");
+                SetStatus("EAC EOS setup launched.", "#39FF14");
             }
             catch (Exception ex)
             {
                 AppendLog("[ERROR]", $"Failed to launch EAC setup: {ex.Message}", "#FF2D55");
                 SetStatus("Failed to launch EAC setup.", "#FF2D55");
-                MessageBox.Show($"Could not launch EasyAntiCheat setup:\n\n{ex.Message}",
+                MessageBox.Show($"Could not launch EasyAntiCheat EOS setup:\n\n{ex.Message}",
                     "Error -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }

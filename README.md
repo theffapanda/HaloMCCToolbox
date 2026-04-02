@@ -21,6 +21,7 @@
 | **Carnage Report Loader** | Parses your last game's XML carnage report and displays a full scoreboard |
 | **Cheater Evidence ZIP** | Packages the carnage report XML + theater `.mov` files into a ZIP for submission |
 | **Theater Backups** | Automatically backs up MCC theater clips, lets you rename them, and restore them later by selection or game |
+| **Playlist Explorer** | Visualizes MCC playlist XML, breaks down weighted map/mode combinations, and lets you filter by playlist, title, and category |
 | **Halo Support Integration** | Opens the Halo Waypoint report form pre-filled with all player/game details |
 | **Persistent Login** | Remembers your Halo Support login so you don't re-authenticate every time |
 | **Session Status Indicator** | Shows whether your Halo Support session is active before you open the form |
@@ -288,6 +289,44 @@ The tab monitors `%userprofile%\AppData\LocalLow\MCC\Temporary\UserContent\` whi
 
 ---
 
+### Playlists Tab
+
+![Playlists Tab](screenshots/playlists_tab.png)
+
+The Playlists tab reads MCC's live `findgamehopperdb-v4.xml` and turns it into a playlist browser so you can see what is actually in each playlist, how heavily each entry is weighted, and which maps are competing inside a given bucket.
+
+#### Live Composer
+
+- Mirrors MCC's matchmaking structure with **Social / Ranked**, **Game Size**, and **Playlist** selection
+- Lets you filter social playlists by **games included** and **game categories included**
+- Groups entries by category and shows:
+  - game title
+  - raw weight
+  - share within the currently filtered group
+  - normalized map name
+  - variant
+  - mode
+- Recalculates percentages based on your active title filters, so narrowing to only Halo 3 shows Halo 3-only proportions
+
+#### Rotation Schedule
+
+- Tracks featured playlist rotations by week
+- Shows the current **Social**, **Ranked 4v4**, and **Ranked 2v2** picks
+- Supports week jumping, lane filtering, and playlist search from a dropdown of known values
+- Includes estimated future rows where confirmed data is not yet available
+
+The tab reads MCC's XML from the default Steam install path:
+```
+C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\data\careerdb\findgamehopperdb-v4.xml
+```
+
+Rotation history is stored locally in:
+```
+HaloToolbox\Data\playlist-rotations.csv
+```
+
+---
+
 ### Log Tab
 
 ![Log Tab](screenshots/log_tab.png)
@@ -376,8 +415,10 @@ HaloToolbox/
 ├── HaloToolbox.sln
 └── HaloToolbox/
     ├── App.xaml / App.xaml.cs              ← App-level styles and dark theme
-    ├── MainWindow.xaml / .cs               ← Main UI (all 4 tabs + core logic)
+    ├── MainWindow.xaml / .cs               ← Main UI shell, tab host, and core logic
     ├── HaloReportWindow.xaml / .cs         ← WebView2 popup for Halo Support form
+    ├── Theater.xaml / .cs                  ← Theater backup browser and restore tools
+    ├── Playlists.xaml / .cs                ← Playlist XML explorer and rotation schedule
     ├── WebViewEnvironmentManager.cs        ← Persistent WebView2 session singleton
     └── HaloToolbox.csproj
 ```
@@ -405,6 +446,12 @@ Free to use, modify, and distribute. Credit appreciated but not required.
 ## Credits
 
 **The FFA Panda** — design, development, and testing
+
+Find me here:
+- Discord: `theffapanda`
+- Twitch: `theffapanda`
+- Twitter/X: `theffapanda`
+- YouTube: `The FFA Panda`
 
 Built with:
 - [WPF / .NET 8](https://dotnet.microsoft.com/)

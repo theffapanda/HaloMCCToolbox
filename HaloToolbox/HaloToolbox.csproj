@@ -18,6 +18,12 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Data\playlist-rotations.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <PropertyGroup>
     <PortableZipPath>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\HaloMCCToolbox-Portable.zip'))</PortableZipPath>
     <PortableZipTempDir>$(BaseIntermediateOutputPath)portable-zip\</PortableZipTempDir>

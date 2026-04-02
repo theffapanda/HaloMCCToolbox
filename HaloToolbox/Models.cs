@@ -317,3 +317,85 @@ public class SessionMember
         }
     }
 }
+
+public class PlaylistSummary
+{
+    public string Id { get; init; } = "";
+    public string RawName { get; init; } = "";
+    public string HopperName { get; init; } = "";
+    public bool IsMix { get; init; }
+    public string MinPlayers { get; init; } = "";
+    public string MaxPlayers { get; init; } = "";
+    public string MaxPartySize { get; init; } = "";
+    public List<PlaylistTagGroup> TagGroups { get; init; } = new();
+
+    public string DisplayName
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(HopperName))
+                return HopperName;
+            if (!string.IsNullOrWhiteSpace(Id))
+                return Id;
+            return RawName;
+        }
+    }
+
+    public string PlayerSummary => $"{MinPlayers}-{MaxPlayers} players  •  party up to {MaxPartySize}";
+
+    public override string ToString() => DisplayName;
+}
+
+public class PlaylistTagGroup
+{
+    public string TagId { get; init; } = "";
+    public string DisplayName { get; init; } = "";
+    public string Subtitle { get; init; } = "";
+    public int TotalWeight { get; init; }
+    public List<PlaylistEntry> Entries { get; init; } = new();
+
+    public string EntrySummary => $"{Entries.Count} entries";
+}
+
+public class PlaylistEntry
+{
+    public string TagId { get; init; } = "";
+    public string Category { get; init; } = "";
+    public int Weight { get; init; }
+    public string MapId { get; init; } = "";
+    public string MapDisplay { get; init; } = "";
+    public string MapVariant { get; init; } = "";
+    public string GameVariant { get; init; } = "";
+    public string GameKey { get; init; } = "";
+    public double WeightShare { get; set; }
+
+    public string WeightShareDisplay => $"{WeightShare * 100:F1}%";
+
+    public string GameDisplay => GameKey switch
+    {
+        "halo1" => "Halo CE",
+        "halo2" => "Halo 2",
+        "halo2a" => "Halo 2A",
+        "halo3" => "Halo 3",
+        "halo3odst" => "Halo 3: ODST",
+        "halo4" => "Halo 4",
+        "haloreach" => "Halo: Reach",
+        _ => "Unknown"
+    };
+
+    public string GameVariantDisplay => string.IsNullOrWhiteSpace(GameVariant) ? "Default" : GameVariant;
+    public string MapVariantDisplay => string.IsNullOrWhiteSpace(MapVariant) ? "-" : MapVariant;
+    public string CategoryDisplay => string.IsNullOrWhiteSpace(Category) ? "-" : Category.Replace("GameCategory_", "");
+
+    public SolidColorBrush GameBrush => GameKey switch
+    {
+        "halo1" => new SolidColorBrush(Color.FromRgb(0x8C, 0xC8, 0xFF)),
+        "halo2" => new SolidColorBrush(Color.FromRgb(0x7A, 0xD1, 0xFF)),
+        "halo2a" => new SolidColorBrush(Color.FromRgb(0x39, 0xD0, 0xC8)),
+        "halo3" => new SolidColorBrush(Color.FromRgb(0x58, 0xA6, 0xFF)),
+        "halo3odst" => new SolidColorBrush(Color.FromRgb(0xD2, 0x99, 0x22)),
+        "halo4" => new SolidColorBrush(Color.FromRgb(0xF8, 0x51, 0x49)),
+        "haloreach" => new SolidColorBrush(Color.FromRgb(0xBC, 0x8C, 0xF9)),
+        _ => new SolidColorBrush(Color.FromRgb(0x7D, 0x85, 0x90))
+    };
+}
