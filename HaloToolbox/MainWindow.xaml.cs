@@ -123,6 +123,8 @@ namespace HaloToolbox
         // ── Stats Tab — UI collection ────────────────────────────────────────
         private readonly ObservableCollection<StatsPlayerRow> _statsLobbyRows = new();
         private readonly List<string> _sessionLogLines = new();
+        private readonly ProxyService _rejoinProxy = new();
+        private bool _rejoinWinHttpManualNeeded;
 
         private const long MaxDiagnosticExportBytes = 25L * 1024 * 1024;
         private static readonly string[] DiagnosticExtensions =
@@ -215,6 +217,23 @@ namespace HaloToolbox
 
             // Initialize the Stats tab (lobby monitor)
             StatsInitialize();
+            _rejoinProxy.WinHttpManualSetRequired += (_, command) =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    _rejoinWinHttpManualNeeded = true;
+                    AppendLog("[REJOIN]", $"Proxy active, but MCC capture may need admin approval. Manual fallback: {command}", "#FF6A00");
+                    UpdateRejoinFixUi();
+                });
+            _rejoinProxy.OnMatchSessionSaved += (_, _) =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    AppendLog("[REJOIN]", "Captured matchmaking session and saved it to Toolbox appdata.", "#00C8FF");
+                    UpdateRejoinFixUi();
+                });
+            _rejoinProxy.OnPlayerIdentityChanged += (_, _) =>
+                Dispatcher.InvokeAsync(UpdateRejoinFixUi);
+            Closed += (_, _) => _rejoinProxy.Dispose();
+            UpdateRejoinFixUi();
 
         }
 
@@ -307,6 +326,30 @@ namespace HaloToolbox
                     AddTextEntry(zip, "toolbox/session_log.txt", sessionLog);
                     AppendManifestInclude(manifest, "toolbox/session_log.txt", sessionLog.Length, exportTime, "current session log");
                     AppendLog("[ZIP]", "toolbox/session_log.txt", "#C8D8E8");
+
+                    foreach (var file in RejoinFixPaths.GetExportFiles())
+                    {
+                        try
+                        {
+                            var fileInfo = new FileInfo(file);
+                            if (fileInfo.Length > MaxDiagnosticExportBytes)
+                            {
+                                AppendManifestSkipped(manifest, file,
+                                    $"Skipped oversized file ({FormatSize(fileInfo.Length)} > {FormatSize(MaxDiagnosticExportBytes)}).");
+                                continue;
+                            }
+
+                            var entryPath = CombineZipPath("toolbox/rejoin_fix", Path.GetFileName(file));
+                            zip.CreateEntryFromFile(file, entryPath, CompressionLevel.Fastest);
+                            AppendManifestInclude(manifest, entryPath, fileInfo.Length, fileInfo.LastWriteTime, file);
+                            AppendLog("[ZIP]", entryPath, "#C8D8E8");
+                        }
+                        catch (Exception ex)
+                        {
+                            AppendManifestError(manifest, file, ex.Message);
+                            AppendLog("[WARN]", $"Skipped {Path.GetFileName(file)}: {ex.Message}", "#FF6A00");
+                        }
+                    }
 
                     var probeRoots = BuildDiagnosticProbeRoots();
                     foreach (var probe in probeRoots)
@@ -776,6 +819,96 @@ echo All tasks complete.
                 SetStatus("Failed to launch EAC setup.", "#FF2D55");
                 MessageBox.Show($"Could not launch EasyAntiCheat EOS setup:\n\n{ex.Message}",
                     "Error -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void UpdateRejoinFixUi()
+        {
+            bool isRunning = _rejoinProxy.IsRunning;
+            bool hasSavedState = File.Exists(RejoinFixPaths.LastHandleFile)
+                || File.Exists(RejoinFixPaths.LastMatchSessionFile)
+                || File.Exists(RejoinFixPaths.LastGameServerFile);
+            string gamertagSuffix = string.IsNullOrWhiteSpace(_rejoinProxy.CurrentPlayerGamertag)
+                ? ""
+                : $" ({_rejoinProxy.CurrentPlayerGamertag})";
+
+            BtnRejoinFix.Content = isRunning ? "STOP FIX" : "RUN FIX";
+
+            if (isRunning && _rejoinWinHttpManualNeeded)
+            {
+                TxtRejoinFixStatus.Text = $"ACTIVE{gamertagSuffix} - proxy listening; MCC capture may still need admin proxy approval";
+                TxtRejoinFixStatus.Foreground = Brush("#FF6A00");
+            }
+            else if (isRunning)
+            {
+                TxtRejoinFixStatus.Text = $"ACTIVE{gamertagSuffix} - capturing in background and saving rejoin state to Toolbox appdata";
+                TxtRejoinFixStatus.Foreground = Brush("#39FF14");
+            }
+            else if (hasSavedState)
+            {
+                TxtRejoinFixStatus.Text = $"OFF{gamertagSuffix} - saved rejoin capture files are present for diagnostics export";
+                TxtRejoinFixStatus.Foreground = Brush("#C8D8E8");
+            }
+            else
+            {
+                TxtRejoinFixStatus.Text = $"OFF{gamertagSuffix}";
+                TxtRejoinFixStatus.Foreground = Brush("#4A5A6A");
+            }
+        }
+
+        private async void BtnRejoinFix_Click(object sender, RoutedEventArgs e)
+        {
+            BtnRejoinFix.IsEnabled = false;
+
+            try
+            {
+                if (_rejoinProxy.IsRunning)
+                {
+                    _rejoinProxy.Stop();
+                    _rejoinWinHttpManualNeeded = false;
+                    AppendLog("[REJOIN]", "Rejoin Fix proxy stopped.", "#C8D8E8");
+                    SetStatus("Rejoin Fix stopped.", "#C8D8E8");
+                }
+                else
+                {
+                    var confirm = MessageBox.Show(
+                        "Rejoin Fix will enable the Toolbox proxy and change the system proxy while it is running.\n\nRestart MCC after it starts.\n\nRun the fix now?",
+                        "Rejoin Fix -- Halo MCC Toolbox",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning);
+
+                    if (confirm != MessageBoxResult.Yes)
+                    {
+                        AppendLog("[INFO]", "Rejoin Fix cancelled by user.", "#4A5A6A");
+                        SetStatus("Rejoin Fix cancelled.", "#4A5A6A");
+                        return;
+                    }
+
+                    RejoinFixPaths.EnsureRootDirectory();
+                    _rejoinWinHttpManualNeeded = false;
+                    RejoinFixDiagnostics.Info("proxy", "Activation requested from Toolbox UI.");
+                    AppendLog("[REJOIN]", "Starting Rejoin Fix proxy...", "#FF6A00");
+                    SetStatus("Starting Rejoin Fix...", "#FF6A00");
+                    await _rejoinProxy.StartAsync();
+                    AppendLog("[REJOIN]", $"Rejoin Fix active on 127.0.0.1:{_rejoinProxy.Port}. Restart MCC now.", "#39FF14");
+                    SetStatus("Rejoin Fix active.", "#39FF14");
+                }
+            }
+            catch (Exception ex)
+            {
+                RejoinFixDiagnostics.Error("proxy", $"Activation failed: {ex.Message}");
+                AppendLog("[ERROR]", $"Rejoin Fix failed: {ex.Message}", "#FF2D55");
+                SetStatus("Rejoin Fix failed to start.", "#FF2D55");
+                MessageBox.Show(
+                    $"Rejoin Fix could not start:\n\n{ex.Message}",
+                    "Rejoin Fix -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                UpdateRejoinFixUi();
+                BtnRejoinFix.IsEnabled = true;
             }
         }
 

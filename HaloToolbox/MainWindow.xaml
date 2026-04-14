@@ -262,6 +262,7 @@
                             <RowDefinition Height="Auto"/>  <!-- section label: Fix & Repair -->
                             <RowDefinition Height="Auto"/>  <!-- credentials card -->
                             <RowDefinition Height="Auto"/>  <!-- EAC card -->
+                            <RowDefinition Height="Auto"/>  <!-- rejoin fix card -->
                             <RowDefinition Height="Auto"/>  <!-- section label: Map Selector -->
                             <RowDefinition Height="Auto"/>  <!-- map header + path -->
                             <RowDefinition Height="Auto"/>  <!-- button row -->
@@ -371,8 +372,7 @@
                                 BorderThickness="1"
                                 CornerRadius="3"
                                 Padding="20"
-                                Margin="0,0,0,14"
-                                Visibility="Collapsed">
+                                Margin="0,0,0,14">
                             <Border.Effect>
                                 <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="0" Opacity="0.5"/>
                             </Border.Effect>
@@ -384,32 +384,38 @@
                                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,20,0">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
                                         <TextBlock Text="↻ " FontSize="16" VerticalAlignment="Center"/>
-                                        <TextBlock Text="FIX REJOINS: EXPERIMENTAL, SOLO ONLY"
+                                        <TextBlock Text="REJOIN FIX: EXPERIMENTAL"
                                                    FontFamily="Consolas"
                                                    FontSize="13"
                                                    FontWeight="Bold"
                                                    Foreground="White"
                                                    VerticalAlignment="Center"/>
                                     </StackPanel>
-                                    <TextBlock Text="EXPERIMENTAL: Activates the network proxy to capture and display rejoin requests, team assignments, and player skill distribution. Helps debug session invites and rejoin guards. Restart MCC after starting the proxy. This may impact other applications, use at your own risk. WILL NOT WORK IN PARTIES"
+                                    <TextBlock Text="Activates the Toolbox proxy and silently captures the handle, match session, and connection GUID data needed for rejoin troubleshooting. Restart MCC after turning it on. Use with care because this changes the system proxy while active."
                                                FontFamily="Consolas"
                                                FontSize="11"
                                                Foreground="{DynamicResource MutedBrush}"
                                                TextWrapping="Wrap"
                                                LineHeight="18"/>
+                                    <TextBlock x:Name="TxtRejoinFixStatus"
+                                               Text="OFF"
+                                               FontFamily="Consolas"
+                                               FontSize="10"
+                                               Margin="0,8,0,0"
+                                               Foreground="{DynamicResource MutedBrush}"/>
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        x:Name="BtnRejoinInfoRemoved"
+                                        x:Name="BtnRejoinFix"
                                         Content="RUN FIX"
                                         Style="{StaticResource OrangeButton}"
                                         Width="110"
-                                        IsEnabled="False"
+                                        Click="BtnRejoinFix_Click"
                                         VerticalAlignment="Center"/>
                             </Grid>
                         </Border>
 
                         <!-- Section: Map Selector -->
-                        <TextBlock Grid.Row="3"
+                        <TextBlock Grid.Row="4"
                                    Text="— MAP SELECTOR"
                                    FontFamily="Consolas"
                                    FontSize="10"
@@ -418,7 +424,7 @@
                                    Margin="0,0,0,10"/>
 
                         <!-- Map header + path -->
-                        <StackPanel Grid.Row="4" Margin="0,0,0,10">
+                        <StackPanel Grid.Row="5" Margin="0,0,0,10">
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                 <TextBlock Text="🗺 " FontSize="16" VerticalAlignment="Center"/>
                                 <TextBlock Text="HALO 3 MULTIPLAYER MAP SELECTOR"
@@ -460,7 +466,7 @@
                         </StackPanel>
 
                         <!-- All action buttons in one row -->
-                        <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,10">
+                        <StackPanel Grid.Row="6" Orientation="Horizontal" Margin="0,0,0,10">
                             <Button Content="⟳  LOAD MAPS"
                                     Style="{StaticResource PrimaryButton}"
                                     Click="BtnLoadMaps_Click"
@@ -485,7 +491,7 @@
                         </StackPanel>
 
                         <!-- Map list — fills all remaining vertical space -->
-                        <Border Grid.Row="6"
+                        <Border Grid.Row="7"
                                 Background="{DynamicResource SurfaceBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -676,7 +682,7 @@
                         </Border>
 
                         <!-- Status -->
-                        <TextBlock Grid.Row="7"
+                        <TextBlock Grid.Row="8"
                                    x:Name="TxtMapStatus"
                                    FontFamily="Consolas"
                                    FontSize="11"

@@ -1,3 +1,4 @@
+using System;
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.Win32;
@@ -12,6 +13,33 @@ namespace HaloToolbox
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+            DispatcherUnhandledException += (_, args) =>
+            {
+                try
+                {
+                    MessageBox.Show(
+                        $"The app hit an unexpected error:\n\n{args.Exception.Message}",
+                        "Halo MCC Toolbox",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+                catch { }
+            };
+            AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            {
+                if (args.ExceptionObject is Exception ex)
+                {
+                    try
+                    {
+                        MessageBox.Show(
+                            $"A fatal error occurred:\n\n{ex.Message}",
+                            "Halo MCC Toolbox",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Error);
+                    }
+                    catch { }
+                }
+            };
             LoadSavedTheme();
         }
 
