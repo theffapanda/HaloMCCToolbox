@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
@@ -35,8 +36,14 @@ public class ProxyService : IDisposable
     // Raised when the proxy learns or changes the current player identity.
     public event EventHandler? OnPlayerIdentityChanged;
 
+    // Raised when observed squad context changes between solo / party / unknown.
+    public event EventHandler? OnRejoinContextChanged;
+
     // In-memory copy of the saved matchmaking session — used for session discovery injection
     private SavedHandleInfo? _lastMatchSession;
+
+    // Last observed squad session state — drives solo vs party handling and UI labeling.
+    private RejoinSquadState? _lastSquadState;
 
     // Set true when MCC exits and we have a saved match session.  Tells the proxy to
     // (a) do a JIT PUT+handle on the first sessiondirectory request, and
@@ -88,6 +95,15 @@ public class ProxyService : IDisposable
 
 
     public bool IsGameServerRedirectionActive => _gameServerRedirectionActive;
+    public RejoinSessionMode CurrentRejoinMode => _lastSquadState?.Mode ?? RejoinSessionMode.Unknown;
+    public string CurrentRejoinModeLabel => CurrentRejoinMode.ToDisplayLabel();
+    public int CurrentSquadMemberCount => _lastSquadState?.MemberCount ?? 0;
+
+    public ProxyService()
+    {
+        _cachedGameServerInfo = LoadPersistedGameServer();
+        _lastSquadState = LoadPersistedSquadState();
+    }
 
     /// <summary>Clears cached game server info and disables redirection.</summary>
     public void ClearGameServerRedirection()
@@ -139,6 +155,23 @@ public class ProxyService : IDisposable
         {
             RejoinFixDiagnostics.Warn("game-server", $"Failed to load cached game server: {ex.Message}");
             Debug.WriteLine($"Failed to load persisted game server: {ex.Message}");
+            return null;
+        }
+    }
+
+    private RejoinSquadState? LoadPersistedSquadState()
+    {
+        try
+        {
+            if (!File.Exists(RejoinFixPaths.LastSquadStateFile))
+                return null;
+
+            var json = File.ReadAllText(RejoinFixPaths.LastSquadStateFile);
+            return JsonSerializer.Deserialize<RejoinSquadState>(json);
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("squad", $"Failed to load cached squad state: {ex.Message}");
             return null;
         }
     }
@@ -362,6 +395,7 @@ public class ProxyService : IDisposable
                 }
             }
             string body = TryDecompressGzip(rawBytes, contentEncoding);
+            ObserveSquadSessionDocument(req.Url, body, "request-put");
             TryUpgradeGhostSessionConnectionGuid(body);
         }
 
@@ -624,7 +658,7 @@ public class ProxyService : IDisposable
     /// %LocalAppData%\HaloMCCToolbox\RejoinFix\last-handle.json. Called synchronously before the
     /// response arrives so the data survives a game crash. Best-effort; never throws.
     /// </summary>
-    private static void PersistHandleToDisk(string bodyJson, Dictionary<string, string> requestHeaders)
+    private void PersistHandleToDisk(string bodyJson, Dictionary<string, string> requestHeaders)
     {
         try
         {
@@ -643,12 +677,26 @@ public class ProxyService : IDisposable
 
             if (string.IsNullOrEmpty(info.Scid) || string.IsNullOrEmpty(info.SessionName)) return;
 
+            if (info.TemplateName.Equals("cascadesquadsession", StringComparison.OrdinalIgnoreCase))
+            {
+                RejoinSquadState? observedSquad = _lastSquadState;
+                if (observedSquad is not null &&
+                    string.Equals(observedSquad.SessionName, info.SessionName, StringComparison.OrdinalIgnoreCase))
+                {
+                    info.ObservedSquadMemberCount = observedSquad.MemberCount;
+                    info.ObservedSquadSessionName = observedSquad.SessionName;
+                }
+            }
+
             var dir  = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HaloMCCToolbox", "RejoinFix");
             Directory.CreateDirectory(dir);
             File.WriteAllText(
                 Path.Combine(dir, "last-handle.json"),
                 JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = true }));
-            RejoinFixDiagnostics.Info("capture", $"Saved activity handle for {info.TemplateName}/{info.SessionShort}.");
+            string modeSuffix = info.Mode == RejoinSessionMode.Unknown
+                ? ""
+                : $" [{info.Mode.ToDisplayLabel()}]";
+            RejoinFixDiagnostics.Info("capture", $"Saved activity handle for {info.TemplateName}/{info.SessionShort}{modeSuffix}.");
         }
         catch
         {
@@ -761,6 +809,106 @@ public class ProxyService : IDisposable
         }
     }
 
+    private void ObserveSquadSessionDocument(string url, string body, string source)
+    {
+        RejoinSquadState? nextState = null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+
+            int memberCount = 0;
+            int acceptedCount = 0;
+            int activeCount = 0;
+
+            if (root.TryGetProperty("membersInfo", out var membersInfo))
+            {
+                if (membersInfo.TryGetProperty("count", out var countEl) && countEl.TryGetInt32(out var parsedCount))
+                    memberCount = parsedCount;
+                if (membersInfo.TryGetProperty("accepted", out var acceptedEl) && acceptedEl.TryGetInt32(out var parsedAccepted))
+                    acceptedCount = parsedAccepted;
+                if (membersInfo.TryGetProperty("active", out var activeEl) && activeEl.TryGetInt32(out var parsedActive))
+                    activeCount = parsedActive;
+            }
+
+            if (memberCount == 0 &&
+                root.TryGetProperty("members", out var members) &&
+                members.ValueKind == JsonValueKind.Object)
+            {
+                memberCount = members.EnumerateObject().Count();
+            }
+
+            if (memberCount <= 0)
+                return;
+
+            string sessionName = TryGetSessionNameFromUrl(url);
+            if (string.IsNullOrWhiteSpace(sessionName))
+                return;
+
+            nextState = new RejoinSquadState
+            {
+                SessionName = sessionName,
+                SavedAt = DateTime.UtcNow,
+                MemberCount = memberCount,
+                AcceptedCount = acceptedCount,
+                ActiveCount = activeCount,
+            };
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("squad", $"Failed to parse squad session document from {source}: {ex.Message}");
+            return;
+        }
+
+        bool changed = _lastSquadState is null
+            || !string.Equals(_lastSquadState.SessionName, nextState.SessionName, StringComparison.OrdinalIgnoreCase)
+            || _lastSquadState.MemberCount != nextState.MemberCount
+            || _lastSquadState.AcceptedCount != nextState.AcceptedCount
+            || _lastSquadState.ActiveCount != nextState.ActiveCount;
+
+        _lastSquadState = nextState;
+
+        try
+        {
+            RejoinFixPaths.EnsureRootDirectory();
+            File.WriteAllText(
+                RejoinFixPaths.LastSquadStateFile,
+                JsonSerializer.Serialize(nextState, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("squad", $"Failed to persist squad state: {ex.Message}");
+        }
+
+        if (changed)
+        {
+            RejoinFixDiagnostics.Info(
+                "squad",
+                $"Observed {nextState.Mode.ToDisplayLabel()} squad state for {nextState.SessionName[..Math.Min(13, nextState.SessionName.Length)]}… ({nextState.MemberCount} members) via {source}.");
+            OnRejoinContextChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private static string TryGetSessionNameFromUrl(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            var segs = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < segs.Length; i++)
+            {
+                if (segs[i].Equals("sessions", StringComparison.OrdinalIgnoreCase) && i + 1 < segs.Length)
+                    return segs[i + 1];
+            }
+        }
+        catch
+        {
+        }
+
+        return "";
+    }
+
     /// <summary>Clears the in-memory match session (called when user clicks CLEAR).</summary>
     public void ClearSavedMatchSession()
     {
@@ -792,6 +940,7 @@ public class ProxyService : IDisposable
             !string.Equals(_playerXuid, xuid, StringComparison.Ordinal))
         {
             string previousXuid = _playerXuid;
+            _lastSquadState = null;
             ClearSavedMatchSession();
             ClearGameServerRedirection();
             DeletePersistedRejoinState();
@@ -812,7 +961,10 @@ public class ProxyService : IDisposable
         _playerXuid = xuid;
 
         if (changed)
+        {
+            OnRejoinContextChanged?.Invoke(this, EventArgs.Empty);
             OnPlayerIdentityChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     private static void DeletePersistedRejoinState()
@@ -832,6 +984,7 @@ public class ProxyService : IDisposable
 
         TryDelete(RejoinFixPaths.LastHandleFile);
         TryDelete(RejoinFixPaths.LastMatchSessionFile);
+        TryDelete(RejoinFixPaths.LastSquadStateFile);
         TryDelete(RejoinFixPaths.LastGameServerFile);
     }
 
@@ -1436,6 +1589,20 @@ public class ProxyService : IDisposable
         }
 
         // ── Normal body capture ────────────────────────────────────────────
+        if (entry.Method == "GET" &&
+            entry.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
+            entry.Path.Contains("/CascadeSquadSession/sessions/", StringComparison.OrdinalIgnoreCase) &&
+            resp.StatusCode == 200 &&
+            resp.HasBody &&
+            ShouldReadBody(entry.Url))
+        {
+            var squadBody = await e.GetResponseBodyAsString();
+            ObserveSquadSessionDocument(entry.Url, squadBody, "response-get");
+            e.SetResponseBodyString(squadBody);
+            if (string.IsNullOrEmpty(entry.ResponseBody))
+                entry.ResponseBody = squadBody;
+        }
+
         if (!injected && !memberInjected && isJson && resp.HasBody && (entry.Method == "GET" || entry.Method == "POST") && ShouldReadBody(entry.Url))
         {
             var body = await e.GetResponseBodyAsString();

@@ -397,13 +397,20 @@
                                                Foreground="{DynamicResource MutedBrush}"
                                                TextWrapping="Wrap"
                                                LineHeight="18"/>
-                                    <TextBlock x:Name="TxtRejoinFixStatus"
-                                               Text="OFF"
-                                               FontFamily="Consolas"
-                                               FontSize="10"
-                                               Margin="0,8,0,0"
-                                               Foreground="{DynamicResource MutedBrush}"/>
-                                </StackPanel>
+                                     <TextBlock x:Name="TxtRejoinFixStatus"
+                                                Text="OFF"
+                                                FontFamily="Consolas"
+                                                FontSize="10"
+                                                Margin="0,8,0,0"
+                                                Foreground="{DynamicResource MutedBrush}"/>
+                                     <TextBlock x:Name="TxtRejoinFixMode"
+                                                Text=""
+                                                FontFamily="Consolas"
+                                                FontSize="10"
+                                                Margin="0,4,0,0"
+                                                Visibility="Collapsed"
+                                                Foreground="{DynamicResource MutedBrush}"/>
+                                 </StackPanel>
                                 <Button Grid.Column="1"
                                         x:Name="BtnRejoinFix"
                                         Content="RUN FIX"

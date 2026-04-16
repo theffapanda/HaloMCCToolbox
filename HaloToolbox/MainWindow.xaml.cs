@@ -232,6 +232,8 @@ namespace HaloToolbox
                 });
             _rejoinProxy.OnPlayerIdentityChanged += (_, _) =>
                 Dispatcher.InvokeAsync(UpdateRejoinFixUi);
+            _rejoinProxy.OnRejoinContextChanged += (_, _) =>
+                Dispatcher.InvokeAsync(UpdateRejoinFixUi);
             Closed += (_, _) => _rejoinProxy.Dispose();
             UpdateRejoinFixUi();
 
@@ -827,10 +829,16 @@ echo All tasks complete.
             bool isRunning = _rejoinProxy.IsRunning;
             bool hasSavedState = File.Exists(RejoinFixPaths.LastHandleFile)
                 || File.Exists(RejoinFixPaths.LastMatchSessionFile)
+                || File.Exists(RejoinFixPaths.LastSquadStateFile)
                 || File.Exists(RejoinFixPaths.LastGameServerFile);
             string gamertagSuffix = string.IsNullOrWhiteSpace(_rejoinProxy.CurrentPlayerGamertag)
                 ? ""
                 : $" ({_rejoinProxy.CurrentPlayerGamertag})";
+            string modeLabel = _rejoinProxy.CurrentRejoinModeLabel;
+            int squadMemberCount = _rejoinProxy.CurrentSquadMemberCount;
+            string modeSuffix = squadMemberCount > 0
+                ? $" ({squadMemberCount} member{(squadMemberCount == 1 ? "" : "s")})"
+                : "";
 
             BtnRejoinFix.Content = isRunning ? "STOP FIX" : "RUN FIX";
 
@@ -853,6 +861,23 @@ echo All tasks complete.
             {
                 TxtRejoinFixStatus.Text = $"OFF{gamertagSuffix}";
                 TxtRejoinFixStatus.Foreground = Brush("#4A5A6A");
+            }
+
+            if (squadMemberCount > 0)
+            {
+                TxtRejoinFixMode.Visibility = Visibility.Visible;
+                TxtRejoinFixMode.Text = $"PATH: {modeLabel}{modeSuffix}";
+                TxtRejoinFixMode.Foreground = modeLabel switch
+                {
+                    "PARTY" => Brush("#00C8FF"),
+                    "SOLO" => Brush("#39FF14"),
+                    _ => Brush("#C8D8E8")
+                };
+            }
+            else
+            {
+                TxtRejoinFixMode.Text = "";
+                TxtRejoinFixMode.Visibility = Visibility.Collapsed;
             }
         }
 

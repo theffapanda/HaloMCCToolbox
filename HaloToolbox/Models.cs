@@ -56,6 +56,48 @@ public class CampaignStats
 }
 
 // ── Rejoin Guard ──────────────────────────────────────────────────────────────
+public enum RejoinSessionMode
+{
+    Unknown = 0,
+    Solo = 1,
+    Party = 2,
+}
+
+public static class RejoinSessionModeExtensions
+{
+    public static string ToDisplayLabel(this RejoinSessionMode mode) => mode switch
+    {
+        RejoinSessionMode.Solo => "SOLO",
+        RejoinSessionMode.Party => "PARTY",
+        _ => "UNKNOWN",
+    };
+}
+
+public class RejoinSquadState
+{
+    [JsonPropertyName("sessionName")]
+    public string SessionName { get; set; } = "";
+
+    [JsonPropertyName("savedAt")]
+    public DateTime SavedAt { get; set; } = DateTime.UtcNow;
+
+    [JsonPropertyName("memberCount")]
+    public int MemberCount { get; set; }
+
+    [JsonPropertyName("acceptedCount")]
+    public int AcceptedCount { get; set; }
+
+    [JsonPropertyName("activeCount")]
+    public int ActiveCount { get; set; }
+
+    [JsonIgnore]
+    public RejoinSessionMode Mode => MemberCount > 1
+        ? RejoinSessionMode.Party
+        : MemberCount == 1
+            ? RejoinSessionMode.Solo
+            : RejoinSessionMode.Unknown;
+}
+
 public class SavedHandleInfo
 {
     [JsonPropertyName("scid")]
@@ -85,6 +127,12 @@ public class SavedHandleInfo
     [JsonPropertyName("playerXuid")]
     public string PlayerXuid { get; set; } = "";  // Player's Xbox Live User ID - CRITICAL for member injection
 
+    [JsonPropertyName("observedSquadMemberCount")]
+    public int ObservedSquadMemberCount { get; set; }
+
+    [JsonPropertyName("observedSquadSessionName")]
+    public string ObservedSquadSessionName { get; set; } = "";
+
     // Display helpers
     public string SessionShort => SessionName.Length > 13 ? SessionName[..13] + "…" : SessionName;
     public string SavedAtStr   => SavedAt.ToLocalTime().ToString("HH:mm:ss");
@@ -93,8 +141,17 @@ public class SavedHandleInfo
         $"/sessionTemplates/{TemplateName}/sessions/{SessionName}";
     public string MemberUrl    => SessionUrl + "/members/me";
 
+    [JsonIgnore]
+    public RejoinSessionMode Mode => ObservedSquadMemberCount > 1
+        ? RejoinSessionMode.Party
+        : ObservedSquadMemberCount == 1
+            ? RejoinSessionMode.Solo
+            : RejoinSessionMode.Unknown;
+
     /// <summary>True if this is a solo squad (cascadesquadsession with 1 member).</summary>
-    public bool IsSoloSquad => TemplateName?.Equals("cascadesquadsession", StringComparison.OrdinalIgnoreCase) == true;
+    public bool IsSoloSquad => Mode == RejoinSessionMode.Solo;
+
+    public bool IsPartySquad => Mode == RejoinSessionMode.Party;
 }
 
 // ── Game Server Redirection ───────────────────────────────────────────────────
