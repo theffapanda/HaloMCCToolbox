@@ -12,18 +12,19 @@ namespace HaloToolbox;
 
 public partial class Playlists : UserControl
 {
-    private const string PlaylistXmlPath = @"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\data\careerdb\findgamehopperdb-v4.xml";
     private const string RotationDataPath = "Data\\playlist-rotations.csv";
 
     private readonly ObservableCollection<PlaylistViewGroup> _visibleGroups = new();
     private readonly List<PlaylistViewSummary> _allPlaylists = new();
     private readonly HashSet<string> _selectedTagIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedGames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _expandedGroupIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<PlaylistRotationRecord> _allRotationRecords = new();
     private readonly ObservableCollection<PlaylistRotationViewRow> _confirmedRotationRows = new();
     private bool _loaded;
     private PlaylistMode _mode = PlaylistMode.Social;
     private PlaylistSubview _subview = PlaylistSubview.LiveComposer;
+    private string _mccInstallationPath = App.DefaultMccPath;
 
     private static readonly string[] GameOrder =
     [
@@ -56,6 +57,8 @@ public partial class Playlists : UserControl
         ("asq_midship", "Heretic"),
         ("asq_deadloc", "High Ground"),
         ("asq_s3d_tur", "Icebox"),
+        ("s3d_turf", "Icebox"),
+        ("s3d_tur", "Icebox"),
         ("asq_isolati", "Isolation"),
         ("asq_zanziba", "Last Resort"),
         ("asq_spaceca", "Orbital"),
@@ -204,6 +207,17 @@ public partial class Playlists : UserControl
             LoadRotationSchedule();
     }
 
+    public void SetMccInstallationPath(string path)
+    {
+        var normalizedPath = string.IsNullOrWhiteSpace(path) ? App.DefaultMccPath : path.Trim();
+        if (_mccInstallationPath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _mccInstallationPath = normalizedPath;
+        if (_loaded && _subview == PlaylistSubview.LiveComposer)
+            LoadPlaylists();
+    }
+
     private void BtnLiveComposer_Click(object sender, RoutedEventArgs e) => SetSubview(PlaylistSubview.LiveComposer);
     private void BtnRotationSchedule_Click(object sender, RoutedEventArgs e) => SetSubview(PlaylistSubview.RotationSchedule);
     private void BtnSocial_Click(object sender, RoutedEventArgs e) => SetMode(PlaylistMode.Social);
@@ -250,14 +264,15 @@ public partial class Playlists : UserControl
         try
         {
             _allPlaylists.Clear();
+            var playlistXmlPath = GetPlaylistXmlPath();
 
-            if (!File.Exists(PlaylistXmlPath))
+            if (!File.Exists(playlistXmlPath))
             {
-                ShowEmpty($"Playlist XML not found at:{Environment.NewLine}{PlaylistXmlPath}");
+                ShowEmpty($"Playlist XML not found at:{Environment.NewLine}{playlistXmlPath}");
                 return;
             }
 
-            var doc = XDocument.Load(PlaylistXmlPath);
+            var doc = XDocument.Load(playlistXmlPath);
             var mixTags = doc
                 .Descendants("MixTag")
                 .Select(x => new
@@ -283,6 +298,9 @@ public partial class Playlists : UserControl
             ShowEmpty("Failed to load playlist data." + Environment.NewLine + ex.Message);
         }
     }
+
+    private string GetPlaylistXmlPath() =>
+        Path.Combine(_mccInstallationPath, "data", "careerdb", "findgamehopperdb-v4.xml");
 
     private void LoadRotationSchedule()
     {
@@ -521,6 +539,18 @@ public partial class Playlists : UserControl
         RefreshVisibleGroups();
     }
 
+    private void GroupExpander_Expanded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Expander { Tag: string tagId } && !string.IsNullOrWhiteSpace(tagId))
+            _expandedGroupIds.Add(tagId);
+    }
+
+    private void GroupExpander_Collapsed(object sender, RoutedEventArgs e)
+    {
+        if (sender is Expander { Tag: string tagId } && !string.IsNullOrWhiteSpace(tagId))
+            _expandedGroupIds.Remove(tagId);
+    }
+
     private static void ApplyTagButtonState(Button button, bool selected)
     {
         if (selected)
@@ -568,6 +598,7 @@ public partial class Playlists : UserControl
                         DisplayName = x.DisplayName,
                         Subtitle = x.Subtitle,
                         TotalWeight = filteredWeight,
+                        IsExpanded = _expandedGroupIds.Contains(x.TagId),
                         Entries = filteredEntries
                     };
                 })
@@ -592,6 +623,7 @@ public partial class Playlists : UserControl
                         DisplayName = x.DisplayName,
                         Subtitle = x.Subtitle,
                         TotalWeight = filteredWeight,
+                        IsExpanded = _expandedGroupIds.Contains(x.TagId),
                         Entries = filteredEntries
                     };
                 })
@@ -650,7 +682,7 @@ public partial class Playlists : UserControl
             _confirmedRotationRows.Add(row);
         }
 
-        TxtConfirmedSummary.Text = $"{_confirmedRotationRows.Count} confirmed weeks loaded  •  coverage {_allRotationRecords.First().Date:MMM d, yyyy} to {_allRotationRecords.Last().Date:MMM d, yyyy}";
+        TxtConfirmedSummary.Text = $"{_confirmedRotationRows.Count} rotation weeks loaded  •  coverage {_allRotationRecords.First().Date:MMM d, yyyy} to {_allRotationRecords.Last().Date:MMM d, yyyy}";
 
         var selectedRecord = filtered
             .Where(x => x.Date <= selectedDate)
@@ -707,7 +739,7 @@ public partial class Playlists : UserControl
             return "Not listed this week";
 
         var matches = _allRotationRecords
-            .Where(x => x.Date <= referenceDate)
+            .Where(x => x.Date < referenceDate)
             .Where(x => GetLaneValue(x, lane)?.Equals(playlistName, StringComparison.OrdinalIgnoreCase) == true)
             .OrderByDescending(x => x.Date)
             .ToList();
@@ -729,7 +761,7 @@ public partial class Playlists : UserControl
             return "Not listed this week";
 
         var latest = _allRotationRecords
-            .Where(x => x.Date <= referenceDate)
+            .Where(x => x.Date < referenceDate)
             .Where(x => GetLaneValue(x, lane)?.Equals(playlistName, StringComparison.OrdinalIgnoreCase) == true)
             .OrderByDescending(x => x.Date)
             .FirstOrDefault();
@@ -1278,6 +1310,7 @@ internal sealed class PlaylistViewGroup
     public string Subtitle { get; init; } = "";
     public int TotalWeight { get; init; }
     public int TotalPlaylistWeight { get; set; }
+    public bool IsExpanded { get; set; }
     public List<PlaylistViewEntry> Entries { get; init; } = new();
     public string EntrySummary => $"{Entries.Count} entries";
     public string HeaderSummary => $"{Subtitle}  •  {Entries.Count} entries";
@@ -1317,8 +1350,8 @@ internal sealed class PlaylistViewEntry
 
     public SolidColorBrush GameBrush => GameKey switch
     {
-        "halo1" => new SolidColorBrush(Color.FromRgb(0x8C, 0xC8, 0xFF)),
-        "halo2" => new SolidColorBrush(Color.FromRgb(0x7A, 0xD1, 0xFF)),
+        "halo1" => new SolidColorBrush(Color.FromRgb(0x73, 0xD9, 0x8C)),
+        "halo2" => new SolidColorBrush(Color.FromRgb(0xFF, 0xB8, 0x4D)),
         "halo2a" => new SolidColorBrush(Color.FromRgb(0x39, 0xD0, 0xC8)),
         "halo3" => new SolidColorBrush(Color.FromRgb(0x58, 0xA6, 0xFF)),
         "halo3odst" => new SolidColorBrush(Color.FromRgb(0xD2, 0x99, 0x22)),

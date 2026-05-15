@@ -4,6 +4,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <ApplicationIcon>Resources\halo_toolbox_whiteicon.ico</ApplicationIcon>
     <AssemblyName>HaloMCCToolbox</AssemblyName>
     <RootNamespace>HaloToolbox</RootNamespace>
     <Nullable>enable</Nullable>
@@ -23,6 +24,11 @@
     <Content Include="Data\playlist-rotations.csv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\halo_toolbox_whiteicon.ico" />
+    <Resource Include="Resources\halo_toolbox_icon.png" />
   </ItemGroup>
 
   <PropertyGroup>

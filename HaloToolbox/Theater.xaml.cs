@@ -819,33 +819,59 @@ public partial class Theater : UserControl
     private void MniDeleteClip_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuItem mi || mi.Tag is not TheaterClip clip) return;
+        ConfirmAndDelete([clip], $"\"{clip.DisplayName}\"");
+    }
 
+    private void ConfirmAndDelete(List<TheaterClip> clips, string description)
+    {
+        if (clips.Count == 0) return;
+
+        var plural = clips.Count == 1 ? "clip" : "clips";
         var result = MessageBox.Show(
-            $"Delete \"{clip.DisplayName}\"?\n\nThis will remove the backup copy. Source file (if present) will also be deleted.",
+            $"Delete {description}?\n\nThis will remove the backup copy. Source files (if present) will also be deleted.",
             "Confirm Delete",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
 
         if (result != MessageBoxResult.Yes) return;
 
-        try
-        {
-            // Delete backup
-            if (File.Exists(clip.BackupPath))
-                File.Delete(clip.BackupPath);
+        var (deleted, failed) = ExecuteDelete(clips);
+        RebuildByGameMenu();
+        UpdateStatus(failed == 0
+            ? $"Deleted {deleted} {plural}."
+            : $"Deleted {deleted} {plural}; {failed} failed.");
+        UpdateSelectAllButton();
+    }
 
-            // Delete source if present
-            if (clip.SourcePresent && File.Exists(clip.SourcePath))
-                File.Delete(clip.SourcePath);
+    private (int Deleted, int Failed) ExecuteDelete(IEnumerable<TheaterClip> clips)
+    {
+        int deleted = 0;
+        int failed = 0;
 
-            // Remove from collection
-            _clips.Remove(clip);
-            UpdateStatus($"Deleted: {clip.DisplayName}");
-        }
-        catch (Exception ex)
+        foreach (var clip in clips.ToList())
         {
-            UpdateStatus($"Delete failed: {ex.Message}");
+            try
+            {
+                if (File.Exists(clip.BackupPath))
+                    File.Delete(clip.BackupPath);
+
+                if (clip.SourcePresent && File.Exists(clip.SourcePath))
+                    File.Delete(clip.SourcePath);
+
+                _customNames.Remove(CustomNamesKey(clip));
+                _clips.Remove(clip);
+                deleted++;
+            }
+            catch
+            {
+                failed++;
+            }
         }
+
+        if (deleted > 0)
+            SaveCustomNames();
+
+        return (deleted, failed);
     }
 
     // ── Filter & sort ──────────────────────────────────────────────────────────
@@ -939,6 +965,19 @@ public partial class Theater : UserControl
         UpdateSelectAllButton();
     }
 
+    private void BtnDeleteSelected_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = _clips.Where(c => c.IsSelected).ToList();
+        if (selected.Count == 0)
+        {
+            UpdateStatus("No clips selected - click rows to select them.");
+            UpdateSelectAllButton();
+            return;
+        }
+
+        ConfirmAndDelete(selected, $"{selected.Count} selected clip(s)");
+    }
+
     private void CboGame_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _filterGame = CboGame.SelectedIndex <= 0
@@ -968,6 +1007,9 @@ public partial class Theater : UserControl
         if (BtnSelectAll is null) return;
 
         var visibleClips = GetVisibleClips();
+        if (BtnDeleteSelected is not null)
+            BtnDeleteSelected.IsEnabled = _clips.Any(c => c.IsSelected);
+
         if (visibleClips.Count == 0)
         {
             BtnSelectAll.Content = "SELECT ALL";

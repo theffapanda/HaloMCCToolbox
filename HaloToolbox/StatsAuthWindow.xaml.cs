@@ -97,7 +97,7 @@ namespace HaloToolbox
             {
                 _navigatedToProfile = true;
                 if (!_silent)
-                    StatusText.Text = "Logged in — navigating to player profile…";
+                    StatusText.Text = "Logged in - opening player profile...";
                 Browser.CoreWebView2.Navigate(ProfileUrl);
             }
         }
@@ -119,7 +119,7 @@ namespace HaloToolbox
                         if (!_silent)
                         {
                             StatusText.Foreground = new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0xFF));
-                            StatusText.Text = "✓ Token captured! Closing…";
+                            StatusText.Text = "Token captured. Closing...";
                             await Task.Delay(1200);
                         }
                         DialogResult = true;

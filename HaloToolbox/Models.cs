@@ -208,6 +208,23 @@ public class GameServerPort
 }
 
 // ── Theater Backups ───────────────────────────────────────────────────────────
+public class NetworkRegionLatency
+{
+    [JsonPropertyName("region")]
+    public string Region { get; set; } = "";
+
+    [JsonPropertyName("latencyMs")]
+    public int LatencyMs { get; set; }
+
+    [JsonPropertyName("observedAt")]
+    public DateTime ObservedAt { get; set; } = DateTime.UtcNow;
+
+    [JsonIgnore]
+    public string DisplayRegion => string.IsNullOrWhiteSpace(Region)
+        ? "BEST SERVER"
+        : Region.ToUpperInvariant();
+}
+
 public class TheaterClip : INotifyPropertyChanged
 {
     private bool    _isSelected;

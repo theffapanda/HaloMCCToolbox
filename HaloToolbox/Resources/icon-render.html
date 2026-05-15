@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Halo Toolbox Icon</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 512px;
+      height: 512px;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    .tile {
+      width: 512px;
+      height: 512px;
+      border-radius: 108px;
+      background:
+        radial-gradient(circle at 28% 20%, rgba(0, 200, 255, 0.18), transparent 30%),
+        linear-gradient(180deg, #112636 0%, #081018 100%);
+      box-shadow:
+        inset 0 0 0 3px rgba(0, 200, 255, 0.22),
+        inset 0 -18px 30px rgba(0, 0, 0, 0.28);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+
+    img {
+      width: 456px;
+      height: 456px;
+      object-fit: contain;
+      filter:
+        drop-shadow(0 0 8px rgba(255, 255, 255, 0.08))
+        drop-shadow(0 0 14px rgba(0, 200, 255, 0.08));
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="tile">
+    <img src="halo_toolbox_whiteicon.svg" alt="Halo Toolbox icon">
+  </div>
+</body>
+</html>

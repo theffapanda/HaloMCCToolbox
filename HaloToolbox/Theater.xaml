@@ -165,6 +165,13 @@
             <DockPanel>
                 <!-- Right side: SELECT ALL, sort label, sort combo -->
                 <Button DockPanel.Dock="Right"
+                        x:Name="BtnDeleteSelected"
+                        Content="DELETE SELECTED"
+                        Style="{StaticResource FlatBtn}"
+                        Click="BtnDeleteSelected_Click"
+                        Margin="6,0,0,0"
+                        ToolTip="Delete selected theater backups and source files"/>
+                <Button DockPanel.Dock="Right"
                         x:Name="BtnSelectAll"
                         Content="SELECT ALL"
                         Style="{StaticResource FlatBtn}"
