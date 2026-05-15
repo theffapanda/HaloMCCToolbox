@@ -39,6 +39,12 @@ public class ProxyService : IDisposable
     // Raised when observed squad context changes between solo / party / unknown.
     public event EventHandler? OnRejoinContextChanged;
 
+    // Raised when the proxy learns the active PlayFab dedicated server.
+    public event EventHandler<GameServerInfo?>? OnGameServerChanged;
+
+    // Raised when MCC publishes its regional network tab measurements.
+    public event EventHandler<NetworkRegionLatency?>? OnNetworkRegionLatencyChanged;
+
     // In-memory copy of the saved matchmaking session — used for session discovery injection
     private SavedHandleInfo? _lastMatchSession;
 
@@ -91,10 +97,15 @@ public class ProxyService : IDisposable
     // and redirect subsequent requests to use the same server (prevents PlayFab from
     // assigning a different server after restart, which breaks rejoin).
     private GameServerInfo? _cachedGameServerInfo = null;
+    private GameServerInfo? _currentObservedGameServerInfo = null;
+    private NetworkRegionLatency? _bestNetworkRegionLatency = null;
     private bool _gameServerRedirectionActive = false;
 
 
     public bool IsGameServerRedirectionActive => _gameServerRedirectionActive;
+    public string CurrentGameServerIp => _currentObservedGameServerInfo?.IPv4Address ?? "";
+    public GameServerInfo? CurrentGameServerInfo => _currentObservedGameServerInfo;
+    public NetworkRegionLatency? BestNetworkRegionLatency => _bestNetworkRegionLatency;
     public RejoinSessionMode CurrentRejoinMode => _lastSquadState?.Mode ?? RejoinSessionMode.Unknown;
     public string CurrentRejoinModeLabel => CurrentRejoinMode.ToDisplayLabel();
     public int CurrentSquadMemberCount => _lastSquadState?.MemberCount ?? 0;
@@ -109,9 +120,22 @@ public class ProxyService : IDisposable
     public void ClearGameServerRedirection()
     {
         _cachedGameServerInfo = null;
+        _currentObservedGameServerInfo = null;
         _gameServerRedirectionActive = false;
         // Also clear the persisted file
         try { File.Delete(GetGameServerCacheFile()); } catch { /* ignore */ }
+        OnGameServerChanged?.Invoke(this, null);
+    }
+
+    private void SetCurrentGameServer(GameServerInfo serverInfo)
+    {
+        if (string.IsNullOrWhiteSpace(serverInfo.IPv4Address))
+            return;
+
+        _cachedGameServerInfo = serverInfo;
+        _currentObservedGameServerInfo = serverInfo;
+        PersistGameServerToDisk(serverInfo);
+        OnGameServerChanged?.Invoke(this, serverInfo);
     }
 
     /// <summary>Get the path to the cached game server file.</summary>
@@ -188,9 +212,10 @@ public class ProxyService : IDisposable
         _cachedInjectedMatchEtag = "";
 
         // RACE CONDITION FIX: Accept matchSession parameter from caller (MainWindow)
-        // to ensure we don't rely on _lastMatchSession timing. If caller provides it
-        // and it's null locally, set it. This handles initialization race conditions.
-        if (matchSession is not null && _lastMatchSession is null)
+        // to ensure we don't rely on _lastMatchSession timing. Prefer the more
+        // complete session so a post-crash partial capture cannot become the restore source.
+        if (matchSession is not null &&
+            (_lastMatchSession is null || IsSavedMatchSessionMoreComplete(matchSession, _lastMatchSession)))
         {
             _lastMatchSession = matchSession;
             RejoinFixDiagnostics.Info("restore", $"Recovered saved match session from UI state: {matchSession.TemplateName}/{matchSession.SessionShort}");
@@ -548,6 +573,227 @@ public class ProxyService : IDisposable
         (req.RequestUri.AbsolutePath.Contains("/handles", StringComparison.OrdinalIgnoreCase) ||
          req.RequestUri.AbsolutePath.Contains("/sessions/", StringComparison.OrdinalIgnoreCase));
 
+    private static string ShortServerId(string serverId) =>
+        string.IsNullOrWhiteSpace(serverId)
+            ? "unknown"
+            : serverId.Length <= 13
+                ? serverId
+                : $"{serverId[..13]}...";
+
+    private static bool TryParsePlayFabGameServer(string body, out GameServerInfo serverInfo)
+    {
+        serverInfo = new GameServerInfo();
+
+        if (!body.Contains("IPV4Address", StringComparison.OrdinalIgnoreCase) &&
+            !body.Contains("ipv4Address", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        using var doc = JsonDocument.Parse(body);
+        if (!TryFindGameServerElement(doc.RootElement, out var data))
+            return false;
+
+        serverInfo = new GameServerInfo
+        {
+            PartyId = GetStringProperty(data, "PartyId", "partyId"),
+            ServerId = GetStringProperty(data, "ServerId", "serverId"),
+            VmId = GetStringProperty(data, "VmId", "vmId"),
+            IPv4Address = GetStringProperty(data, "IPV4Address", "ipv4Address"),
+            FQDN = GetStringProperty(data, "FQDN", "fqdn"),
+            Region = GetStringProperty(data, "Region", "region"),
+            State = GetStringProperty(data, "State", "state"),
+            BuildId = GetStringProperty(data, "BuildId", "buildId"),
+            DTLSCertificateSHA2Thumbprint = GetStringProperty(data, "DTLSCertificateSHA2Thumbprint", "dtlsCertificateSHA2Thumbprint"),
+            CachedAt = DateTime.UtcNow
+        };
+
+        if (TryGetPropertyAnyCase(data, out var ports, "Ports", "ports") &&
+            ports.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var port in ports.EnumerateArray())
+            {
+                serverInfo.Ports.Add(new GameServerPort
+                {
+                    Name = GetStringProperty(port, "Name", "name"),
+                    Num = GetIntProperty(port, "Num", "num"),
+                    Protocol = GetStringProperty(port, "Protocol", "protocol")
+                });
+            }
+        }
+
+        return !string.IsNullOrWhiteSpace(serverInfo.IPv4Address);
+    }
+
+    private static bool TryFindGameServerElement(JsonElement element, out JsonElement serverElement)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetPropertyAnyCase(element, out _, "IPV4Address", "ipv4Address"))
+            {
+                serverElement = element;
+                return true;
+            }
+
+            if (TryGetPropertyAnyCase(element, out var data, "data") &&
+                TryFindGameServerElement(data, out serverElement))
+            {
+                return true;
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                if (TryFindGameServerElement(property.Value, out serverElement))
+                    return true;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (TryFindGameServerElement(item, out serverElement))
+                    return true;
+            }
+        }
+
+        serverElement = default;
+        return false;
+    }
+
+    private void ObserveNetworkRegionLatencies(string body, string source)
+    {
+        if (!body.Contains("serverMeasurements", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!TryFindBestNetworkRegionLatency(doc.RootElement, out var best))
+                return;
+
+            bool changed = _bestNetworkRegionLatency is null
+                || !string.Equals(_bestNetworkRegionLatency.Region, best.Region, StringComparison.OrdinalIgnoreCase)
+                || _bestNetworkRegionLatency.LatencyMs != best.LatencyMs;
+
+            _bestNetworkRegionLatency = best;
+
+            if (!changed)
+                return;
+
+            RejoinFixDiagnostics.Info("network", $"Best MCC network region is {best.Region} ({best.LatencyMs} ms) via {source}.");
+            OnNetworkRegionLatencyChanged?.Invoke(this, best);
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("network", $"Failed to parse MCC network region measurements from {source}: {ex.Message}");
+        }
+    }
+
+    private static bool TryFindBestNetworkRegionLatency(JsonElement element, out NetworkRegionLatency best)
+    {
+        NetworkRegionLatency? result = null;
+        FindBestNetworkRegionLatency(element, ref result);
+        best = result ?? new NetworkRegionLatency();
+        return result is not null;
+    }
+
+    private static void FindBestNetworkRegionLatency(JsonElement element, ref NetworkRegionLatency? best)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.NameEquals("serverMeasurements") &&
+                    property.Value.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var region in property.Value.EnumerateObject())
+                    {
+                        if (TryReadRegionLatency(region.Value, out int latencyMs) &&
+                            latencyMs >= 0 &&
+                            (best is null || latencyMs < best.LatencyMs))
+                        {
+                            best = new NetworkRegionLatency
+                            {
+                                Region = region.Name,
+                                LatencyMs = latencyMs,
+                                ObservedAt = DateTime.UtcNow
+                            };
+                        }
+                    }
+                }
+
+                FindBestNetworkRegionLatency(property.Value, ref best);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                FindBestNetworkRegionLatency(item, ref best);
+        }
+    }
+
+    private static bool TryReadRegionLatency(JsonElement element, out int latencyMs)
+    {
+        latencyMs = 0;
+
+        if (element.ValueKind == JsonValueKind.Number)
+            return element.TryGetInt32(out latencyMs);
+
+        if (element.ValueKind == JsonValueKind.Object &&
+            TryGetPropertyAnyCase(element, out var latency, "latency", "Latency", "latencyMs", "LatencyMs"))
+        {
+            if (latency.ValueKind == JsonValueKind.Number)
+                return latency.TryGetInt32(out latencyMs);
+
+            if (latency.ValueKind == JsonValueKind.String)
+                return int.TryParse(latency.GetString(), out latencyMs);
+        }
+
+        return false;
+    }
+
+    private static bool TryGetPropertyAnyCase(JsonElement element, out JsonElement value, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out value))
+                return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (names.Any(name => string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string GetStringProperty(JsonElement element, params string[] names) =>
+        TryGetPropertyAnyCase(element, out var value, names) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? ""
+            : "";
+
+    private static int GetIntProperty(JsonElement element, params string[] names)
+    {
+        if (!TryGetPropertyAnyCase(element, out var value, names))
+            return 0;
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int result))
+            return result;
+
+        return value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out result)
+            ? result
+            : 0;
+    }
+
     /// <summary>
     /// Returns true when MCC is PUTting a session DOCUMENT (not a /members/ sub-resource)
     /// and has included an If-Match header — the condition that triggers MPSD 412 replies
@@ -769,6 +1015,27 @@ public class ProxyService : IDisposable
                 RequestHeaders = new Dictionary<string, string>(requestHeaders, StringComparer.OrdinalIgnoreCase),
             };
 
+            if (_pendingCrashRestore &&
+                _lastMatchSession is not null &&
+                ShouldKeepExistingMatchSessionDuringRestore(_lastMatchSession, info))
+            {
+                RejoinFixDiagnostics.Warn(
+                    "restore",
+                    $"Kept saved match session {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionShort}; ignored weaker post-crash capture {info.TemplateName}/{info.SessionShort} (guid={info.ConnectionGuid}).");
+
+                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                {
+                    Method       = "KEEP[Match]",
+                    Url          = url,
+                    Host         = "sessiondirectory.xboxlive.com",
+                    Path         = new Uri(url).AbsolutePath,
+                    RequestBody  = $"Crash restore is armed; ignored weaker capture {info.TemplateName}/{info.SessionShort}",
+                    StatusCode   = 0,
+                    ResponseBody = $"Preserved {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionShort}",
+                });
+                return;
+            }
+
             var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HaloMCCToolbox", "RejoinFix");
             Directory.CreateDirectory(dir);
             File.WriteAllText(
@@ -807,6 +1074,40 @@ public class ProxyService : IDisposable
                 ResponseBody = ex.Message,
             });
         }
+    }
+
+    private static bool ShouldKeepExistingMatchSessionDuringRestore(SavedHandleInfo existing, SavedHandleInfo incoming)
+    {
+        if ((DateTime.UtcNow - existing.SavedAt).TotalMinutes > 30)
+            return false;
+
+        if (IsSavedMatchSessionMoreComplete(existing, incoming))
+            return true;
+
+        bool existingHasConnection = !string.IsNullOrWhiteSpace(existing.ConnectionGuid);
+        bool incomingHasConnection = !string.IsNullOrWhiteSpace(incoming.ConnectionGuid);
+
+        return existingHasConnection && !incomingHasConnection;
+    }
+
+    private static bool IsSavedMatchSessionMoreComplete(SavedHandleInfo left, SavedHandleInfo right) =>
+        GetSavedMatchSessionCompletenessScore(left) > GetSavedMatchSessionCompletenessScore(right);
+
+    private static int GetSavedMatchSessionCompletenessScore(SavedHandleInfo info)
+    {
+        int score = 0;
+
+        if (!string.IsNullOrWhiteSpace(info.Scid)) score++;
+        if (!string.IsNullOrWhiteSpace(info.TemplateName)) score++;
+        if (!string.IsNullOrWhiteSpace(info.SessionName)) score++;
+        if (!string.IsNullOrWhiteSpace(info.ConnectionGuid)) score += 4;
+        if (!string.IsNullOrWhiteSpace(info.PlayerXuid)) score += 3;
+        if (!string.IsNullOrWhiteSpace(info.SubscriptionId)) score += 2;
+        if (info.RequestHeaders.ContainsKey("Authorization")) score += 2;
+        if (info.RequestHeaders.ContainsKey("Signature")) score++;
+        if (info.RequestHeaders.ContainsKey("If-Match")) score++;
+
+        return score;
     }
 
     private void ObserveSquadSessionDocument(string url, string body, string source)
@@ -1479,14 +1780,12 @@ public class ProxyService : IDisposable
             });
         }
 
-        // ── Game Server Redirection (RequestParty response interception) ────────
-        // Cache game server info from PlayFab RequestParty on initial match,
-        // then redirect subsequent RequestParty calls to use the cached server.
-        // This prevents PlayFab from assigning a different server after restart,
-        // which would break rejoin since the new server doesn't have the player.
+        // ── Game Server Observation (PlayFab response interception) ─────────────
+        // Learn the active dedicated server from PlayFab responses. RequestParty is
+        // the normal path, but MCC builds have used nearby PlayFab endpoints too, so
+        // key off the server fields rather than only one URL shape.
         if (!injected && !memberInjected &&
             entry.Host.Contains("playfabapi.com", StringComparison.OrdinalIgnoreCase) &&
-            entry.Path.Contains("Party/RequestParty", StringComparison.OrdinalIgnoreCase) &&
             resp.StatusCode == 200 &&
             resp.HasBody)
         {
@@ -1494,50 +1793,19 @@ public class ProxyService : IDisposable
 
             try
             {
-                using var doc = JsonDocument.Parse(body);
-                var root = doc.RootElement;
-
-                // Extract game server info from response
-                if (root.TryGetProperty("data", out var data))
+                if (TryParsePlayFabGameServer(body, out var serverInfo))
                 {
-                    var serverInfo = new GameServerInfo
+                    if (!_pendingCrashRestore && !string.IsNullOrWhiteSpace(serverInfo.IPv4Address))
                     {
-                        PartyId = data.TryGetProperty("PartyId", out var pid) ? pid.GetString() ?? "" : "",
-                        ServerId = data.TryGetProperty("ServerId", out var sid) ? sid.GetString() ?? "" : "",
-                        VmId = data.TryGetProperty("VmId", out var vid) ? vid.GetString() ?? "" : "",
-                        IPv4Address = data.TryGetProperty("IPV4Address", out var ip) ? ip.GetString() ?? "" : "",
-                        FQDN = data.TryGetProperty("FQDN", out var fqdn) ? fqdn.GetString() ?? "" : "",
-                        Region = data.TryGetProperty("Region", out var region) ? region.GetString() ?? "" : "",
-                        State = data.TryGetProperty("State", out var state) ? state.GetString() ?? "" : "",
-                        BuildId = data.TryGetProperty("BuildId", out var bid) ? bid.GetString() ?? "" : "",
-                        DTLSCertificateSHA2Thumbprint = data.TryGetProperty("DTLSCertificateSHA2Thumbprint", out var cert) ? cert.GetString() ?? "" : "",
-                        CachedAt = DateTime.UtcNow
-                    };
+                        bool changedServer = !string.Equals(
+                            _currentObservedGameServerInfo?.IPv4Address,
+                            serverInfo.IPv4Address,
+                            StringComparison.OrdinalIgnoreCase);
 
-                    // Parse ports
-                    if (data.TryGetProperty("Ports", out var ports) && ports.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var port in ports.EnumerateArray())
-                        {
-                            serverInfo.Ports.Add(new GameServerPort
-                            {
-                                Name = port.TryGetProperty("Name", out var pname) ? pname.GetString() ?? "" : "",
-                                Num = port.TryGetProperty("Num", out var pnum) ? pnum.GetInt32() : 0,
-                                Protocol = port.TryGetProperty("Protocol", out var pproto) ? pproto.GetString() ?? "" : ""
-                            });
-                        }
-                    }
-
-                    // On first match: cache the server info
-                    if (_cachedGameServerInfo == null && !_gameServerRedirectionActive)
-                    {
-                        _cachedGameServerInfo = serverInfo;
+                        SetCurrentGameServer(serverInfo);
                         _gameServerRedirectionActive = false;  // Not active yet; only activate on crash restore
 
-                        // PERSISTENCE: Save the game server to disk so it survives proxy restart/crash
-                        PersistGameServerToDisk(serverInfo);
-
-                        entry.ResponseBody = $"CACHED game server: {serverInfo.ServerShort}";
+                        entry.ResponseBody = $"{(changedServer ? "UPDATED" : "REFRESHED")} game server: {serverInfo.ServerShort}";
 
                         OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
                         {
@@ -1545,9 +1813,9 @@ public class ProxyService : IDisposable
                             Url = entry.Url,
                             Host = entry.Host,
                             Path = entry.Path,
-                            RequestBody = "Game server info cached from RequestParty response",
+                            RequestBody = "Current game server info observed from latest PlayFab response",
                             StatusCode = 200,
-                            ResponseBody = $"Server: {serverInfo.IPv4Address}:{serverInfo.Ports.FirstOrDefault()?.Num ?? 0} | ServerId: {serverInfo.ServerId[..13]}…",
+                            ResponseBody = $"Region: {serverInfo.Region} | Server: {serverInfo.IPv4Address}:{serverInfo.Ports.FirstOrDefault()?.Num ?? 0} | ServerId: {ShortServerId(serverInfo.ServerId)}",
                         });
                         return;  // Skip normal body capture, we already have the data
                     }
@@ -1577,7 +1845,7 @@ public class ProxyService : IDisposable
                     Url = entry.Url,
                     Host = entry.Host,
                     Path = entry.Path,
-                    RequestBody = "Failed to parse RequestParty response",
+                    RequestBody = "Failed to parse PlayFab game server response",
                     StatusCode = 500,
                     ResponseBody = ex.Message,
                 });
@@ -1597,6 +1865,7 @@ public class ProxyService : IDisposable
             ShouldReadBody(entry.Url))
         {
             var squadBody = await e.GetResponseBodyAsString();
+            ObserveNetworkRegionLatencies(squadBody, "squad-response");
             ObserveSquadSessionDocument(entry.Url, squadBody, "response-get");
             e.SetResponseBodyString(squadBody);
             if (string.IsNullOrEmpty(entry.ResponseBody))
@@ -1606,6 +1875,7 @@ public class ProxyService : IDisposable
         if (!injected && !memberInjected && isJson && resp.HasBody && (entry.Method == "GET" || entry.Method == "POST") && ShouldReadBody(entry.Url))
         {
             var body = await e.GetResponseBodyAsString();
+            ObserveNetworkRegionLatencies(body, "response-body");
             entry.ResponseBody = body;
             // Must re-set or the connection will fail (body stream is consumed)
             e.SetResponseBodyString(body);

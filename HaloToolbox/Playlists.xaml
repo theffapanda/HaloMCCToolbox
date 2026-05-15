@@ -310,7 +310,11 @@
                             <ItemsControl x:Name="GroupList">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Expander IsExpanded="False" Margin="0,0,0,12">
+                                        <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}"
+                                                  Tag="{Binding TagId}"
+                                                  Expanded="GroupExpander_Expanded"
+                                                  Collapsed="GroupExpander_Collapsed"
+                                                  Margin="0,0,0,12">
                                             <Expander.Header>
                                                 <Border Background="{DynamicResource PanelBrush}"
                                                         BorderBrush="{DynamicResource BorderBrush}"
@@ -357,8 +361,8 @@
                                                                 <ColumnDefinition Width="150"/>
                                                                 <ColumnDefinition Width="90"/>
                                                                 <ColumnDefinition Width="110"/>
-                                                                <ColumnDefinition Width="*"/>
-                                                                <ColumnDefinition Width="170"/>
+                                                                <ColumnDefinition Width="2*" MinWidth="150"/>
+                                                                <ColumnDefinition Width="1.35*" MinWidth="140"/>
                                                                 <ColumnDefinition Width="90"/>
                                                             </Grid.ColumnDefinitions>
                                                             <TextBlock Grid.Column="0" Text="GAME" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}"/>
@@ -379,22 +383,22 @@
                                                             <ItemsControl.ItemTemplate>
                                                                 <DataTemplate>
                                                                     <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="12,8">
-                                                                        <Grid>
+                                                                        <Grid ClipToBounds="True">
                                                                             <Grid.ColumnDefinitions>
                                                                                 <ColumnDefinition Width="150"/>
                                                                                 <ColumnDefinition Width="90"/>
                                                                                 <ColumnDefinition Width="110"/>
-                                                                                <ColumnDefinition Width="*"/>
-                                                                                <ColumnDefinition Width="170"/>
+                                                                                <ColumnDefinition Width="2*" MinWidth="150"/>
+                                                                                <ColumnDefinition Width="1.35*" MinWidth="140"/>
                                                                                 <ColumnDefinition Width="90"/>
                                                                             </Grid.ColumnDefinitions>
 
-                                                                            <TextBlock Grid.Column="0" Text="{Binding GameDisplay}" Foreground="{Binding GameBrush}"/>
+                                                                            <TextBlock Grid.Column="0" Text="{Binding GameDisplay}" Foreground="{Binding GameBrush}" TextTrimming="CharacterEllipsis"/>
                                                                             <TextBlock Grid.Column="1" Text="{Binding Weight}" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"/>
                                                                             <TextBlock Grid.Column="2" Text="{Binding WeightShareDisplay}" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold"/>
-                                                                            <StackPanel Grid.Column="3">
-                                                                                <TextBlock Text="{Binding MapDisplay}" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold"/>
-                                                                                <TextBlock Text="{Binding MapId}" FontSize="9" Foreground="{DynamicResource MutedBrush}" Opacity="0.95"/>
+                                                                            <StackPanel Grid.Column="3" ClipToBounds="True">
+                                                                                <TextBlock Text="{Binding MapDisplay}" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                                                <TextBlock Text="{Binding MapId}" FontSize="9" Foreground="{DynamicResource MutedBrush}" Opacity="0.95" TextTrimming="CharacterEllipsis"/>
                                                                             </StackPanel>
                                                                             <TextBlock Grid.Column="4" Text="{Binding MapVariantDisplay}" Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis"/>
                                                                             <TextBlock Grid.Column="5" Text="{Binding CategoryDisplay}" Foreground="{DynamicResource AccentBrush}" TextTrimming="CharacterEllipsis"/>

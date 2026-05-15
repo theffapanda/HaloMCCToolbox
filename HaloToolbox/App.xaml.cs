@@ -8,7 +8,11 @@ namespace HaloToolbox
     public partial class App : Application
     {
         private static bool _isDark = true;
+        private const string SettingsRegistryPath = @"Software\HaloMCCToolbox";
+        private const string DefaultMccInstallationPath = @"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection";
+
         public static bool IsDarkTheme => _isDark;
+        public static string DefaultMccPath => DefaultMccInstallationPath;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -54,7 +58,7 @@ namespace HaloToolbox
         {
             try
             {
-                using var key = Registry.CurrentUser.OpenSubKey(@"Software\HaloMCCToolbox");
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
                 _isDark = (key?.GetValue("Theme") as string) != "Light";
             }
             catch { _isDark = true; }
@@ -65,8 +69,35 @@ namespace HaloToolbox
         {
             try
             {
-                using var key = Registry.CurrentUser.CreateSubKey(@"Software\HaloMCCToolbox");
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
                 key.SetValue("Theme", dark ? "Dark" : "Light");
+            }
+            catch { }
+        }
+
+        public static string LoadMccInstallationPath()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                var savedPath = key?.GetValue("MccInstallationPath") as string;
+                return string.IsNullOrWhiteSpace(savedPath) ? DefaultMccInstallationPath : savedPath;
+            }
+            catch
+            {
+                return DefaultMccInstallationPath;
+            }
+        }
+
+        public static void SaveMccInstallationPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("MccInstallationPath", path.Trim());
             }
             catch { }
         }

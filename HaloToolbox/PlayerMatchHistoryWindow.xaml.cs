@@ -118,6 +118,8 @@ namespace HaloToolbox
             MatchesLabel.Text   = total.ToString();
             WinRateLabel.Text   = $"{winRate:F0}%";
             KdLabel.Text        = kd.ToString("F2");
+            TotalKillsLabel.Text = totalKills.ToString("N0");
+            TotalDeathsLabel.Text = totalDeaths.ToString("N0");
             AvgKillsLabel.Text  = avgKills.ToString("F1");
             AvgDeathsLabel.Text = avgDeaths.ToString("F1");
             AvgScoreLabel.Text  = avgScore.ToString("F1");

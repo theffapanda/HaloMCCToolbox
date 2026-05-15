@@ -67,7 +67,7 @@ date|social|ranked4v4|ranked2v2|status|note
 2024-11-20|Shotty Snipers|Halo Reach Team Hardcore|-|confirmed|
 2024-11-27|Turkey Time|-|-|confirmed|
 2024-12-04|Team Fiesta|-|H3 Team Doubles|confirmed|
-2024-12-11|Recon Slayer (Maybe)|-|-|confirmed|Guide marks this row as maybe
+2024-12-11|-|-|-|confirmed|Unverified vacation-era entry removed
 2024-12-18|Escalation Slayer|-|-|confirmed|
 2024-12-25|Grifball|H2A Team Hardcore|-|confirmed|
 2025-01-01|Rocket Race|-|H3 Hardcore Doubles|confirmed|
@@ -129,18 +129,18 @@ date|social|ranked4v4|ranked2v2|status|note
 2026-01-28|Reach CE Anniversary|-|H3 Hardcore Doubles|confirmed|
 2026-02-04|Rocket Race|-|-|confirmed|
 2026-02-11|Shotty Snipers|Halo Reach Team Hardcore|-|confirmed|
-2026-02-18|Grifball|-|-|estimated|Toolbox estimate
-2026-02-25|Team Fiesta|-|H3 Team Doubles|estimated|Toolbox estimate
-2026-03-04|Recon Slayer|-|-|estimated|Toolbox estimate
-2026-03-11|Escalation Slayer|H2A Team Hardcore|-|estimated|Toolbox estimate
-2026-03-18|Grifball|-|-|estimated|Toolbox estimate
-2026-03-25|Rocket Race|-|H3 Hardcore Doubles|estimated|Toolbox estimate
-2026-04-01|Reach Anniversary|-|-|estimated|Toolbox estimate
-2026-04-08|Shotty Snipers|-|-|estimated|Toolbox estimate
-2026-04-15|Team Fiesta|H2C Team Hardcore|-|estimated|Toolbox estimate
-2026-04-22|Grifball|-|H3 Team Doubles|estimated|Toolbox estimate
-2026-04-29|Shotty Snipers|-|-|estimated|Toolbox estimate
-2026-05-06|Rocket Race|-|-|estimated|Toolbox estimate
+2026-02-18|Grifball|-|-|confirmed|
+2026-02-25|Team Fiesta|-|H3 Team Doubles|confirmed|
+2026-03-04|Recon Slayer|-|-|confirmed|
+2026-03-11|Escalation Slayer|H2A Team Hardcore|-|confirmed|
+2026-03-18|Grifball|-|-|confirmed|
+2026-03-25|Rocket Race|-|H3 Hardcore Doubles|confirmed|
+2026-04-01|Reach CE Anniversary|-|-|confirmed|
+2026-04-08|Shotty Snipers|H2C Team Hardcore|-|confirmed|
+2026-04-15|Team Fiesta|-|-|confirmed|
+2026-04-22|Grifball|-|-|confirmed|
+2026-04-29|Shotty Snipers|-|Radar Doubles|confirmed|
+2026-05-06|Grifball|-|-|confirmed|
 2026-05-13|Team Fiesta|Halo Reach Team Hardcore|-|estimated|Toolbox estimate
 2026-05-20|Reach CE Anniversary|-|H3 Hardcore Doubles|estimated|Toolbox estimate
 2026-05-27|Grifball|-|-|estimated|Toolbox estimate
@@ -175,3 +175,55 @@ date|social|ranked4v4|ranked2v2|status|note
 2026-12-16|Escalation Slayer|-|-|estimated|Toolbox estimate
 2026-12-23|Grifball|-|-|estimated|Toolbox estimate
 2026-12-30|Recon Slayer|-|H3 Hardcore Doubles|estimated|Toolbox estimate
+2027-01-06|Team Fiesta|-|-|estimated|Toolbox estimate
+2027-01-13|Escalation Slayer|H2C Team Hardcore|-|estimated|Toolbox estimate
+2027-01-20|Grifball|-|-|estimated|Toolbox estimate
+2027-01-27|Reach CE Anniversary|-|H3 Team Doubles|estimated|Toolbox estimate
+2027-02-03|Rocket Race|-|-|estimated|Toolbox estimate
+2027-02-10|Shotty Snipers|Halo Reach Team Hardcore|-|estimated|Toolbox estimate
+2027-02-17|Grifball|-|-|estimated|Toolbox estimate
+2027-02-24|Team Fiesta|-|H3 Hardcore Doubles|estimated|Toolbox estimate
+2027-03-03|Recon Slayer|-|-|estimated|Toolbox estimate
+2027-03-10|Escalation Slayer|H2A Team Hardcore|-|estimated|Toolbox estimate
+2027-03-17|Grifball|-|-|estimated|Toolbox estimate
+2027-03-24|Rocket Race|-|H3 Team Doubles|estimated|Toolbox estimate
+2027-03-31|Reach Anniversary|-|-|estimated|Toolbox estimate
+2027-04-07|Shotty Snipers|-|-|estimated|Toolbox estimate
+2027-04-14|Team Fiesta|H2C Team Hardcore|-|estimated|Toolbox estimate
+2027-04-21|Grifball|-|H3 Hardcore Doubles|estimated|Toolbox estimate
+2027-04-28|Shotty Snipers|-|-|estimated|Toolbox estimate
+2027-05-05|Rocket Race|-|-|estimated|Toolbox estimate
+2027-05-12|Team Fiesta|Halo Reach Team Hardcore|-|estimated|Toolbox estimate
+2027-05-19|Reach CE Anniversary|-|H3 Team Doubles|estimated|Toolbox estimate
+2027-05-26|Grifball|-|-|estimated|Toolbox estimate
+2027-06-02|Shotty Snipers|-|-|estimated|Toolbox estimate
+2027-06-09|Recon Slayer|H2A Team Hardcore|-|estimated|Toolbox estimate
+2027-06-16|Escalation Slayer|-|H3 Hardcore Doubles|estimated|Toolbox estimate
+2027-06-23|Grifball|-|-|estimated|Toolbox estimate
+2027-06-30|Team Fiesta|-|-|estimated|Toolbox estimate
+2027-07-07|Rocket Race|-|-|estimated|Toolbox estimate
+2027-07-14|Reach Anniversary|H2C Team Hardcore|H3 Team Doubles|estimated|Toolbox estimate
+2027-07-21|Grifball|-|-|estimated|Toolbox estimate
+2027-07-28|Shotty Snipers|-|-|estimated|Toolbox estimate
+2027-08-04|Recon Slayer|-|-|estimated|Toolbox estimate
+2027-08-11|Escalation Slayer|Halo Reach Team Hardcore|H3 Hardcore Doubles|estimated|Toolbox estimate
+2027-08-18|Grifball|-|-|estimated|Toolbox estimate
+2027-08-25|Reach CE Anniversary|-|-|estimated|Toolbox estimate
+2027-09-01|Rocket Race|-|-|estimated|Toolbox estimate
+2027-09-08|Shotty Snipers|H2A Team Hardcore|H3 Team Doubles|estimated|Toolbox estimate
+2027-09-15|Team Fiesta|-|-|estimated|Toolbox estimate
+2027-09-22|Grifball|-|-|estimated|Toolbox estimate
+2027-09-29|Team Fiesta|-|-|estimated|Toolbox estimate
+2027-10-06|Grifball|-|H3 Hardcore Doubles|estimated|Toolbox estimate
+2027-10-13|Rocket Race|H2C Team Hardcore|-|estimated|Toolbox estimate
+2027-10-20|Reach Anniversary|-|-|estimated|Toolbox estimate
+2027-10-27|Shotty Snipers|-|-|estimated|Toolbox estimate
+2027-11-03|Grifball|-|H3 Team Doubles|estimated|Toolbox estimate
+2027-11-10|Recon Slayer|Halo Reach Team Hardcore|-|estimated|Toolbox estimate
+2027-11-17|Escalation Slayer|-|-|estimated|Toolbox estimate
+2027-11-24|Turkey Time|-|-|estimated|Toolbox estimate
+2027-12-01|Rocket Race|-|H3 Hardcore Doubles|estimated|Toolbox estimate
+2027-12-08|Shotty Snipers|H2A Team Hardcore|-|estimated|Toolbox estimate
+2027-12-15|Escalation Slayer|-|-|estimated|Toolbox estimate
+2027-12-22|Grifball|-|-|estimated|Toolbox estimate
+2027-12-29|Recon Slayer|-|H3 Team Doubles|estimated|Toolbox estimate

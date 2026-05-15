@@ -1,0 +1,172 @@
+<Window x:Class="HaloToolbox.GameNetworkStatsOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
+        Width="282"
+        Height="132"
+        MinWidth="230"
+        MinHeight="112"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowActivated="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
+    <Border x:Name="OverlayRoot"
+            Padding="10,8"
+            Background="Transparent"
+            BorderBrush="Transparent"
+            BorderThickness="1"
+            CornerRadius="3"
+            IsHitTestVisible="False">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <TextBlock Text="NETWORK"
+                           FontFamily="Consolas"
+                           FontSize="10"
+                           FontWeight="Bold"
+                           Foreground="#00C8FF"/>
+                <TextBlock x:Name="TxtNetworkServer"
+                           Text="SERVER: --"
+                           FontFamily="Consolas"
+                           FontSize="10"
+                           Foreground="#8FB8D8"
+                           TextAlignment="Right"
+                           HorizontalAlignment="Right"/>
+            </Grid>
+
+            <Grid Grid.Row="1" Margin="0,5,0,5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TxtNetworkPing"
+                           Text="Ping: -- ms"
+                           FontFamily="Consolas"
+                           FontSize="13"
+                           FontWeight="Bold"
+                           Foreground="#4A5A6A"/>
+                <TextBlock x:Name="TxtNetworkPacketLoss"
+                           Grid.Column="1"
+                           Text="Loss: --%"
+                           FontFamily="Consolas"
+                           FontSize="13"
+                           FontWeight="Bold"
+                           Foreground="#C8D8E8"
+                           TextAlignment="Right"/>
+            </Grid>
+
+            <Grid Grid.Row="2" Margin="0,0,0,5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="UP "
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               FontWeight="Bold"
+                               Foreground="#39FF14"/>
+                    <TextBlock x:Name="TxtNetworkUpload"
+                               Text=""
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               FontWeight="Bold"
+                               Foreground="#C8D8E8"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right">
+                    <TextBlock Text="DOWN "
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               FontWeight="Bold"
+                               Foreground="#00C8FF"/>
+                    <TextBlock x:Name="TxtNetworkDownload"
+                               Text=""
+                               FontFamily="Consolas"
+                               FontSize="10"
+                               FontWeight="Bold"
+                               Foreground="#C8D8E8"
+                               TextAlignment="Right"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="3" Margin="0,0,0,5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TxtNetworkUploadPackets"
+                           Text=""
+                           FontFamily="Consolas"
+                           FontSize="10"
+                           Foreground="#8FB8D8"/>
+                <TextBlock x:Name="TxtNetworkDownloadPackets"
+                           Grid.Column="1"
+                           Text=""
+                           FontFamily="Consolas"
+                           FontSize="10"
+                           Foreground="#8FB8D8"
+                           TextAlignment="Right"/>
+            </Grid>
+
+            <Border x:Name="GraphBorder"
+                    Grid.Row="4"
+                    Background="Transparent"
+                    BorderBrush="Transparent"
+                    BorderThickness="1">
+                <Canvas x:Name="GraphCanvas"
+                        MinHeight="28"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        ClipToBounds="True">
+                    <Line x:Name="GraphGuideTop" X1="0" Y1="12" X2="214" Y2="12" Stroke="#2200C8FF" StrokeThickness="1"/>
+                    <Line x:Name="GraphGuideBottom" X1="0" Y1="24" X2="214" Y2="24" Stroke="#2200C8FF" StrokeThickness="1"/>
+                    <Polyline x:Name="PingGraphGlow"
+                              Stroke="#5500C8FF"
+                              StrokeThickness="5"
+                              StrokeLineJoin="Round"/>
+                    <Polyline x:Name="PingGraphLine"
+                              Stroke="#39FF14"
+                              StrokeThickness="2"
+                              StrokeLineJoin="Round"/>
+                </Canvas>
+            </Border>
+
+            <primitives:Thumb x:Name="ResizeThumb"
+                              Grid.RowSpan="5"
+                              Width="16"
+                              Height="16"
+                              HorizontalAlignment="Right"
+                              VerticalAlignment="Bottom"
+                              Cursor="SizeNWSE"
+                              Visibility="Collapsed"
+                              DragStarted="ResizeThumb_DragStarted"
+                              DragDelta="ResizeThumb_DragDelta"
+                              DragCompleted="ResizeThumb_DragCompleted">
+                <primitives:Thumb.Template>
+                    <ControlTemplate TargetType="{x:Type primitives:Thumb}">
+                        <Grid Background="Transparent">
+                            <Path Data="M 4 14 L 14 4 M 8 14 L 14 8 M 12 14 L 14 12"
+                                  Stroke="#AA00C8FF"
+                                  StrokeThickness="1.5"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"/>
+                        </Grid>
+                    </ControlTemplate>
+                </primitives:Thumb.Template>
+            </primitives:Thumb>
+        </Grid>
+    </Border>
+</Window>
