@@ -177,10 +177,36 @@ public static class GameServerRegionResolver
         }
         catch
         {
+            if (await TryLoadCachedAzureRangesAsync())
+                return;
+
             lock (AzureRangeLock)
             {
                 AzureRangesLoaded = true;
             }
+        }
+    }
+
+    private static async Task<bool> TryLoadCachedAzureRangesAsync()
+    {
+        try
+        {
+            if (!File.Exists(AzureServiceTagsCacheFile))
+                return false;
+
+            var json = await File.ReadAllTextAsync(AzureServiceTagsCacheFile);
+            var ranges = ParseAzureRegionRanges(json);
+            lock (AzureRangeLock)
+            {
+                AzureRegionRanges = ranges;
+                AzureRangesLoaded = true;
+            }
+
+            return ranges.Count > 0;
+        }
+        catch
+        {
+            return false;
         }
     }
 

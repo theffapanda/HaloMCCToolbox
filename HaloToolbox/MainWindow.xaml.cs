@@ -139,16 +139,31 @@ namespace HaloToolbox
         private readonly System.Windows.Threading.DispatcherTimer _steamFirewallAutoTimer;
         private bool _steamFirewallAutoEnabled;
         private bool _steamFirewallAutoPaused;
+        private bool _steamFirewallAutoHeldForActiveMatch;
+        private bool _rejoinFirewallCheckChanging;
+        private bool _steamFirewallRulesPrepared;
+        private bool _rejoinCampaignFirewallApplying;
+        private bool _rejoinCampaignFirewallEnabled;
         private DateTime _steamFirewallAutoResumeAfterUtc = DateTime.MinValue;
         private const int SteamFirewallAutoSearchHoldSeconds = 180;
         private const int SteamFirewallAutoMatchFoundHoldSeconds = 5;
         private static readonly bool SteamFirewallFeatureEnabled = false;
 
         private const long MaxDiagnosticExportBytes = 25L * 1024 * 1024;
+        private const string ToolboxRegistryPath = @"Software\HaloMCCToolbox";
+        private const string RejoinFixProxyAddress = "127.0.0.1:19999";
+        private const string RejoinFixProxyCertificatePassword = "halointel-proxy";
         private static readonly int[] SteamFirewallPorts = { 3478, 4379 };
+        private static readonly int[] RejoinCampaignFirewallPorts = { 3478 };
         private const string SteamFirewallRulePrefix = "Halo Toolbox - Block MCC P2P Port";
         private const string GlobalSteamFirewallRulePrefix = "Halo Toolbox - Block Steam P2P Port";
         private const string LegacyPort4379FirewallRulePrefix = "Halo Toolbox - Block Port 4379";
+        private static readonly string ToolboxLocalAppDataRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HaloMCCToolbox");
+        private static readonly string ToolboxRoamingAppDataRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "HaloMCCToolbox");
         private static readonly string[] SteamFirewallRuleNames = SteamFirewallPorts
             .SelectMany(port => new[]
             {
@@ -293,7 +308,7 @@ namespace HaloToolbox
                 {
                     AppendLog("[REJOIN]", "Captured matchmaking session and saved it to Toolbox appdata.", "#00C8FF");
                     UpdateRejoinFixUi();
-                    ScheduleSteamFirewallAutoResume(SteamFirewallAutoMatchFoundHoldSeconds, "match session captured");
+                    HoldSteamFirewallPausedForActiveMatch("match session captured");
                 });
             _rejoinProxy.OnPlayerIdentityChanged += (_, _) =>
                 Dispatcher.InvokeAsync(UpdateRejoinFixUi);
@@ -302,7 +317,7 @@ namespace HaloToolbox
                 {
                     UpdateRejoinFixUi();
                     if (_rejoinProxy.CurrentSquadMemberCount > 0)
-                        ScheduleSteamFirewallAutoResume(SteamFirewallAutoMatchFoundHoldSeconds, "squad session active");
+                        HoldSteamFirewallPausedForActiveMatch("squad session active");
                 });
             _rejoinProxy.OnGameServerChanged += (_, serverInfo) =>
                 Dispatcher.InvokeAsync(() => HandleTrustedGameServerChanged(serverInfo));
@@ -435,6 +450,7 @@ namespace HaloToolbox
                 _trustedDedicatedServer = serverInfo;
                 var port = serverInfo.Ports.FirstOrDefault()?.Num;
                 var endpoint = port is > 0 ? $"{serverInfo.IPv4Address}:{port}" : serverInfo.IPv4Address;
+                HoldSteamFirewallPausedForActiveMatch("dedicated server active");
                 AppendLog("[GUARD]", $"Trusted dedicated server set to {endpoint}.", "#39FF14");
             }
             else
@@ -749,6 +765,249 @@ namespace HaloToolbox
                     Dispatcher.Invoke(() => BtnExportLogs.IsEnabled = true);
                 }
             });
+        }
+
+        private async void BtnRemoveToolboxTraces_Click(object sender, RoutedEventArgs e)
+        {
+            var confirm = MessageBox.Show(
+                "This will remove Halo MCC Toolbox data from this PC:\n\n" +
+                "- Toolbox Local/Roaming AppData, including WebView2 logins and Rejoin Fix files\n" +
+                "- Toolbox registry settings\n" +
+                "- Toolbox firewall rules and proxy certificate\n" +
+                "- Legacy stats cache/token files saved beside the app\n\n" +
+                "It will not delete MCC clips, maps, screenshots, or game files.\n\nContinue?",
+                "Remove Toolbox Traces -- Halo MCC Toolbox",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (confirm != MessageBoxResult.Yes)
+            {
+                AppendLog("[INFO]", "Toolbox trace cleanup cancelled.", "#4A5A6A");
+                return;
+            }
+
+            BtnRemoveToolboxTraces.IsEnabled = false;
+            BtnExportLogs.IsEnabled = false;
+            AppendLog("[RUN]", "Removing Halo MCC Toolbox traces from this PC...", "#FF6A00");
+            SetStatus("Removing Toolbox traces...", "#FF6A00");
+
+            try
+            {
+                await RemoveToolboxTracesAsync();
+                AppendLog("[DONE]", "Toolbox trace cleanup complete. Restart the app to recreate fresh settings.", "#39FF14");
+                SetStatus("Toolbox traces removed.", "#39FF14");
+
+                MessageBox.Show(
+                    "Halo MCC Toolbox traces were removed.\n\nRestart the app if you want to keep using it with fresh settings.",
+                    "Toolbox Traces Removed -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[ERROR]", $"Toolbox trace cleanup failed: {ex.Message}", "#FF2D55");
+                SetStatus("Toolbox trace cleanup failed.", "#FF2D55");
+                MessageBox.Show(
+                    $"Toolbox trace cleanup failed:\n\n{ex.Message}",
+                    "Cleanup Failed -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                BtnRemoveToolboxTraces.IsEnabled = true;
+                BtnExportLogs.IsEnabled = true;
+            }
+        }
+
+        private async Task RemoveToolboxTracesAsync()
+        {
+            CloseGameNetworkStatsOverlay();
+            _gameServerConnectionMonitor.Stop();
+            _networkStatsMonitor.Stop();
+            _steamFirewallAutoTimer.Stop();
+
+            if (_rejoinProxy.IsRunning)
+            {
+                _rejoinProxy.Stop();
+                AppendLog("[CLEAN]", "Stopped Rejoin Fix proxy and restored proxy settings.", "#C8D8E8");
+            }
+
+            ClearToolboxWinInetProxyIfPresent();
+            AppendLog("[CLEAN]", "Cleared Toolbox WinINet proxy setting if it was still active.", "#C8D8E8");
+
+            await RemoveElevatedToolboxTracesAsync();
+            AppendLog("[CLEAN]", "Removed Toolbox firewall rules, WinHTTP proxy, and trusted proxy certificate.", "#C8D8E8");
+
+            DeleteRegistrySubKeyTree(Registry.CurrentUser, ToolboxRegistryPath, "HKCU\\" + ToolboxRegistryPath);
+
+            DisposeHiddenCookieChecker();
+
+            DeleteFileIfExists(Path.GetFullPath(StatsSettingsFile));
+            DeleteFileIfExists(Path.GetFullPath(StatsCacheFile));
+            DeleteFileIfExists(Path.GetFullPath(StatsTokenFile));
+
+            var baseDirectory = AppContext.BaseDirectory;
+            DeleteFileIfExists(Path.Combine(baseDirectory, StatsSettingsFile));
+            DeleteFileIfExists(Path.Combine(baseDirectory, StatsCacheFile));
+            DeleteFileIfExists(Path.Combine(baseDirectory, StatsTokenFile));
+
+            DeleteDirectoryIfSafe(ToolboxRoamingAppDataRoot);
+            DeleteDirectoryIfSafe(ToolboxLocalAppDataRoot);
+        }
+
+        private static Task RemoveElevatedToolboxTracesAsync()
+        {
+            string allRuleNames = string.Join(", ", SteamFirewallRuleNames
+                .Concat(LegacySteamFirewallRuleNames)
+                .Concat(GlobalSteamFirewallRuleNames)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(QuotePowerShellString));
+            string certPath = Path.Combine(ToolboxLocalAppDataRoot, "RejoinFix", "proxy-root.pfx");
+
+            string script = $@"
+$ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'
+$InformationPreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
+$ruleNames = @({allRuleNames})
+foreach ($name in $ruleNames) {{
+    Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+}}
+
+$pfxPath = {QuotePowerShellString(certPath)}
+if (Test-Path -LiteralPath $pfxPath) {{
+    try {{
+        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
+        $cert.Import($pfxPath, {QuotePowerShellString(RejoinFixProxyCertificatePassword)}, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet)
+        Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
+            Where-Object {{ $_.Thumbprint -eq $cert.Thumbprint }} |
+            Remove-Item -ErrorAction SilentlyContinue
+    }} catch {{ }}
+}}
+
+$winHttp = (& netsh winhttp show proxy) -join ""`n""
+if ($winHttp -match '127\.0\.0\.1:19999') {{
+    & netsh winhttp reset proxy | Out-Null
+}}
+
+exit 0";
+
+            return RunPowerShellAsync(script, elevated: !IsRunningAsAdministrator(), timeoutMs: 30000);
+        }
+
+        private void DisposeHiddenCookieChecker()
+        {
+            try
+            {
+                HiddenCookieChecker.Dispose();
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[WARN]", $"Could not release WebView2 before cleanup: {ex.Message}", "#FF6A00");
+            }
+        }
+
+        private void ClearToolboxWinInetProxyIfPresent()
+        {
+            const string keyPath = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(keyPath, writable: true);
+                if (key is null)
+                    return;
+
+                var proxyServer = key.GetValue("ProxyServer") as string;
+                if (!string.Equals(proxyServer, RejoinFixProxyAddress, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+                key.DeleteValue("ProxyServer", throwOnMissingValue: false);
+
+                var proxyOverride = key.GetValue("ProxyOverride") as string;
+                if (string.Equals(proxyOverride, "localhost;127.0.0.1;<local>", StringComparison.OrdinalIgnoreCase))
+                    key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[WARN]", $"Could not clear Toolbox WinINet proxy setting: {ex.Message}", "#FF6A00");
+            }
+        }
+
+        private void DeleteRegistrySubKeyTree(RegistryKey root, string subKey, string label)
+        {
+            try
+            {
+                using var existing = root.OpenSubKey(subKey);
+                if (existing is null)
+                    return;
+
+                root.DeleteSubKeyTree(subKey, throwOnMissingSubKey: false);
+                AppendLog("[CLEAN]", $"Deleted registry key: {label}", "#C8D8E8");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[WARN]", $"Could not delete registry key {label}: {ex.Message}", "#FF6A00");
+            }
+        }
+
+        private void DeleteDirectoryIfSafe(string path)
+        {
+            try
+            {
+                var fullPath = Path.GetFullPath(path);
+                if (!IsToolboxAppDataDirectory(fullPath))
+                    throw new InvalidOperationException($"Refusing to delete unexpected path: {fullPath}");
+
+                if (!Directory.Exists(fullPath))
+                    return;
+
+                Directory.Delete(fullPath, recursive: true);
+                AppendLog("[CLEAN]", $"Deleted directory: {fullPath}", "#C8D8E8");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[WARN]", $"Could not delete directory {path}: {ex.Message}", "#FF6A00");
+            }
+        }
+
+        private static bool IsToolboxAppDataDirectory(string fullPath)
+        {
+            return IsSamePath(fullPath, ToolboxLocalAppDataRoot) ||
+                   IsSamePath(fullPath, ToolboxRoamingAppDataRoot);
+        }
+
+        private void DeleteFileIfExists(string path)
+        {
+            try
+            {
+                var fullPath = Path.GetFullPath(path);
+                var fileName = Path.GetFileName(fullPath);
+                if (!string.Equals(fileName, StatsSettingsFile, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(fileName, StatsCacheFile, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(fileName, StatsTokenFile, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"Refusing to delete unexpected file: {fullPath}");
+
+                if (!File.Exists(fullPath))
+                    return;
+
+                File.Delete(fullPath);
+                AppendLog("[CLEAN]", $"Deleted file: {fullPath}", "#C8D8E8");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[WARN]", $"Could not delete file {path}: {ex.Message}", "#FF6A00");
+            }
+        }
+
+        private static bool IsSamePath(string left, string right)
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+                StringComparison.OrdinalIgnoreCase);
         }
 
         private string GetSessionLogSnapshot()
@@ -1327,6 +1586,67 @@ echo All tasks complete.
                 TxtRejoinFixMode.Text = "";
                 TxtRejoinFixMode.Visibility = Visibility.Collapsed;
             }
+
+            UpdateRejoinFirewallStatus();
+        }
+
+        private void UpdateRejoinFirewallStatus(string? overrideText = null, string? overrideColor = null)
+        {
+            if (!string.IsNullOrWhiteSpace(overrideText))
+            {
+                TxtRejoinFirewallStatus.Text = overrideText;
+                TxtRejoinFirewallStatus.Foreground = Brush(overrideColor ?? "#C8D8E8");
+                return;
+            }
+
+            if (ChkRejoinFixFirewall.IsChecked == true)
+            {
+                if (_rejoinCampaignFirewallApplying)
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: CAMPAIGN PENDING - applying port block";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#FF6A00");
+                }
+                else if (_rejoinCampaignFirewallEnabled)
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: CAMPAIGN ON - port 3478 is blocked; invites will not function";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#39FF14");
+                }
+                else
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: CAMPAIGN PENDING - waiting to apply port block";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#FF6A00");
+                }
+            }
+            else if (ChkRejoinFixFirewallMatchmaking.IsChecked == true)
+            {
+                if (_steamFirewallAutoPaused)
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: MATCHMAKING PAUSED - ports are open while MCC searches/connects";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#00C8FF");
+                }
+                else if (_steamFirewallAutoEnabled && _steamFirewallUiState == SteamFirewallState.Enabled)
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: MATCHMAKING ON - ports 3478 and 4379 are blocked until matchmaking traffic is detected";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#39FF14");
+                }
+                else if (_steamFirewallAutoEnabled)
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: MATCHMAKING PENDING - waiting to apply port block";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#FF6A00");
+                }
+                else
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: MATCHMAKING OFF";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#4A5A6A");
+                }
+            }
+            else
+            {
+                TxtRejoinFirewallStatus.Text = _steamFirewallRulesPrepared
+                    ? "FIREWALL: READY - rules installed, currently off"
+                    : "FIREWALL: OFF - rules will be prepared when Rejoin Fix starts as admin";
+                TxtRejoinFirewallStatus.Foreground = Brush(_steamFirewallRulesPrepared ? "#C8D8E8" : "#4A5A6A");
+            }
         }
 
         private async Task RefreshSteamFirewallUiAsync()
@@ -1514,6 +1834,61 @@ echo All tasks complete.
             await EnsureRejoinObserverRunningAsync();
         }
 
+        private async void ChkRejoinFixFirewall_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
+                return;
+
+            SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+            DisableSteamFirewallAutoMode(logStatus: false);
+            _rejoinCampaignFirewallEnabled = false;
+            UpdateRejoinFirewallStatus();
+
+            bool wasRunning = _rejoinProxy.IsRunning;
+            if (await EnsureRejoinFixEnabledFromFirewallOptionAsync() && wasRunning)
+            {
+                try
+                {
+                    await ApplyRejoinFirewallOptionAsync();
+                }
+                catch (Exception ex)
+                {
+                    _rejoinCampaignFirewallApplying = false;
+                    _rejoinCampaignFirewallEnabled = false;
+                    AppendLog("[ERROR]", $"Could not enable Firewall Fix (Campaign): {ex.Message}", "#FF2D55");
+                    SetStatus("Firewall Fix (Campaign) failed.", "#FF2D55");
+                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                    UpdateRejoinFirewallStatus();
+                }
+            }
+        }
+
+        private void ChkRejoinFixFirewall_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
+                return;
+
+            _rejoinCampaignFirewallEnabled = false;
+            _ = DisableRejoinCampaignFirewallAsync(logStatus: true);
+        }
+
+        private async void ChkRejoinFixFirewallMatchmaking_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
+                return;
+
+            SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+            _rejoinCampaignFirewallApplying = false;
+            _rejoinCampaignFirewallEnabled = false;
+            UpdateRejoinFirewallStatus();
+
+            bool wasRunning = _rejoinProxy.IsRunning;
+            if (await EnsureRejoinFixEnabledFromFirewallOptionAsync() && wasRunning)
+            {
+                await EnableSteamFirewallAutoModeAsync(ensureObserverRunning: true);
+            }
+        }
+
         private void ChkSteamFirewallAuto_Unchecked(object sender, RoutedEventArgs e)
         {
             if (!SteamFirewallFeatureEnabled)
@@ -1529,17 +1904,201 @@ echo All tasks complete.
             SetStatus("Firewall Auto protection disabled.", "#C8D8E8");
         }
 
-        private void HandleSteamFirewallAutoSignal(ProxyCaptureEntry entry)
+        private void ChkRejoinFixFirewallMatchmaking_Unchecked(object sender, RoutedEventArgs e)
         {
-            if (!SteamFirewallFeatureEnabled)
+            if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
+            DisableSteamFirewallAutoMode(logStatus: true);
+        }
+
+        private async Task EnableSteamFirewallAutoModeAsync(bool ensureObserverRunning)
+        {
+            _steamFirewallAutoEnabled = true;
+            _steamFirewallAutoPaused = false;
+            _steamFirewallAutoHeldForActiveMatch = false;
+            _steamFirewallAutoTimer.Start();
+            AppendLog("[FIREWALL]", "Firewall Fix (Matchmaking) enabled. Firewall, proxy observer, and crash restore are armed.", "#00C8FF");
+            SetStatus("Firewall Fix (Matchmaking) enabled.", "#00C8FF");
+            UpdateRejoinFirewallStatus("FIREWALL: MATCHMAKING PENDING - enabling port block", "#FF6A00");
+
+            try
+            {
+                string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
+                await SetSteamFirewallEnabledAsync(true, mccExePath);
+                SaveSteamFirewallUiState(true);
+                SetSteamFirewallRuntimeState(SteamFirewallState.Enabled);
+                UpdateRejoinFirewallStatus();
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[ERROR]", $"Could not enable Firewall Fix (Matchmaking): {ex.Message}", "#FF2D55");
+            }
+
+            if (ensureObserverRunning)
+                await EnsureRejoinObserverRunningAsync();
+        }
+
+        private void DisableSteamFirewallAutoMode(bool logStatus)
+        {
+            _steamFirewallAutoEnabled = false;
+            _steamFirewallAutoPaused = false;
+            _steamFirewallAutoHeldForActiveMatch = false;
+            _steamFirewallAutoTimer.Stop();
+            UpdateRejoinFirewallStatus();
+            if (!logStatus)
+                return;
+
+            AppendLog("[FIREWALL]", "Firewall Fix (Matchmaking) disabled. Manual firewall state is left as-is.", "#C8D8E8");
+            SetStatus("Firewall Fix (Matchmaking) disabled.", "#C8D8E8");
+        }
+
+        private async Task DisableRejoinCampaignFirewallAsync(bool logStatus)
+        {
+            try
+            {
+                string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
+                await SetSteamFirewallEnabledAsync(false, mccExePath, RejoinCampaignFirewallPorts, SteamFirewallPorts);
+                SaveSteamFirewallUiState(false);
+                SetSteamFirewallRuntimeState(SteamFirewallState.Disabled);
+                _rejoinCampaignFirewallApplying = false;
+                _rejoinCampaignFirewallEnabled = false;
+                UpdateRejoinFirewallStatus();
+                UpdateRejoinFirewallStatus();
+
+                if (logStatus)
+                {
+                    AppendLog("[FIREWALL]", "Firewall Fix (Campaign) disabled.", "#C8D8E8");
+                    SetStatus("Firewall Fix (Campaign) disabled.", "#C8D8E8");
+                }
+            }
+            catch (Exception ex)
+            {
+                _rejoinCampaignFirewallApplying = false;
+                AppendLog("[ERROR]", $"Could not disable Firewall Fix (Campaign): {ex.Message}", "#FF2D55");
+                SetStatus("Firewall Fix (Campaign) disable failed.", "#FF2D55");
+            }
+        }
+
+        private async Task EnsureSteamFirewallRulesPreparedAsync()
+        {
+            if (_steamFirewallRulesPrepared)
+                return;
+
+            string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
+            UpdateRejoinFirewallStatus("FIREWALL: SETUP - preparing disabled rules for later toggles", "#FF6A00");
+            AppendLog("[FIREWALL]", "Preparing MCC P2P firewall rules for Campaign and Matchmaking toggles...", "#FF6A00");
+
+            await SetSteamFirewallEnabledAsync(false, mccExePath);
+            SaveSteamFirewallUiState(false);
+            SetSteamFirewallRuntimeState(SteamFirewallState.Disabled);
+            _steamFirewallRulesPrepared = true;
+
+            AppendLog("[FIREWALL]", $"MCC P2P firewall rules are ready for {Path.GetFileName(mccExePath)}.", "#39FF14");
+            UpdateRejoinFirewallStatus();
+        }
+
+        private void SetSteamFirewallRuntimeState(SteamFirewallState state)
+        {
+            _steamFirewallUiState = state;
+            if (SteamFirewallFeatureEnabled)
+                UpdateSteamFirewallUi(state);
+            UpdateRejoinFirewallStatus();
+        }
+
+        private void SetRejoinFirewallCheckbox(CheckBox checkBox, bool isChecked)
+        {
+            _rejoinFirewallCheckChanging = true;
+            try
+            {
+                checkBox.IsChecked = isChecked;
+            }
+            finally
+            {
+                _rejoinFirewallCheckChanging = false;
+            }
+        }
+
+        private async Task<bool> EnsureRejoinFixEnabledFromFirewallOptionAsync()
+        {
+            if (_rejoinProxy.IsRunning)
+                return true;
+
+            if (!IsRunningAsAdministrator())
+            {
+                try
+                {
+                    MessageBox.Show(
+                        "Firewall fixes require Rejoin Fix to be running, and Rejoin Fix needs the Toolbox to run as Administrator.\n\nWhen Rejoin Fix starts as Administrator, Toolbox will also prepare the disabled firewall rules so the Campaign and Matchmaking toggles can work later without first-use setup.\n\nThe Toolbox will relaunch as Administrator now.",
+                        "Rejoin Fix -- Halo MCC Toolbox",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+
+                    RelaunchAsAdministrator();
+                    Close();
+                }
+                catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+                {
+                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                    HandleAdministratorRelaunchCancelled();
+                }
+                catch (Exception ex)
+                {
+                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                    AppendLog("[ERROR]", $"Could not relaunch as Administrator: {ex.Message}", "#FF2D55");
+                    SetStatus("Rejoin Fix requires Administrator.", "#FF2D55");
+                }
+
+                return false;
+            }
+
+            var confirm = MessageBox.Show(
+                "Firewall fixes require Rejoin Fix to be running.\n\nRejoin Fix will enable the Toolbox proxy and change the system proxy while it is running. Toolbox will also prepare disabled MCC firewall rules now, even if no firewall mode is selected yet, so the toggles are ready later.\n\nRestart MCC after it starts.\n\nEnable Rejoin Fix now?",
+                "Rejoin Fix -- Halo MCC Toolbox",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirm != MessageBoxResult.Yes)
+            {
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                AppendLog("[INFO]", "Rejoin Fix cancelled by user.", "#4A5A6A");
+                SetStatus("Rejoin Fix cancelled.", "#4A5A6A");
+                return false;
+            }
+
+            try
+            {
+                await StartRejoinFixAsync();
+            }
+            catch (Exception ex)
+            {
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                RejoinFixDiagnostics.Error("proxy", $"Activation failed: {ex.Message}");
+                AppendLog("[ERROR]", $"Rejoin Fix failed: {ex.Message}", "#FF2D55");
+                SetStatus("Rejoin Fix failed to start.", "#FF2D55");
+                MessageBox.Show(
+                    $"Rejoin Fix could not start:\n\n{ex.Message}",
+                    "Rejoin Fix -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+
+            return _rejoinProxy.IsRunning;
+        }
+
+        private void HandleSteamFirewallAutoSignal(ProxyCaptureEntry entry)
+        {
             if (!_steamFirewallAutoEnabled)
                 return;
 
             if (_steamFirewallAutoPaused && IsSteamFirewallAutoResumeSignal(entry))
             {
-                ScheduleSteamFirewallAutoResume(SteamFirewallAutoMatchFoundHoldSeconds, "lobby connection confirmed");
+                if (!_steamFirewallAutoHeldForActiveMatch)
+                    ScheduleSteamFirewallAutoResume(SteamFirewallAutoMatchFoundHoldSeconds, "lobby connection confirmed");
                 return;
             }
 
@@ -1577,13 +2136,9 @@ echo All tasks complete.
 
         private static bool IsSteamFirewallAutoDisableSignal(ProxyCaptureEntry entry)
         {
-            string host = entry.Host;
             string path = entry.Path;
-            string url = entry.Url;
 
-            return host.Contains("banprocessor", StringComparison.OrdinalIgnoreCase)
-                || url.Contains("banprocessor", StringComparison.OrdinalIgnoreCase)
-                || path.Contains("Party/RequestParty", StringComparison.OrdinalIgnoreCase)
+            return path.Contains("Party/RequestParty", StringComparison.OrdinalIgnoreCase)
                 || path.Contains("Matchmaking", StringComparison.OrdinalIgnoreCase)
                 || path.Contains("/CascadeMatchmaking/sessions/", StringComparison.OrdinalIgnoreCase);
         }
@@ -1601,9 +2156,6 @@ echo All tasks complete.
 
         private async Task PauseSteamFirewallForMatchmakingAsync(ProxyCaptureEntry entry)
         {
-            if (!SteamFirewallFeatureEnabled)
-                return;
-
             if (!_steamFirewallAutoEnabled || _steamFirewallUiState != SteamFirewallState.Enabled)
                 return;
 
@@ -1618,16 +2170,19 @@ echo All tasks complete.
                 string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
                 TxtSteamFirewallStatus.Text = "AUTO - pausing MCC port block for matchmaking";
                 TxtSteamFirewallStatus.Foreground = Brush("#FF6A00");
+                UpdateRejoinFirewallStatus("FIREWALL: MATCHMAKING PAUSING - opening ports for matchmaking", "#FF6A00");
                 BtnSteamFirewallFix.Content = "PAUSING";
                 BtnSteamFirewallFix.IsEnabled = false;
 
                 await SetSteamFirewallEnabledAsync(false, mccExePath);
                 SaveSteamFirewallUiState(false);
                 _steamFirewallAutoPaused = true;
+                _steamFirewallAutoHeldForActiveMatch = false;
                 _steamFirewallAutoResumeAfterUtc = DateTime.UtcNow.AddSeconds(SteamFirewallAutoSearchHoldSeconds);
-                UpdateSteamFirewallUi(SteamFirewallState.Disabled);
+                SetSteamFirewallRuntimeState(SteamFirewallState.Disabled);
                 TxtSteamFirewallStatus.Text = "AUTO - disabled while MCC searches/connects";
                 TxtSteamFirewallStatus.Foreground = Brush("#00C8FF");
+                UpdateRejoinFirewallStatus("FIREWALL: MATCHMAKING PAUSED - ports are open while MCC searches/connects", "#00C8FF");
                 AppendLog("[FIREWALL]", $"Auto-disabled MCC port block after matchmaking signal: {entry.Host}{entry.Path}", "#00C8FF");
             }
             catch (Exception ex)
@@ -1644,22 +2199,33 @@ echo All tasks complete.
 
         private void ScheduleSteamFirewallAutoResume(int holdSeconds, string reason)
         {
-            if (!SteamFirewallFeatureEnabled)
+            if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused)
                 return;
 
-            if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused)
+            if (_steamFirewallAutoHeldForActiveMatch)
                 return;
 
             _steamFirewallAutoResumeAfterUtc = DateTime.UtcNow.AddSeconds(holdSeconds);
             TxtSteamFirewallStatus.Text = $"AUTO - re-enabling soon ({reason})";
             TxtSteamFirewallStatus.Foreground = Brush("#00C8FF");
+            UpdateRejoinFirewallStatus($"FIREWALL: MATCHMAKING PENDING - re-enabling soon ({reason})", "#00C8FF");
+        }
+
+        private void HoldSteamFirewallPausedForActiveMatch(string reason)
+        {
+            if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused)
+                return;
+
+            _steamFirewallAutoHeldForActiveMatch = true;
+            _steamFirewallAutoResumeAfterUtc = DateTime.MaxValue;
+            TxtSteamFirewallStatus.Text = $"AUTO - paused for active match ({reason})";
+            TxtSteamFirewallStatus.Foreground = Brush("#00C8FF");
+            UpdateRejoinFirewallStatus($"FIREWALL: MATCHMAKING PAUSED - ports are open for active match ({reason})", "#00C8FF");
+            AppendLog("[FIREWALL]", $"Keeping MCC port block disabled for active match: {reason}.", "#00C8FF");
         }
 
         private async Task SteamFirewallAutoTimer_TickAsync()
         {
-            if (!SteamFirewallFeatureEnabled)
-                return;
-
             if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused || DateTime.UtcNow < _steamFirewallAutoResumeAfterUtc)
                 return;
 
@@ -1668,9 +2234,6 @@ echo All tasks complete.
 
         private async Task ResumeSteamFirewallAfterMatchmakingAsync()
         {
-            if (!SteamFirewallFeatureEnabled)
-                return;
-
             if (!await _steamFirewallAutoLock.WaitAsync(0))
                 return;
 
@@ -1682,13 +2245,15 @@ echo All tasks complete.
                 string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
                 TxtSteamFirewallStatus.Text = "AUTO - re-enabling MCC port block";
                 TxtSteamFirewallStatus.Foreground = Brush("#FF6A00");
+                UpdateRejoinFirewallStatus("FIREWALL: MATCHMAKING PENDING - re-enabling port block", "#FF6A00");
                 BtnSteamFirewallFix.Content = "ENABLING";
                 BtnSteamFirewallFix.IsEnabled = false;
 
                 await SetSteamFirewallEnabledAsync(true, mccExePath);
                 SaveSteamFirewallUiState(true);
                 _steamFirewallAutoPaused = false;
-                UpdateSteamFirewallUi(SteamFirewallState.Enabled);
+                _steamFirewallAutoHeldForActiveMatch = false;
+                SetSteamFirewallRuntimeState(SteamFirewallState.Enabled);
                 AppendLog("[FIREWALL]", "Auto re-enabled MCC port block after matchmaking quiet period.", "#39FF14");
             }
             catch (Exception ex)
@@ -1760,6 +2325,10 @@ echo All tasks complete.
             string legacyRuleNames = string.Join(", ", LegacySteamFirewallRuleNames.Select(QuotePowerShellString));
             string globalRuleNames = string.Join(", ", GlobalSteamFirewallRuleNames.Select(QuotePowerShellString));
             string script = $@"
+$ProgressPreference = 'SilentlyContinue'
+$InformationPreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
 $names = @({ruleNames})
 $legacyNames = @({legacyRuleNames})
 $globalNames = @({globalRuleNames})
@@ -1847,9 +2416,53 @@ if ($existing.Count -eq 0) {{
             }
         }
 
-        private static Task SetSteamFirewallEnabledAsync(bool enabled, string mccExePath)
+        private static void RelaunchAsAdministrator()
         {
-            string ports = string.Join(", ", SteamFirewallPorts);
+            string? executablePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrWhiteSpace(executablePath))
+                throw new InvalidOperationException("Could not find the Toolbox executable path.");
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = executablePath,
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+        }
+
+        private async Task ApplyRejoinFirewallOptionAsync()
+        {
+            if (ChkRejoinFixFirewall.IsChecked != true)
+                return;
+
+            string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
+            AppendLog("[FIREWALL]", "Enabling MCC P2P firewall fix for Rejoin Fix...", "#FF6A00");
+            SetStatus("Enabling MCC P2P firewall fix...", "#FF6A00");
+            _rejoinCampaignFirewallApplying = true;
+            _rejoinCampaignFirewallEnabled = false;
+            UpdateRejoinFirewallStatus();
+
+            await SetSteamFirewallEnabledAsync(true, mccExePath, RejoinCampaignFirewallPorts, SteamFirewallPorts);
+            SaveSteamFirewallUiState(true);
+            SetSteamFirewallRuntimeState(SteamFirewallState.Enabled);
+            _rejoinCampaignFirewallApplying = false;
+            _rejoinCampaignFirewallEnabled = true;
+            UpdateRejoinFirewallStatus();
+
+            AppendLog("[FIREWALL]", $"MCC P2P firewall fix enabled for Rejoin Fix ({Path.GetFileName(mccExePath)}).", "#39FF14");
+            SetStatus("Firewall Fix (Campaign) enabled.", "#39FF14");
+        }
+
+        private static Task SetSteamFirewallEnabledAsync(
+            bool enabled,
+            string mccExePath,
+            IReadOnlyCollection<int>? activePorts = null,
+            IReadOnlyCollection<int>? cleanupPorts = null)
+        {
+            activePorts ??= SteamFirewallPorts;
+            cleanupPorts ??= activePorts;
+            string ports = string.Join(", ", activePorts);
+            string cleanupPortsText = string.Join(", ", cleanupPorts);
             string rulePrefix = SteamFirewallRulePrefix;
             string legacyRulePrefix = LegacyPort4379FirewallRulePrefix;
             string globalRulePrefix = GlobalSteamFirewallRulePrefix;
@@ -1858,17 +2471,35 @@ if ($existing.Count -eq 0) {{
 
             string script = $@"
 $ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'
+$InformationPreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
 $ports = @({ports})
+$cleanupPorts = @({cleanupPortsText})
 $rulePrefix = {QuotePowerShellString(rulePrefix)}
 $legacyRulePrefix = {QuotePowerShellString(legacyRulePrefix)}
 $globalRulePrefix = {QuotePowerShellString(globalRulePrefix)}
 $mccExePath = {quotedMccExePath}
+
+function Invoke-NetshChecked([string]$label, [string[]]$arguments) {{
+    $output = & netsh @arguments 2>&1
+    if ($LASTEXITCODE -ne 0) {{
+        $message = ($output | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($message)) {{
+            $message = 'netsh returned no output'
+        }}
+        Write-Error ""$label failed with exit code $LASTEXITCODE. $message""
+        exit $LASTEXITCODE
+    }}
+}}
+
 $allNames = @()
 $allNames += ""$legacyRulePrefix TCP Inbound""
 $allNames += ""$legacyRulePrefix UDP Inbound""
 $allNames += ""$legacyRulePrefix TCP Outbound""
 $allNames += ""$legacyRulePrefix UDP Outbound""
-foreach ($port in $ports) {{
+foreach ($port in $cleanupPorts) {{
     $allNames += ""$rulePrefix $port TCP Inbound""
     $allNames += ""$rulePrefix $port UDP Inbound""
     $allNames += ""$rulePrefix $port TCP Outbound""
@@ -1880,40 +2511,41 @@ foreach ($port in $ports) {{
 }}
 
 foreach ($name in $allNames) {{
-    if ($name.StartsWith($legacyRulePrefix, [StringComparison]::OrdinalIgnoreCase) -or
-        $name.StartsWith($globalRulePrefix, [StringComparison]::OrdinalIgnoreCase)) {{
+    if ($name.StartsWith($legacyRulePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $name.StartsWith($globalRulePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {{
         & netsh advfirewall firewall set rule name=""$name"" new enable=no | Out-Null
+    }}
+}}
+
+foreach ($port in $cleanupPorts) {{
+    if ($ports -notcontains $port) {{
+        & netsh advfirewall firewall set rule name=""$rulePrefix $port TCP Inbound"" new enable=no | Out-Null
+        & netsh advfirewall firewall set rule name=""$rulePrefix $port UDP Inbound"" new enable=no | Out-Null
+        & netsh advfirewall firewall set rule name=""$rulePrefix $port TCP Outbound"" new enable=no | Out-Null
+        & netsh advfirewall firewall set rule name=""$rulePrefix $port UDP Outbound"" new enable=no | Out-Null
     }}
 }}
 
 foreach ($port in $ports) {{
     if (-not (Get-NetFirewallRule -DisplayName ""$rulePrefix $port TCP Inbound"" -ErrorAction SilentlyContinue)) {{
-        & netsh advfirewall firewall add rule name=""$rulePrefix $port TCP Inbound"" dir=in action=block program=""$mccExePath"" protocol=TCP localport=$port profile=any | Out-Null
-        if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+        Invoke-NetshChecked ""add $rulePrefix $port TCP Inbound"" @('advfirewall', 'firewall', 'add', 'rule', ""name=$rulePrefix $port TCP Inbound"", 'dir=in', 'action=block', ""program=$mccExePath"", 'protocol=TCP', ""localport=$port"", 'profile=any')
     }}
-    & netsh advfirewall firewall set rule name=""$rulePrefix $port TCP Inbound"" new program=""$mccExePath"" enable={targetEnabled} | Out-Null
-    if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+    Invoke-NetshChecked ""set $rulePrefix $port TCP Inbound"" @('advfirewall', 'firewall', 'set', 'rule', ""name=$rulePrefix $port TCP Inbound"", 'new', ""program=$mccExePath"", 'enable={targetEnabled}')
 
     if (-not (Get-NetFirewallRule -DisplayName ""$rulePrefix $port UDP Inbound"" -ErrorAction SilentlyContinue)) {{
-        & netsh advfirewall firewall add rule name=""$rulePrefix $port UDP Inbound"" dir=in action=block program=""$mccExePath"" protocol=UDP localport=$port profile=any | Out-Null
-        if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+        Invoke-NetshChecked ""add $rulePrefix $port UDP Inbound"" @('advfirewall', 'firewall', 'add', 'rule', ""name=$rulePrefix $port UDP Inbound"", 'dir=in', 'action=block', ""program=$mccExePath"", 'protocol=UDP', ""localport=$port"", 'profile=any')
     }}
-    & netsh advfirewall firewall set rule name=""$rulePrefix $port UDP Inbound"" new program=""$mccExePath"" enable={targetEnabled} | Out-Null
-    if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+    Invoke-NetshChecked ""set $rulePrefix $port UDP Inbound"" @('advfirewall', 'firewall', 'set', 'rule', ""name=$rulePrefix $port UDP Inbound"", 'new', ""program=$mccExePath"", 'enable={targetEnabled}')
 
     if (-not (Get-NetFirewallRule -DisplayName ""$rulePrefix $port TCP Outbound"" -ErrorAction SilentlyContinue)) {{
-        & netsh advfirewall firewall add rule name=""$rulePrefix $port TCP Outbound"" dir=out action=block program=""$mccExePath"" protocol=TCP remoteport=$port profile=any | Out-Null
-        if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+        Invoke-NetshChecked ""add $rulePrefix $port TCP Outbound"" @('advfirewall', 'firewall', 'add', 'rule', ""name=$rulePrefix $port TCP Outbound"", 'dir=out', 'action=block', ""program=$mccExePath"", 'protocol=TCP', ""remoteport=$port"", 'profile=any')
     }}
-    & netsh advfirewall firewall set rule name=""$rulePrefix $port TCP Outbound"" new program=""$mccExePath"" enable={targetEnabled} | Out-Null
-    if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+    Invoke-NetshChecked ""set $rulePrefix $port TCP Outbound"" @('advfirewall', 'firewall', 'set', 'rule', ""name=$rulePrefix $port TCP Outbound"", 'new', ""program=$mccExePath"", 'enable={targetEnabled}')
 
     if (-not (Get-NetFirewallRule -DisplayName ""$rulePrefix $port UDP Outbound"" -ErrorAction SilentlyContinue)) {{
-        & netsh advfirewall firewall add rule name=""$rulePrefix $port UDP Outbound"" dir=out action=block program=""$mccExePath"" protocol=UDP remoteport=$port profile=any | Out-Null
-        if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+        Invoke-NetshChecked ""add $rulePrefix $port UDP Outbound"" @('advfirewall', 'firewall', 'add', 'rule', ""name=$rulePrefix $port UDP Outbound"", 'dir=out', 'action=block', ""program=$mccExePath"", 'protocol=UDP', ""remoteport=$port"", 'profile=any')
     }}
-    & netsh advfirewall firewall set rule name=""$rulePrefix $port UDP Outbound"" new program=""$mccExePath"" enable={targetEnabled} | Out-Null
-    if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+    Invoke-NetshChecked ""set $rulePrefix $port UDP Outbound"" @('advfirewall', 'firewall', 'set', 'rule', ""name=$rulePrefix $port UDP Outbound"", 'new', ""program=$mccExePath"", 'enable={targetEnabled}')
 }}
 
 exit 0";
@@ -1927,7 +2559,7 @@ exit 0";
             var startInfo = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}",
+                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}",
                 UseShellExecute = elevated,
                 CreateNoWindow = !elevated
             };
@@ -1975,15 +2607,75 @@ exit 0";
 
             if (process.ExitCode != 0)
             {
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error)
+                error = CleanPowerShellError(error);
+                string failureText = string.IsNullOrWhiteSpace(error)
+                    ? CleanPowerShellError(output)
+                    : error;
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(failureText)
                     ? $"PowerShell exited with code {process.ExitCode}."
-                    : error.Trim());
+                    : failureText);
             }
 
             return output;
         }
 
+        private static string CleanPowerShellError(string error)
+        {
+            if (string.IsNullOrWhiteSpace(error))
+                return "";
+
+            string cleaned = error.Trim();
+            if (cleaned.StartsWith("#< CLIXML", StringComparison.OrdinalIgnoreCase))
+            {
+                var lines = cleaned
+                    .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Where(line =>
+                        !line.Contains("System.Management.Automation.PSCustomObject", StringComparison.OrdinalIgnoreCase) &&
+                        !line.Contains("Preparing modules for first use", StringComparison.OrdinalIgnoreCase) &&
+                        !line.Contains("Completed", StringComparison.OrdinalIgnoreCase) &&
+                        !line.Contains("progress", StringComparison.OrdinalIgnoreCase) &&
+                        !line.Contains("Get-NetFirewallRule", StringComparison.OrdinalIgnoreCase) &&
+                        !line.StartsWith("#< CLIXML", StringComparison.OrdinalIgnoreCase) &&
+                        !line.StartsWith("<Objs ", StringComparison.OrdinalIgnoreCase) &&
+                        !line.StartsWith("</Objs>", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+
+                cleaned = string.Join(Environment.NewLine, lines).Trim();
+            }
+
+            return cleaned;
+        }
+
         private static string QuotePowerShellString(string value) => $"'{value.Replace("'", "''")}'";
+
+        private async Task StartRejoinFixAsync()
+        {
+            RejoinFixPaths.EnsureRootDirectory();
+            _rejoinWinHttpManualNeeded = false;
+            RejoinFixDiagnostics.Info("proxy", "Activation requested from Toolbox UI.");
+            AppendLog("[REJOIN]", "Starting Rejoin Fix proxy...", "#FF6A00");
+            SetStatus("Starting Rejoin Fix...", "#FF6A00");
+
+            await _rejoinProxy.StartAsync();
+            StartRejoinCrashWatcher();
+            StartNetworkStatsOverlay(_rejoinProxy.CurrentGameServerIp);
+            AppendLog("[REJOIN]", $"Rejoin Fix active on 127.0.0.1:{_rejoinProxy.Port}. Restart MCC now.", "#39FF14");
+            SetStatus("Rejoin Fix active.", "#39FF14");
+
+            try
+            {
+                await EnsureSteamFirewallRulesPreparedAsync();
+                await ApplyRejoinFirewallOptionAsync();
+                if (ChkRejoinFixFirewallMatchmaking.IsChecked == true)
+                    await EnableSteamFirewallAutoModeAsync(ensureObserverRunning: false);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[ERROR]", $"Firewall setup after Rejoin Fix start failed: {ex.Message}", "#FF2D55");
+                SetStatus("Rejoin Fix active; firewall setup failed.", "#FF6A00");
+                UpdateRejoinFirewallStatus("FIREWALL: SETUP FAILED - Rejoin Fix is still active", "#FF2D55");
+            }
+        }
 
         private async void BtnRejoinFix_Click(object sender, RoutedEventArgs e)
         {
@@ -1993,15 +2685,36 @@ exit 0";
             {
                 if (_rejoinProxy.IsRunning)
                 {
+                    bool campaignFirewallWasEnabled = ChkRejoinFixFirewall.IsChecked == true;
                     StopRejoinCrashWatcher();
                     _rejoinProxy.Stop();
                     StartNetworkStatsOverlay("");
                     _rejoinWinHttpManualNeeded = false;
+                    DisableSteamFirewallAutoMode(logStatus: false);
+                    if (campaignFirewallWasEnabled)
+                        await DisableRejoinCampaignFirewallAsync(logStatus: false);
+                    _rejoinCampaignFirewallApplying = false;
+                    _rejoinCampaignFirewallEnabled = false;
+                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
                     AppendLog("[REJOIN]", "Rejoin Fix proxy stopped.", "#C8D8E8");
                     SetStatus("Rejoin Fix stopped.", "#C8D8E8");
                 }
                 else
                 {
+                    if (!IsRunningAsAdministrator())
+                    {
+                        MessageBox.Show(
+                            "Rejoin Fix needs the Toolbox to run as Administrator so it can change system proxy and firewall settings.\n\nThe Toolbox will relaunch as Administrator now.",
+                            "Rejoin Fix -- Halo MCC Toolbox",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Information);
+
+                        RelaunchAsAdministrator();
+                        Close();
+                        return;
+                    }
+
                     var confirm = MessageBox.Show(
                         "Rejoin Fix will enable the Toolbox proxy and change the system proxy while it is running.\n\nRestart MCC after it starts.\n\nRun the fix now?",
                         "Rejoin Fix -- Halo MCC Toolbox",
@@ -2015,17 +2728,12 @@ exit 0";
                         return;
                     }
 
-                    RejoinFixPaths.EnsureRootDirectory();
-                    _rejoinWinHttpManualNeeded = false;
-                    RejoinFixDiagnostics.Info("proxy", "Activation requested from Toolbox UI.");
-                    AppendLog("[REJOIN]", "Starting Rejoin Fix proxy...", "#FF6A00");
-                    SetStatus("Starting Rejoin Fix...", "#FF6A00");
-                    await _rejoinProxy.StartAsync();
-                    StartRejoinCrashWatcher();
-                    StartNetworkStatsOverlay(_rejoinProxy.CurrentGameServerIp);
-                    AppendLog("[REJOIN]", $"Rejoin Fix active on 127.0.0.1:{_rejoinProxy.Port}. Restart MCC now.", "#39FF14");
-                    SetStatus("Rejoin Fix active.", "#39FF14");
+                    await StartRejoinFixAsync();
                 }
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                HandleAdministratorRelaunchCancelled();
             }
             catch (Exception ex)
             {
@@ -2043,6 +2751,12 @@ exit 0";
                 UpdateRejoinFixUi();
                 BtnRejoinFix.IsEnabled = true;
             }
+        }
+
+        private void HandleAdministratorRelaunchCancelled()
+        {
+            AppendLog("[INFO]", "Rejoin Fix cancelled at administrator prompt.", "#4A5A6A");
+            SetStatus("Rejoin Fix requires Administrator.", "#4A5A6A");
         }
 
         // ------------------------------------------

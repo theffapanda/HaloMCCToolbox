@@ -1015,6 +1015,34 @@ public class ProxyService : IDisposable
                 RequestHeaders = new Dictionary<string, string>(requestHeaders, StringComparer.OrdinalIgnoreCase),
             };
 
+            if (_lastMatchSession is not null &&
+                string.Equals(_lastMatchSession.TemplateName, info.TemplateName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(_lastMatchSession.SessionName, info.SessionName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(info.ConnectionGuid) &&
+                    !string.IsNullOrWhiteSpace(_lastMatchSession.ConnectionGuid))
+                {
+                    info.ConnectionGuid = _lastMatchSession.ConnectionGuid;
+                }
+
+                if (string.IsNullOrWhiteSpace(info.PlayerXuid) &&
+                    !string.IsNullOrWhiteSpace(_lastMatchSession.PlayerXuid))
+                {
+                    info.PlayerXuid = _lastMatchSession.PlayerXuid;
+                }
+
+                if (info.ObservedSquadMemberCount == 0 && _lastMatchSession.ObservedSquadMemberCount > 0)
+                {
+                    info.ObservedSquadMemberCount = _lastMatchSession.ObservedSquadMemberCount;
+                }
+
+                if (string.IsNullOrWhiteSpace(info.ObservedSquadSessionName) &&
+                    !string.IsNullOrWhiteSpace(_lastMatchSession.ObservedSquadSessionName))
+                {
+                    info.ObservedSquadSessionName = _lastMatchSession.ObservedSquadSessionName;
+                }
+            }
+
             if (_pendingCrashRestore &&
                 _lastMatchSession is not null &&
                 ShouldKeepExistingMatchSessionDuringRestore(_lastMatchSession, info))
