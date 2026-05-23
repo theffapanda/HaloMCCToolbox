@@ -444,6 +444,12 @@
                                                    Margin="0,4,0,0"
                                                    Visibility="Collapsed"
                                                    Foreground="{DynamicResource MutedBrush}"/>
+                                        <TextBlock x:Name="TxtRejoinFirewallStatus"
+                                                   Text="FIREWALL: OFF"
+                                                   FontFamily="Consolas"
+                                                   FontSize="10"
+                                                   Margin="0,4,0,0"
+                                                   Foreground="{DynamicResource MutedBrush}"/>
                                         <CheckBox x:Name="ChkNetworkStatsOverlay"
                                                   Content="GAME NETWORK STATS OVERLAY"
                                                   Style="{StaticResource MapCheckBox}"
@@ -458,6 +464,20 @@
                                                   Margin="0,6,0,0"
                                                   Checked="ChkNetworkStatsOverlayMove_Checked"
                                                   Unchecked="ChkNetworkStatsOverlayMove_Unchecked"/>
+                                        <CheckBox x:Name="ChkRejoinFixFirewall"
+                                                  Content="Firewall Fix (Campaign)"
+                                                  Style="{StaticResource MapCheckBox}"
+                                                  FontSize="10"
+                                                  Margin="0,6,0,0"
+                                                  Checked="ChkRejoinFixFirewall_Checked"
+                                                  Unchecked="ChkRejoinFixFirewall_Unchecked"/>
+                                        <CheckBox x:Name="ChkRejoinFixFirewallMatchmaking"
+                                                  Content="Firewall Fix (Matchmaking)"
+                                                  Style="{StaticResource MapCheckBox}"
+                                                  FontSize="10"
+                                                  Margin="0,6,0,0"
+                                                  Checked="ChkRejoinFixFirewallMatchmaking_Checked"
+                                                  Unchecked="ChkRejoinFixFirewallMatchmaking_Unchecked"/>
                                     </StackPanel>
                                 </Expander>
                                 <Button Grid.Column="1"
@@ -1895,6 +1915,11 @@
                                     Style="{StaticResource OrangeButton}"
                                     Margin="0,0,10,0"
                                     Click="BtnExportLogs_Click"/>
+                            <Button x:Name="BtnRemoveToolboxTraces"
+                                    Content="REMOVE TOOLBOX TRACES"
+                                    Style="{StaticResource RedButton}"
+                                    Margin="0,0,10,0"
+                                    Click="BtnRemoveToolboxTraces_Click"/>
                             <Button Content="CLEAR LOG"
                                     Style="{StaticResource PrimaryButton}"
                                     Click="BtnClearLog_Click"/>
