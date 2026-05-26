@@ -146,7 +146,6 @@ public partial class GameNetworkStatsOverlayWindow : Window
         }
 
         var regionLabel = GameServerRegionResolver.GetRegionLabel(serverInfo);
-        var port = serverInfo.Ports.FirstOrDefault()?.Num;
         _serverLabel = !string.IsNullOrWhiteSpace(regionLabel)
             ? regionLabel
             : "ACTIVE SERVER";

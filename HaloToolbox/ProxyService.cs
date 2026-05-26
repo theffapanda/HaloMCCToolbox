@@ -20,6 +20,8 @@ public class ProxyService : IDisposable
 {
     // ── Configuration ─────────────────────────────────────────────────────────
     public int Port { get; set; } = 8888;
+    private const int CertificateSetupTimeoutMs = 30000;
+    private static readonly SemaphoreSlim CertificateSetupLock = new(1, 1);
 
     // ── State ─────────────────────────────────────────────────────────────────
     public bool IsRunning { get; private set; }
@@ -44,6 +46,9 @@ public class ProxyService : IDisposable
 
     // Raised when MCC publishes its regional network tab measurements.
     public event EventHandler<NetworkRegionLatency?>? OnNetworkRegionLatencyChanged;
+
+    // Raised when MPSD exposes per-member matchmaking region measurements.
+    public event EventHandler<IReadOnlyList<MatchmakingPlayerPing>>? OnMatchmakingPlayerPingsObserved;
 
     // In-memory copy of the saved matchmaking session — used for session discovery injection
     private SavedHandleInfo? _lastMatchSession;
@@ -99,6 +104,8 @@ public class ProxyService : IDisposable
     private GameServerInfo? _cachedGameServerInfo = null;
     private GameServerInfo? _currentObservedGameServerInfo = null;
     private NetworkRegionLatency? _bestNetworkRegionLatency = null;
+    private readonly Dictionary<string, MatchmakingPlayerPing> _matchmakingPlayerPings =
+        new(StringComparer.OrdinalIgnoreCase);
     private bool _gameServerRedirectionActive = false;
 
 
@@ -315,38 +322,126 @@ public class ProxyService : IDisposable
 
         Directory.CreateDirectory(Path.GetDirectoryName(CertStorePath)!);
 
-        _server = new ProxyServer();
-        _server.CertificateManager.PfxFilePath = CertStorePath;
-        _server.CertificateManager.PfxPassword = "halointel-proxy";
+        ProxyServer? server = null;
+        ExplicitProxyEndPoint? endpoint = null;
+        bool winInetProxySet = false;
 
-        // Install CA into CurrentUser\Root — shows a one-time Windows trust dialog,
-        // but does NOT require admin / UAC elevation.
-        // Suppress: obsolete warning is informational; sync form still works correctly.
+        try
+        {
+            server = await CreateProxyServerWithCertificateAsync();
+            server.BeforeRequest  += OnBeforeRequestAsync;
+            server.BeforeResponse += OnBeforeResponseAsync;
+
+            endpoint = new ExplicitProxyEndPoint(IPAddress.Loopback, Port, decryptSsl: true);
+            // BeforeTunnelConnectRequest lives on the endpoint, not the server.
+            // It must be registered after the endpoint is created.
+            endpoint.BeforeTunnelConnectRequest += OnBeforeTunnelConnectRequest;
+            server.AddEndPoint(endpoint);
+            await server.StartAsync();
+
+            _server = server;
+            _endpoint = endpoint;
+
+            // WinINet proxy (no admin required)
+            SetWinINetProxy($"127.0.0.1:{Port}");
+            winInetProxySet = true;
+
+            // WinHTTP proxy: Halo MCC uses WinHTTP, not WinINet.
+            await TrySetWinHttpProxyAsync();
+
+            IsRunning = true;
+            RejoinFixDiagnostics.Info("proxy", $"Proxy started on 127.0.0.1:{Port}.");
+        }
+        catch
+        {
+            CleanupFailedStart(server, endpoint, winInetProxySet);
+            throw;
+        }
+    }
+
+    private static async Task<ProxyServer> CreateProxyServerWithCertificateAsync()
+    {
+        bool certificateWasMissing = !File.Exists(CertStorePath);
+        if (certificateWasMissing)
+            RejoinFixDiagnostics.Info("proxy", "Proxy root certificate is missing; creating and trusting a new certificate.");
+
+        if (!await CertificateSetupLock.WaitAsync(TimeSpan.FromSeconds(5)))
+            throw new TimeoutException("Titanium proxy certificate setup is already running. Wait a moment, then relaunch Rejoin Fix.");
+
+        bool releaseLockInFinally = true;
+
+        try
+        {
+            var setupTask = Task.Run(() =>
+            {
+                var server = new ProxyServer();
+                server.CertificateManager.PfxFilePath = CertStorePath;
+                server.CertificateManager.PfxPassword = "halointel-proxy";
+
+                // Install CA into CurrentUser\Root; this can show a one-time Windows trust dialog.
+                // Keep it off the WPF thread so a first-run certificate prompt cannot freeze Toolbox.
 #pragma warning disable CS0618
-        _server.CertificateManager.EnsureRootCertificate(
-            userTrustRootCertificate:    true,
-            machineTrustRootCertificate: false,
-            trustRootCertificateAsAdmin: false);
+                server.CertificateManager.EnsureRootCertificate(
+                    userTrustRootCertificate:    true,
+                    machineTrustRootCertificate: false,
+                    trustRootCertificateAsAdmin: false);
 #pragma warning restore CS0618
 
-        _server.BeforeRequest  += OnBeforeRequestAsync;
-        _server.BeforeResponse += OnBeforeResponseAsync;
+                return server;
+            });
 
-        _endpoint = new ExplicitProxyEndPoint(IPAddress.Loopback, Port, decryptSsl: true);
-        // BeforeTunnelConnectRequest lives on the endpoint, not the server —
-        // must be registered after the endpoint is created.
-        _endpoint.BeforeTunnelConnectRequest += OnBeforeTunnelConnectRequest;
-        _server.AddEndPoint(_endpoint);
-        await _server.StartAsync();
+            if (await Task.WhenAny(setupTask, Task.Delay(CertificateSetupTimeoutMs)) != setupTask)
+            {
+                RejoinFixDiagnostics.Error("proxy", "Timed out while creating or trusting the Titanium proxy certificate.");
+                releaseLockInFinally = false;
+                _ = setupTask.ContinueWith(t =>
+                {
+                    _ = t.Exception;
+                    CertificateSetupLock.Release();
+                }, TaskScheduler.Default);
+                throw new TimeoutException("Titanium proxy certificate setup timed out. Close any certificate/trust prompts, then relaunch Rejoin Fix.");
+            }
 
-        // WinINet proxy (no admin required)
-        SetWinINetProxy($"127.0.0.1:{Port}");
+            var proxyServer = await setupTask;
+            if (certificateWasMissing)
+                RejoinFixDiagnostics.Info("proxy", "Proxy root certificate was created and trusted.");
 
-        // WinHTTP proxy — Halo MCC uses WinHTTP, not WinINet (admin / UAC required)
-        await TrySetWinHttpProxyAsync();
+            return proxyServer;
+        }
+        finally
+        {
+            if (releaseLockInFinally)
+                CertificateSetupLock.Release();
+        }
+    }
 
-        IsRunning = true;
-        RejoinFixDiagnostics.Info("proxy", $"Proxy started on 127.0.0.1:{Port}.");
+    private void CleanupFailedStart(ProxyServer? server, ExplicitProxyEndPoint? endpoint, bool restoreWinInetProxy)
+    {
+        try
+        {
+            if (restoreWinInetProxy)
+                RestoreWinINetProxy();
+
+            if (server is not null)
+            {
+                server.BeforeRequest  -= OnBeforeRequestAsync;
+                server.BeforeResponse -= OnBeforeResponseAsync;
+            }
+
+            if (endpoint is not null)
+                endpoint.BeforeTunnelConnectRequest -= OnBeforeTunnelConnectRequest;
+
+            server?.Stop();
+            server?.Dispose();
+        }
+        catch
+        {
+            // Startup failed already; cleanup is best effort so the original error stays visible.
+        }
+
+        _server = null;
+        _endpoint = null;
+        IsRunning = false;
     }
 
     public void Stop()
@@ -662,12 +757,18 @@ public class ProxyService : IDisposable
 
     private void ObserveNetworkRegionLatencies(string body, string source)
     {
-        if (!body.Contains("serverMeasurements", StringComparison.OrdinalIgnoreCase))
+        if (!body.Contains("\"members\"", StringComparison.OrdinalIgnoreCase) &&
+            !body.Contains("serverMeasurements", StringComparison.OrdinalIgnoreCase))
             return;
 
         try
         {
             using var doc = JsonDocument.Parse(body);
+            ObserveMatchmakingPlayerPings(doc.RootElement, source);
+
+            if (!body.Contains("serverMeasurements", StringComparison.OrdinalIgnoreCase))
+                return;
+
             if (!TryFindBestNetworkRegionLatency(doc.RootElement, out var best))
                 return;
 
@@ -687,6 +788,265 @@ public class ProxyService : IDisposable
         {
             RejoinFixDiagnostics.Warn("network", $"Failed to parse MCC network region measurements from {source}: {ex.Message}");
         }
+    }
+
+    private void ObserveMatchmakingPlayerPings(JsonElement root, string source)
+    {
+        var observed = new List<MatchmakingPlayerPing>();
+        FindMatchmakingPlayerPings(root, observed);
+
+        if (observed.Count == 0)
+            return;
+
+        var nextPings = new Dictionary<string, MatchmakingPlayerPing>(StringComparer.OrdinalIgnoreCase);
+        foreach (var ping in observed)
+        {
+            if (string.IsNullOrWhiteSpace(ping.Xuid))
+                continue;
+
+            if (_matchmakingPlayerPings.TryGetValue(ping.Xuid, out var existing))
+            {
+                if (string.IsNullOrWhiteSpace(ping.Region))
+                    ping.Region = existing.Region;
+                if (ping.LatencyMs <= 0)
+                    ping.LatencyMs = existing.LatencyMs;
+                if (string.IsNullOrWhiteSpace(ping.Gamertag))
+                    ping.Gamertag = existing.Gamertag;
+                if (string.IsNullOrWhiteSpace(ping.Team))
+                    ping.Team = existing.Team;
+                if (string.IsNullOrWhiteSpace(ping.SquadId))
+                    ping.SquadId = existing.SquadId;
+                if (!ping.AverageGroupSkillPercentile.HasValue)
+                    ping.AverageGroupSkillPercentile = existing.AverageGroupSkillPercentile;
+            }
+
+            nextPings[ping.Xuid] = ping;
+        }
+
+        PreserveRecentLobbyPingsForPartialObservation(nextPings, source);
+
+        bool changed = _matchmakingPlayerPings.Count != nextPings.Count ||
+            nextPings.Any(kvp =>
+                !_matchmakingPlayerPings.TryGetValue(kvp.Key, out var existing) ||
+                !string.Equals(existing.Region, kvp.Value.Region, StringComparison.OrdinalIgnoreCase) ||
+                existing.LatencyMs != kvp.Value.LatencyMs ||
+                !string.Equals(existing.Gamertag, kvp.Value.Gamertag, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(existing.Team, kvp.Value.Team, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(existing.SquadId, kvp.Value.SquadId, StringComparison.OrdinalIgnoreCase) ||
+                existing.AverageGroupSkillPercentile != kvp.Value.AverageGroupSkillPercentile);
+
+        _matchmakingPlayerPings.Clear();
+        foreach (var kvp in nextPings)
+            _matchmakingPlayerPings[kvp.Key] = kvp.Value;
+
+        if (!changed)
+            return;
+
+        var snapshot = _matchmakingPlayerPings.Values
+            .OrderBy(p => p.Gamertag)
+            .ThenBy(p => p.Xuid)
+            .ToList();
+
+        RejoinFixDiagnostics.Info("network", $"Observed current lobby members for {snapshot.Count} players via {source}.");
+        PersistMatchmakingPlayerPings(snapshot, source);
+        OnMatchmakingPlayerPingsObserved?.Invoke(this, snapshot);
+    }
+
+    private void PreserveRecentLobbyPingsForPartialObservation(
+        Dictionary<string, MatchmakingPlayerPing> nextPings,
+        string source)
+    {
+        if (nextPings.Count == 0 || nextPings.Count >= _matchmakingPlayerPings.Count)
+            return;
+
+        bool looksPartialRefresh = source.Contains("squad", StringComparison.OrdinalIgnoreCase) ||
+            nextPings.Keys.All(xuid => _matchmakingPlayerPings.ContainsKey(xuid));
+        if (!looksPartialRefresh)
+            return;
+
+        var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(10);
+        foreach (var existing in _matchmakingPlayerPings.Values)
+        {
+            if (nextPings.ContainsKey(existing.Xuid) || existing.ObservedAt < cutoff)
+                continue;
+
+            nextPings[existing.Xuid] = existing;
+        }
+    }
+
+    private void ClearMatchmakingPlayerPings(string reason)
+    {
+        if (_matchmakingPlayerPings.Count == 0)
+            return;
+
+        if (ShouldPreserveLobbyPingsDuringActiveGame(reason))
+        {
+            RejoinFixDiagnostics.Info("network", $"Ignored current lobby clear during active game: {reason}.");
+            return;
+        }
+
+        _matchmakingPlayerPings.Clear();
+        RejoinFixDiagnostics.Info("network", $"Cleared current lobby members: {reason}.");
+        PersistMatchmakingPlayerPings(Array.Empty<MatchmakingPlayerPing>(), reason);
+        OnMatchmakingPlayerPingsObserved?.Invoke(this, Array.Empty<MatchmakingPlayerPing>());
+    }
+
+    private bool ShouldPreserveLobbyPingsDuringActiveGame(string reason)
+    {
+        if (!reason.Contains("unconnected squad", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (_currentObservedGameServerInfo is null ||
+            string.IsNullOrWhiteSpace(_currentObservedGameServerInfo.IPv4Address) ||
+            _currentObservedGameServerInfo.CachedAt < DateTime.UtcNow - TimeSpan.FromMinutes(30))
+        {
+            return false;
+        }
+
+        return _matchmakingPlayerPings.Values.Any(p =>
+            p.ObservedAt >= DateTime.UtcNow - TimeSpan.FromMinutes(10));
+    }
+
+    private static void PersistMatchmakingPlayerPings(IReadOnlyList<MatchmakingPlayerPing> snapshot, string source)
+    {
+        try
+        {
+            RejoinFixPaths.EnsureRootDirectory();
+            File.WriteAllText(
+                RejoinFixPaths.LastMatchmakingPingsFile,
+                JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("network", $"Failed to persist matchmaking ping snapshot: {ex.Message}");
+        }
+
+        foreach (var ping in snapshot)
+        {
+            string name = string.IsNullOrWhiteSpace(ping.Gamertag)
+                ? ShortXuid(ping.Xuid)
+                : ping.Gamertag;
+            RejoinFixDiagnostics.Info(
+                "network",
+                $"LOBBY {name} ({ShortXuid(ping.Xuid)}) team={FormatTeamForLog(ping.Team)} squad={FormatSquadForLog(ping.SquadId)} {FormatRegionForLog(ping.Region)} | {ping.DisplayPing} ms via {source}");
+        }
+    }
+
+    private static string FormatTeamForLog(string team) =>
+        string.IsNullOrWhiteSpace(team) ? "?" : team.Trim();
+
+    private static string FormatSquadForLog(string squadId) =>
+        string.IsNullOrWhiteSpace(squadId) ? "?" : ShortSquadId(squadId);
+
+    private static string ShortSquadId(string squadId)
+    {
+        if (string.IsNullOrWhiteSpace(squadId))
+            return "unknown";
+
+        var trimmed = squadId.Trim();
+        return trimmed.Length <= 8 ? trimmed : $"...{trimmed[^8..]}";
+    }
+
+    private static string ShortXuid(string xuid)
+    {
+        if (string.IsNullOrWhiteSpace(xuid))
+            return "unknown";
+
+        var trimmed = xuid.Trim();
+        return trimmed.Length <= 8 ? trimmed : $"...{trimmed[^8..]}";
+    }
+
+    private static string FormatRegionForLog(string region)
+    {
+        if (string.IsNullOrWhiteSpace(region))
+            return "Unknown";
+
+        var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["WestUs"] = "West US",
+            ["SouthCentralUs"] = "South Central US",
+            ["CentralUs"] = "Central US",
+            ["NorthCentralUs"] = "North Central US",
+            ["EastUs"] = "East US",
+            ["EastUs2"] = "East US 2",
+            ["BrazilSouth"] = "Brazil South",
+            ["NorthEurope"] = "North Europe",
+            ["WestEurope"] = "West Europe",
+            ["SoutheastAsia"] = "Southeast Asia",
+            ["EastAsia"] = "East Asia",
+            ["JapanWest"] = "Japan West",
+            ["JapanEast"] = "Japan East",
+            ["AustraliaSoutheast"] = "Australia Southeast",
+            ["AustraliaEast"] = "Australia East"
+        };
+
+        if (known.TryGetValue(region.Trim(), out var label))
+            return label;
+
+        var spaced = System.Text.RegularExpressions.Regex.Replace(
+            region.Trim(),
+            "([a-z])([A-Z0-9])",
+            "$1 $2");
+        return spaced.ToUpperInvariant() == spaced
+            ? spaced
+            : System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(spaced);
+    }
+
+    private static void FindMatchmakingPlayerPings(JsonElement element, List<MatchmakingPlayerPing> pings)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.NameEquals("members") && property.Value.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var member in property.Value.EnumerateObject())
+                    {
+                        if (TryParseMatchmakingPlayerPing(member.Value, out var ping))
+                            pings.Add(ping);
+                    }
+                }
+
+                FindMatchmakingPlayerPings(property.Value, pings);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                FindMatchmakingPlayerPings(item, pings);
+        }
+    }
+
+    private static bool TryParseMatchmakingPlayerPing(JsonElement member, out MatchmakingPlayerPing ping)
+    {
+        ping = new MatchmakingPlayerPing();
+
+        if (member.ValueKind != JsonValueKind.Object)
+            return false;
+
+        string xuid = FindStringPropertyRecursive(member, "xuid", "Xuid", "xboxUserId", "XboxUserId");
+        string gamertag = FindStringPropertyRecursive(member, "gamertag", "Gamertag", "gamerTag", "GamerTag");
+        if (string.IsNullOrWhiteSpace(xuid) && string.IsNullOrWhiteSpace(gamertag))
+            return false;
+
+        TryFindBestNetworkRegionLatency(member, out var best);
+
+        ping = new MatchmakingPlayerPing
+        {
+            Xuid = xuid,
+            Gamertag = gamertag,
+            Team = FindStringPropertyRecursive(member, "initialTeam", "InitialTeam", "team", "Team", "teamId", "TeamId"),
+            SquadId = FindStringPropertyRecursive(member, "squadId", "SquadId", "squadID", "SquadID", "partySquadId", "PartySquadId", "groupId", "GroupId"),
+            Region = best.Region,
+            LatencyMs = best.LatencyMs,
+            AverageGroupSkillPercentile = FindNullableDoublePropertyRecursive(
+                member,
+                "AverageGroupSkillPercentile",
+                "averageGroupSkillPercentile"),
+            ObservedAt = DateTime.UtcNow
+        };
+
+        return true;
     }
 
     private static bool TryFindBestNetworkRegionLatency(JsonElement element, out NetworkRegionLatency best)
@@ -750,6 +1110,84 @@ public class ProxyService : IDisposable
         }
 
         return false;
+    }
+
+    private static string FindStringPropertyRecursive(JsonElement element, params string[] names)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (names.Any(name => string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)) &&
+                    property.Value.ValueKind == JsonValueKind.String)
+                {
+                    return property.Value.GetString() ?? "";
+                }
+                if (names.Any(name => string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)) &&
+                    property.Value.ValueKind == JsonValueKind.Number)
+                {
+                    return property.Value.GetRawText();
+                }
+
+                var nested = FindStringPropertyRecursive(property.Value, names);
+                if (!string.IsNullOrWhiteSpace(nested))
+                    return nested;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                var nested = FindStringPropertyRecursive(item, names);
+                if (!string.IsNullOrWhiteSpace(nested))
+                    return nested;
+            }
+        }
+
+        return "";
+    }
+
+    private static double? FindNullableDoublePropertyRecursive(JsonElement element, params string[] names)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (names.Any(name => string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (property.Value.ValueKind == JsonValueKind.Number &&
+                        property.Value.TryGetDouble(out double number))
+                    {
+                        return number;
+                    }
+
+                    if (property.Value.ValueKind == JsonValueKind.String &&
+                        double.TryParse(
+                            property.Value.GetString(),
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out double parsed))
+                    {
+                        return parsed;
+                    }
+                }
+
+                var nested = FindNullableDoublePropertyRecursive(property.Value, names);
+                if (nested.HasValue)
+                    return nested;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                var nested = FindNullableDoublePropertyRecursive(item, names);
+                if (nested.HasValue)
+                    return nested;
+            }
+        }
+
+        return null;
     }
 
     private static bool TryGetPropertyAnyCase(JsonElement element, out JsonElement value, params string[] names)
@@ -1141,6 +1579,8 @@ public class ProxyService : IDisposable
     private void ObserveSquadSessionDocument(string url, string body, string source)
     {
         RejoinSquadState? nextState = null;
+        int connectedCount = 0;
+        bool observedMemberConnectionState = false;
 
         try
         {
@@ -1166,6 +1606,15 @@ public class ProxyService : IDisposable
                 members.ValueKind == JsonValueKind.Object)
             {
                 memberCount = members.EnumerateObject().Count();
+            }
+
+            if (root.TryGetProperty("members", out var connectionMembers) &&
+                connectionMembers.ValueKind == JsonValueKind.Object)
+            {
+                observedMemberConnectionState = true;
+                connectedCount = connectionMembers.EnumerateObject()
+                    .Count(member => !string.IsNullOrWhiteSpace(
+                        FindStringPropertyRecursive(member.Value, "connection")));
             }
 
             if (memberCount <= 0)
@@ -1197,6 +1646,9 @@ public class ProxyService : IDisposable
             || _lastSquadState.ActiveCount != nextState.ActiveCount;
 
         _lastSquadState = nextState;
+
+        if (observedMemberConnectionState && connectedCount == 0)
+            ClearMatchmakingPlayerPings($"observed unconnected squad via {source}");
 
         try
         {

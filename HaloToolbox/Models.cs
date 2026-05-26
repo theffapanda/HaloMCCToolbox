@@ -225,6 +225,41 @@ public class NetworkRegionLatency
         : Region.ToUpperInvariant();
 }
 
+public class MatchmakingPlayerPing
+{
+    [JsonPropertyName("xuid")]
+    public string Xuid { get; set; } = "";
+
+    [JsonPropertyName("gamertag")]
+    public string Gamertag { get; set; } = "";
+
+    [JsonPropertyName("region")]
+    public string Region { get; set; } = "";
+
+    [JsonPropertyName("team")]
+    public string Team { get; set; } = "";
+
+    [JsonPropertyName("squadId")]
+    public string SquadId { get; set; } = "";
+
+    [JsonPropertyName("latencyMs")]
+    public int LatencyMs { get; set; }
+
+    [JsonPropertyName("averageGroupSkillPercentile")]
+    public double? AverageGroupSkillPercentile { get; set; }
+
+    [JsonPropertyName("observedAt")]
+    public DateTime ObservedAt { get; set; } = DateTime.UtcNow;
+
+    [JsonIgnore]
+    public string DisplayRegion => string.IsNullOrWhiteSpace(Region)
+        ? "—"
+        : Region.ToUpperInvariant();
+
+    [JsonIgnore]
+    public string DisplayPing => LatencyMs > 0 ? LatencyMs.ToString() : "—";
+}
+
 public class TheaterClip : INotifyPropertyChanged
 {
     private bool    _isSelected;

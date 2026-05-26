@@ -5,7 +5,7 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Icon="Resources/halo_toolbox_whiteicon.ico"
         Title="Halo MCC Toolbox — The FFA Panda"
-        Height="860" Width="960"
+        Height="1024" Width="1012"
         MinHeight="700" MinWidth="800"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -186,6 +186,38 @@
                                 BorderThickness="0"
                                 Cursor="Hand"
                                 Click="MinBtn_Click">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#1AFFFFFF"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                    <Setter Property="Cursor" Value="Hand"/>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button x:Name="MaxBtn"
+                                Content="□"
+                                Width="36" Height="28"
+                                FontSize="13"
+                                Foreground="{DynamicResource MutedBrush}"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Cursor="Hand"
+                                ToolTip="Maximize"
+                                Click="MaxBtn_Click">
                             <Button.Style>
                                 <Style TargetType="Button">
                                     <Setter Property="Background" Value="Transparent"/>
@@ -652,11 +684,7 @@
                                     Style="{StaticResource RedButton}"
                                     Click="BtnDisable343_Click"
                                     Padding="12,8"
-                                    FontSize="11"
-                                    Margin="0,0,8,0"/>
-                            <Button Content="💾  APPLY"
-                                    Style="{StaticResource OrangeButton}"
-                                    Click="BtnApplyMaps_Click"/>
+                                    FontSize="11"/>
                         </StackPanel>
 
                         <!-- Map list — fills all remaining vertical space -->
@@ -1540,96 +1568,257 @@
                             </Grid>
                         </Border>
 
-                        <!-- ── Row 4: Lobby ListView ──────────────────────────────────── -->
-                        <ListView x:Name="StatsLobbyList"
-                                  Grid.Row="4"
-                                  SelectionMode="Single"
-                                  MouseDoubleClick="StatsLobbyList_MouseDoubleClick">
-                            <ListView.View>
-                                <GridView>
-                                    <GridViewColumn Header="PLAYER" Width="200">
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock FontFamily="Consolas" Padding="6,5">
-                                                    <Hyperlink NavigateUri="{Binding WortUrl}"
-                                                               Foreground="{Binding GamertagColor}"
-                                                               TextDecorations="None"
-                                                               RequestNavigate="StatsHyperlink_RequestNavigate">
-                                                        <Run Text="{Binding Gamertag, Mode=OneWay}"/>
-                                                    </Hyperlink>
-                                                </TextBlock>
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
+                        <!-- ── Row 4: Current lobby + last game ────────────────────────── -->
+                        <Grid Grid.Row="4">
+                            <Grid.RowDefinitions>
+                                <RowDefinition x:Name="StatsCurrentLobbyHeaderRow" Height="Auto"/>
+                                <RowDefinition x:Name="StatsCurrentLobbyListRow" Height="260" MinHeight="170"/>
+                                <RowDefinition x:Name="StatsCurrentLobbySplitterRow" Height="5"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*" MinHeight="170"/>
+                            </Grid.RowDefinitions>
 
-                                    <GridViewColumn Header="K/D" Width="70">
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding KD}"
-                                                           Foreground="{Binding KdColor}"
-                                                           FontFamily="Consolas" FontWeight="SemiBold"
-                                                           Padding="6,5" HorizontalAlignment="Center"/>
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
+                            <Border x:Name="StatsCurrentLobbyHeader"
+                                    Grid.Row="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="0,0,0,1" Padding="14,5">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="CURRENT LOBBY"
+                                               FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentBrush}"/>
+                                    <TextBlock x:Name="StatsCurrentLobbyServerLabel"
+                                               Text=""
+                                               FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               Margin="12,0,0,0"/>
+                                </StackPanel>
+                            </Border>
 
-                                    <GridViewColumn Header="KILLS / DEATHS" Width="145">
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding Totals}"
-                                                           Foreground="{DynamicResource MutedBrush}"
-                                                           FontFamily="Consolas"
-                                                           Padding="6,5"/>
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
+                            <ListView x:Name="StatsCurrentLobbyList"
+                                      Grid.Row="1"
+                                      SelectionMode="Single"
+                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                      MouseDoubleClick="StatsLobbyList_MouseDoubleClick">
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Header="PLAYER" Width="220">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontFamily="Consolas" Padding="6,5">
+                                                        <Hyperlink NavigateUri="{Binding WortUrl}"
+                                                                   Foreground="{Binding GamertagColor}"
+                                                                   TextDecorations="None"
+                                                                   RequestNavigate="StatsHyperlink_RequestNavigate">
+                                                            <Run Text="{Binding Gamertag, Mode=OneWay}"/>
+                                                        </Hyperlink>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
 
-                                    <GridViewColumn Header="GAMES" Width="80">
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding GamesPlayed}"
-                                                           Foreground="{DynamicResource MutedBrush}"
-                                                           FontFamily="Consolas"
-                                                           Padding="6,5" HorizontalAlignment="Right"/>
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
+                                        <GridViewColumn Header="SQUAD" Width="70">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding SquadLabel}"
+                                                               ToolTip="{Binding SquadToolTip}"
+                                                               Foreground="{DynamicResource AccentBrush}"
+                                                               FontFamily="Consolas"
+                                                               FontWeight="SemiBold"
+                                                               Padding="6,5"
+                                                               HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
 
-                                    <GridViewColumn Header="TEAM" Width="60">
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding TeamLabel}"
-                                                           Foreground="{DynamicResource MutedBrush}"
-                                                           FontFamily="Consolas"
-                                                           Padding="6,5" HorizontalAlignment="Center"/>
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
+                                        <GridViewColumn Header="TEAM" Width="70">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding TeamLabel}"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas"
+                                                               Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
 
-                                    <GridViewColumn Header="RECENT (100G)" Width="145">
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <Border Padding="6,3">
-                                                    <StackPanel VerticalAlignment="Center">
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Text="{Binding RecentKD}"
-                                                                       Foreground="{Binding RecentKdColor}"
-                                                                       FontFamily="Consolas"
-                                                                       FontSize="12" FontWeight="SemiBold"/>
-                                                            <TextBlock Text="{Binding RecentTrend}"
-                                                                       Foreground="{Binding TrendColor}"
-                                                                       FontFamily="Consolas"
-                                                                       FontSize="11" Margin="4,0,0,1"
-                                                                       VerticalAlignment="Bottom"/>
+                                        <GridViewColumn Header="BEST SERVER" Width="140">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding BestServer}"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas"
+                                                               Padding="6,5"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="K/D" Width="70">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding KD}"
+                                                               Foreground="{Binding KdColor}"
+                                                               FontFamily="Consolas" FontWeight="SemiBold"
+                                                               Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="MMR %" Width="72">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding SkillPercentile}"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas" FontWeight="SemiBold"
+                                                               Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+
+                            <GridSplitter x:Name="StatsCurrentLobbySplitter"
+                                          Grid.Row="2"
+                                          Height="5"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          Background="{DynamicResource BorderBrush}"
+                                          ResizeDirection="Rows"
+                                          ResizeBehavior="PreviousAndNext"/>
+
+                            <Border Grid.Row="3" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="0,1,0,1" Padding="14,5">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="LAST GAME"
+                                               FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentBrush}"/>
+                                    <TextBlock x:Name="StatsLastGameServerLabel"
+                                               Text=""
+                                               FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               Margin="12,0,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <ListView x:Name="StatsLobbyList"
+                                      Grid.Row="4"
+                                      SelectionMode="Single"
+                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                      MouseDoubleClick="StatsLobbyList_MouseDoubleClick">
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Header="PLAYER" Width="200">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontFamily="Consolas" Padding="6,5">
+                                                        <Hyperlink NavigateUri="{Binding WortUrl}"
+                                                                   Foreground="{Binding GamertagColor}"
+                                                                   TextDecorations="None"
+                                                                   RequestNavigate="StatsHyperlink_RequestNavigate">
+                                                            <Run Text="{Binding Gamertag, Mode=OneWay}"/>
+                                                        </Hyperlink>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="K/D" Width="70">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding KD}"
+                                                               Foreground="{Binding KdColor}"
+                                                               FontFamily="Consolas" FontWeight="SemiBold"
+                                                               Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="KILLS / DEATHS" Width="145">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Totals}"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas"
+                                                               Padding="6,5"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="GAMES" Width="80">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding GamesPlayed}"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas"
+                                                               Padding="6,5" HorizontalAlignment="Right"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="SQUAD" Width="65">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding SquadLabel}"
+                                                               ToolTip="{Binding SquadToolTip}"
+                                                               Foreground="{DynamicResource AccentBrush}"
+                                                               FontFamily="Consolas"
+                                                               FontWeight="SemiBold"
+                                                               Padding="6,5"
+                                                               HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="TEAM" Width="60">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding TeamLabel}"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas"
+                                                               Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="BEST SERVER" Width="115">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding BestServer}"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas"
+                                                               Padding="6,5"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="RECENT (100G)" Width="145">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Border Padding="6,3">
+                                                        <StackPanel VerticalAlignment="Center">
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <TextBlock Text="{Binding RecentKD}"
+                                                                           Foreground="{Binding RecentKdColor}"
+                                                                           FontFamily="Consolas"
+                                                                           FontSize="12" FontWeight="SemiBold"/>
+                                                                <TextBlock Text="{Binding RecentTrend}"
+                                                                           Foreground="{Binding TrendColor}"
+                                                                           FontFamily="Consolas"
+                                                                           FontSize="11" Margin="4,0,0,1"
+                                                                           VerticalAlignment="Bottom"/>
+                                                            </StackPanel>
                                                         </StackPanel>
-                                                    </StackPanel>
-                                                </Border>
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
-                                </GridView>
-                            </ListView.View>
-                        </ListView>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+                        </Grid>
 
                         <!-- ── Row 5: Status bar ──────────────────────────────────────── -->
                         <Border Grid.Row="5" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
@@ -1874,7 +2063,20 @@
                                             <Run Text="Icon By: "/><Run Foreground="{DynamicResource TextBrush}" Text="JumpyJsn"/>
                                         </TextBlock>
                                     </Grid>
-                                </StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="16"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="•" FontFamily="Consolas" FontSize="11"
+                                                   Foreground="{DynamicResource MutedBrush}" LineHeight="18"/>
+                                            <TextBlock Grid.Column="1" FontFamily="Consolas" FontSize="11"
+                                                   Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
+                                                   LineHeight="18">
+                                            <Run Text="Testing By: "/><Run Foreground="{DynamicResource TextBrush}" Text="unit220"/>
+                                            </TextBlock>
+                                        </Grid>
+                                    </StackPanel>
                             </StackPanel>
                         </Border>
                     </Grid>
@@ -1910,6 +2112,11 @@
                                     Orientation="Horizontal"
                                     HorizontalAlignment="Right"
                                     Margin="0,10,0,0">
+                            <Button x:Name="BtnFirewallCheck"
+                                    Content="FIREWALL CHECK"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Margin="0,0,10,0"
+                                    Click="BtnFirewallCheck_Click"/>
                             <Button x:Name="BtnExportLogs"
                                     Content="EXPORT LOGS"
                                     Style="{StaticResource OrangeButton}"

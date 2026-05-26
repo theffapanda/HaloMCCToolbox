@@ -3,13 +3,16 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace HaloToolbox;
 
 public static class GameServerRegionResolver
 {
-    private const string AzurePublicServiceTagsUrl =
-        "https://download.microsoft.com/download/7/1/d/71d86715-5596-4529-9b13-da13a5de5b63/ServiceTags_Public_20260427.json";
+    private const string AzurePublicServiceTagsPageUrl =
+        "https://www.microsoft.com/en-us/download/details.aspx?id=56519";
+    private const string AzurePublicServiceTagsFallbackUrl =
+        "https://download.microsoft.com/download/7/1/d/71d86715-5596-4529-9b13-da13a5de5b63/ServiceTags_Public_20260511.json";
     private static readonly TimeSpan AzureServiceTagsMaxAge = TimeSpan.FromDays(8);
     private static readonly string AzureServiceTagsCacheFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -163,7 +166,7 @@ public static class GameServerRegionResolver
             }
             else
             {
-                json = await Http.GetStringAsync(AzurePublicServiceTagsUrl);
+                json = await DownloadAzureServiceTagsJsonAsync();
                 Directory.CreateDirectory(Path.GetDirectoryName(AzureServiceTagsCacheFile)!);
                 await File.WriteAllTextAsync(AzureServiceTagsCacheFile, json);
             }
@@ -174,9 +177,12 @@ public static class GameServerRegionResolver
                 AzureRegionRanges = ranges;
                 AzureRangesLoaded = true;
             }
+
+            RejoinFixDiagnostics.Info("network", $"Loaded {ranges.Count} Azure service tag ranges for server region labels.");
         }
-        catch
+        catch (Exception ex)
         {
+            RejoinFixDiagnostics.Warn("network", $"Failed to load Azure service tags for server region labels: {ex.Message}");
             if (await TryLoadCachedAzureRangesAsync())
                 return;
 
@@ -185,6 +191,45 @@ public static class GameServerRegionResolver
                 AzureRangesLoaded = true;
             }
         }
+    }
+
+    private static async Task<string> DownloadAzureServiceTagsJsonAsync()
+    {
+        var urls = new List<string>();
+
+        try
+        {
+            var pageHtml = await Http.GetStringAsync(AzurePublicServiceTagsPageUrl);
+            urls.AddRange(Regex.Matches(
+                    pageHtml,
+                    @"https://download\.microsoft\.com/download/[^""'<>\s]+/ServiceTags_Public_\d{8}\.json",
+                    RegexOptions.IgnoreCase)
+                .Select(match => match.Value));
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("network", $"Failed to discover current Azure service tags URL: {ex.Message}");
+        }
+
+        urls.Add(AzurePublicServiceTagsFallbackUrl);
+
+        Exception? lastError = null;
+        foreach (var url in urls.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var json = await Http.GetStringAsync(url);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("values", out _))
+                    return json;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+        }
+
+        throw new InvalidOperationException("No Azure service tags JSON download succeeded.", lastError);
     }
 
     private static async Task<bool> TryLoadCachedAzureRangesAsync()
