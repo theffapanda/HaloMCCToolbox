@@ -39,7 +39,7 @@
   <Target Name="CreatePortableZip" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <ItemGroup>
       <PortableZipFiles Include="$(TargetDir)**\*"
-                        Exclude="$(TargetDir)HaloMCCToolbox-Portable.zip" />
+                        Exclude="$(TargetDir)HaloMCCToolbox-Portable.zip;$(TargetDir)stats_token.txt" />
     </ItemGroup>
 
     <Delete Files="$(TargetDir)HaloMCCToolbox-Portable.zip" ContinueOnError="true" />

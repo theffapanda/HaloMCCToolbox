@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.Win32;
@@ -13,6 +14,104 @@ namespace HaloToolbox
 
         public static bool IsDarkTheme => _isDark;
         public static string DefaultMccPath => DefaultMccInstallationPath;
+        public readonly record struct WindowPlacement(double Left, double Top, double Width, double Height, bool IsMaximized);
+
+        public static bool LoadGameNetworkStatsOverlayEnabled()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return (key?.GetValue("GameNetworkStatsOverlay") as string) != "Disabled";
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        public static void SaveGameNetworkStatsOverlayEnabled(bool enabled)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("GameNetworkStatsOverlay", enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        public static void SavePendingRejoinFixAutoStart(bool pending)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("PendingRejoinFixAutoStart", pending ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        public static bool ConsumePendingRejoinFixAutoStart()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                bool pending = (key.GetValue("PendingRejoinFixAutoStart") as string) == "Enabled";
+                key.SetValue("PendingRejoinFixAutoStart", "Disabled");
+                return pending;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static WindowPlacement? LoadMainWindowPlacement()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                if (key is null)
+                    return null;
+
+                double? left = ReadDoubleRegistryValue(key, "MainWindowLeft");
+                double? top = ReadDoubleRegistryValue(key, "MainWindowTop");
+                double? width = ReadDoubleRegistryValue(key, "MainWindowWidth");
+                double? height = ReadDoubleRegistryValue(key, "MainWindowHeight");
+                if (left is null || top is null || width is null || height is null)
+                    return null;
+
+                bool isMaximized = (key.GetValue("MainWindowState") as string) == "Maximized";
+                return new WindowPlacement(left.Value, top.Value, width.Value, height.Value, isMaximized);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static void SaveMainWindowPlacement(WindowPlacement placement)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("MainWindowLeft", placement.Left.ToString(CultureInfo.InvariantCulture), RegistryValueKind.String);
+                key.SetValue("MainWindowTop", placement.Top.ToString(CultureInfo.InvariantCulture), RegistryValueKind.String);
+                key.SetValue("MainWindowWidth", placement.Width.ToString(CultureInfo.InvariantCulture), RegistryValueKind.String);
+                key.SetValue("MainWindowHeight", placement.Height.ToString(CultureInfo.InvariantCulture), RegistryValueKind.String);
+                key.SetValue("MainWindowState", placement.IsMaximized ? "Maximized" : "Normal", RegistryValueKind.String);
+            }
+            catch { }
+        }
+
+        private static double? ReadDoubleRegistryValue(RegistryKey key, string name)
+        {
+            return double.TryParse(
+                key.GetValue(name) as string,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double value)
+                    ? value
+                    : null;
+        }
 
         protected override void OnStartup(StartupEventArgs e)
         {

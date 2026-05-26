@@ -104,6 +104,11 @@ namespace HaloToolbox
         private bool _statsAutoPullLobby = false;
         private string _statsSpartanToken = "";
         private bool _statsHwTokenExpired = false;
+        private bool _statsCurrentLobbyScanRunning = false;
+        private string _statsCurrentLobbyServerText = "";
+        private string _statsLastGameServerText = "";
+        private List<StatsPlayerRow> _statsCurrentLobbySnapshotRows = new();
+        private List<StatsPlayerRow> _statsLastCompletedLobbyRows = new();
 
         // ── Stats Tab — lookup caches ────────────────────────────────────────
         private readonly Dictionary<string, string> _statsKd =
@@ -114,11 +119,14 @@ namespace HaloToolbox
             new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _statsRecentKd =
             new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, MatchmakingPlayerPing> _statsMatchmakingPings =
+            new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, StatsCachedPlayer> _statsPersistentCache =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly Queue<string> _statsCacheOrder = new();
 
         // ── Stats Tab — UI collection ────────────────────────────────────────
+        private readonly ObservableCollection<StatsPlayerRow> _statsCurrentLobbyRows = new();
         private readonly ObservableCollection<StatsPlayerRow> _statsLobbyRows = new();
         private readonly List<string> _sessionLogLines = new();
         private readonly ProxyService _rejoinProxy = new();
@@ -144,10 +152,14 @@ namespace HaloToolbox
         private bool _steamFirewallRulesPrepared;
         private bool _rejoinCampaignFirewallApplying;
         private bool _rejoinCampaignFirewallEnabled;
+        private static readonly SemaphoreSlim SteamFirewallCommandLock = new(1, 1);
         private DateTime _steamFirewallAutoResumeAfterUtc = DateTime.MinValue;
         private const int SteamFirewallAutoSearchHoldSeconds = 180;
         private const int SteamFirewallAutoMatchFoundHoldSeconds = 5;
         private static readonly bool SteamFirewallFeatureEnabled = false;
+        private const string RejoinFirewallCampaignLabel = "Firewall Fix (Campaign)";
+        private const string RejoinFirewallMatchmakingLabel = "Firewall Fix (Matchmaking)";
+        private const string RejoinFirewallDisabledSuffix = " (Disabled until Rejoin Fix is Enabled)";
 
         private const long MaxDiagnosticExportBytes = 25L * 1024 * 1024;
         private const string ToolboxRegistryPath = @"Software\HaloMCCToolbox";
@@ -201,6 +213,13 @@ namespace HaloToolbox
             Disabled,
             Enabled,
             Partial
+        }
+
+        private enum MapToggleResult
+        {
+            Unchanged,
+            Changed,
+            Failed
         }
 
         private static readonly string[] DiagnosticExtensions =
@@ -268,6 +287,9 @@ namespace HaloToolbox
         public MainWindow()
         {
             InitializeComponent();
+            RestoreMainWindowPlacement();
+            _networkStatsOverlayEnabled = App.LoadGameNetworkStatsOverlayEnabled();
+            ChkNetworkStatsOverlay.IsChecked = _networkStatsOverlayEnabled;
             TxtMccPath.Text = App.LoadMccInstallationPath();
             PlaylistsTab.SetMccInstallationPath(TxtMccPath.Text);
             TxtMccPath.TextChanged += TxtMccPath_TextChanged;
@@ -321,6 +343,24 @@ namespace HaloToolbox
                 });
             _rejoinProxy.OnGameServerChanged += (_, serverInfo) =>
                 Dispatcher.InvokeAsync(() => HandleTrustedGameServerChanged(serverInfo));
+            _rejoinProxy.OnMatchmakingPlayerPingsObserved += (_, pings) =>
+            {
+                lock (_statsLock)
+                {
+                    _statsMatchmakingPings.Clear();
+                    foreach (var ping in pings)
+                    {
+                        string normalizedXuid = StatsNormalizeXuid(ping.Xuid);
+                        if (!string.IsNullOrWhiteSpace(normalizedXuid))
+                            _statsMatchmakingPings[normalizedXuid] = ping;
+                    }
+                }
+
+                StatsRebuildCurrentLobbyRows();
+                StatsRebuildLobbyRows();
+                if (_rejoinProxy.IsRunning && pings.Count > 0)
+                    _ = StatsFetchCurrentLobbyStats();
+            };
             _rejoinProxy.OnRequestCaptured += (_, entry) =>
                 Dispatcher.InvokeAsync(() => HandleSteamFirewallAutoSignal(entry));
             _networkStatsMonitor.StatsUpdated += (_, snapshot) =>
@@ -338,6 +378,8 @@ namespace HaloToolbox
                 _networkStatsMonitor.Dispose();
                 _rejoinProxy.Dispose();
             };
+            Closing += (_, _) => SaveMainWindowPlacement();
+            StateChanged += (_, _) => UpdateMaximizeButton();
             UpdateRejoinFixUi();
             _rejoinCrashWatchTimer = new System.Windows.Threading.DispatcherTimer
             {
@@ -354,7 +396,7 @@ namespace HaloToolbox
             _steamFirewallAutoTimer.Tick += async (_, _) => await SteamFirewallAutoTimer_TickAsync();
             InitializeSteamFirewallFeatureState();
             _mainWindowInitialized = true;
-            Dispatcher.InvokeAsync(() => ChkNetworkStatsOverlay.IsChecked = _networkStatsOverlayEnabled);
+            Dispatcher.InvokeAsync(StartPendingRejoinFixAfterElevationAsync);
 
         }
 
@@ -363,12 +405,36 @@ namespace HaloToolbox
         // ------------------------------------------
         private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.LeftButton == MouseButtonState.Pressed)
+            if (e.ChangedButton != MouseButton.Left)
+                return;
+
+            if (e.ClickCount == 2)
+            {
+                ToggleMaximizeRestore();
+                return;
+            }
+
+            if (e.LeftButton != MouseButtonState.Pressed)
+                return;
+
+            if (WindowState == WindowState.Maximized)
+                RestoreForTitleBarDrag(e);
+
+            try
+            {
                 DragMove();
+            }
+            catch (InvalidOperationException)
+            {
+                // Windows can cancel mouse capture while restoring from maximized.
+            }
         }
 
         private void MinBtn_Click(object sender, RoutedEventArgs e) =>
             WindowState = WindowState.Minimized;
+
+        private void MaxBtn_Click(object sender, RoutedEventArgs e) =>
+            ToggleMaximizeRestore();
 
         private void CloseBtn_Click(object sender, RoutedEventArgs e) =>
             Close();
@@ -377,6 +443,101 @@ namespace HaloToolbox
         {
             App.ToggleTheme();
             ThemeToggleBtn.Content = App.IsDarkTheme ? "☾" : "☀";
+        }
+
+        private void ToggleMaximizeRestore()
+        {
+            WindowState = WindowState == WindowState.Maximized
+                ? WindowState.Normal
+                : WindowState.Maximized;
+        }
+
+        private void UpdateMaximizeButton()
+        {
+            if (MaxBtn is null)
+                return;
+
+            bool isMaximized = WindowState == WindowState.Maximized;
+            MaxBtn.Content = isMaximized ? "❐" : "□";
+            MaxBtn.ToolTip = isMaximized ? "Restore" : "Maximize";
+        }
+
+        private void RestoreMainWindowPlacement()
+        {
+            var placement = App.LoadMainWindowPlacement();
+            if (placement is null)
+                return;
+
+            double width = Math.Clamp(placement.Value.Width, MinWidth, SystemParameters.VirtualScreenWidth);
+            double height = Math.Clamp(placement.Value.Height, MinHeight, SystemParameters.VirtualScreenHeight);
+            double left = ClampWindowCoordinate(
+                placement.Value.Left,
+                SystemParameters.VirtualScreenLeft,
+                SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth,
+                width);
+            double top = ClampWindowCoordinate(
+                placement.Value.Top,
+                SystemParameters.VirtualScreenTop,
+                SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight,
+                height);
+
+            Width = width;
+            Height = height;
+            Left = left;
+            Top = top;
+
+            if (placement.Value.IsMaximized)
+                WindowState = WindowState.Maximized;
+        }
+
+        private void SaveMainWindowPlacement()
+        {
+            Rect bounds = WindowState == WindowState.Maximized || WindowState == WindowState.Minimized
+                ? RestoreBounds
+                : new Rect(Left, Top, ActualWidth > 0 ? ActualWidth : Width, ActualHeight > 0 ? ActualHeight : Height);
+
+            if (double.IsNaN(bounds.Left) || double.IsNaN(bounds.Top) ||
+                double.IsNaN(bounds.Width) || double.IsNaN(bounds.Height) ||
+                bounds.Width < MinWidth || bounds.Height < MinHeight)
+            {
+                return;
+            }
+
+            App.SaveMainWindowPlacement(new App.WindowPlacement(
+                bounds.Left,
+                bounds.Top,
+                bounds.Width,
+                bounds.Height,
+                WindowState == WindowState.Maximized));
+        }
+
+        private static double ClampWindowCoordinate(double value, double min, double max, double size)
+        {
+            const double visibleEdge = 80;
+            double lower = min - size + visibleEdge;
+            double upper = max - visibleEdge;
+            if (lower > upper)
+                return min;
+
+            return Math.Clamp(value, lower, upper);
+        }
+
+        private void RestoreForTitleBarDrag(MouseButtonEventArgs e)
+        {
+            Point mouseOnWindow = e.GetPosition(this);
+            Point mouseOnScreen = PointToScreen(mouseOnWindow);
+            var source = PresentationSource.FromVisual(this);
+            if (source?.CompositionTarget is not null)
+                mouseOnScreen = source.CompositionTarget.TransformFromDevice.Transform(mouseOnScreen);
+
+            Rect restoreBounds = RestoreBounds;
+            double horizontalRatio = ActualWidth > 0
+                ? Math.Clamp(mouseOnWindow.X / ActualWidth, 0.0, 1.0)
+                : 0.5;
+
+            WindowState = WindowState.Normal;
+            Left = mouseOnScreen.X - (restoreBounds.Width * horizontalRatio);
+            Top = Math.Max(0, mouseOnScreen.Y - mouseOnWindow.Y);
         }
 
         // ------------------------------------------
@@ -458,6 +619,7 @@ namespace HaloToolbox
                 _trustedDedicatedServer = null;
             }
 
+            UpdateStatsServerLabels(serverInfo);
             StartNetworkStatsOverlay(serverInfo?.IPv4Address ?? "", serverInfo);
         }
 
@@ -466,12 +628,34 @@ namespace HaloToolbox
             if (serverInfo is not null && !string.IsNullOrWhiteSpace(serverInfo.IPv4Address))
             {
                 _lastNetworkStatsRelayServer = serverInfo;
+                UpdateStatsServerLabels(serverInfo);
                 StartNetworkStatsOverlay(serverInfo.IPv4Address, serverInfo);
                 return;
             }
 
             _lastNetworkStatsRelayServer = null;
+            UpdateStatsServerLabels(_trustedDedicatedServer ?? _rejoinProxy.CurrentGameServerInfo);
             ClearNetworkStatsOverlayDisplay();
+        }
+
+        private void UpdateStatsServerLabels(GameServerInfo? serverInfo)
+        {
+            if (serverInfo is null)
+                return;
+
+            string region = GameServerRegionResolver.GetRegionLabel(serverInfo);
+            if (string.IsNullOrWhiteSpace(region))
+                region = serverInfo.Region;
+
+            if (string.IsNullOrWhiteSpace(region) ||
+                region.Equals("ACTIVE UDP", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string label = $"Server - {region}";
+            _statsCurrentLobbyServerText = label;
+            _statsLastGameServerText = label;
+            StatsCurrentLobbyServerLabel.Text = label;
+            StatsLastGameServerLabel.Text = label;
         }
 
         private void ClearNetworkStatsOverlayDisplay()
@@ -563,6 +747,7 @@ namespace HaloToolbox
             if (!_mainWindowInitialized)
                 return;
 
+            App.SaveGameNetworkStatsOverlayEnabled(true);
             StartNetworkStatsOverlay(GetNetworkStatsTargetIp(), GetNetworkStatsTargetServerInfo());
             AppendLog("[NET]", "Game network stats overlay enabled.", "#00C8FF");
         }
@@ -573,6 +758,7 @@ namespace HaloToolbox
             if (!_mainWindowInitialized)
                 return;
 
+            App.SaveGameNetworkStatsOverlayEnabled(false);
             _gameServerConnectionMonitor.Stop();
             _networkStatsMonitor.Stop();
             CloseGameNetworkStatsOverlay();
@@ -607,6 +793,156 @@ namespace HaloToolbox
             TxtLog.Inlines.Clear();
             _sessionLogLines.Clear();
             AppendLog("[INFO]", "Log cleared.", "#4A5A6A");
+        }
+
+        private async void BtnFirewallCheck_Click(object sender, RoutedEventArgs e)
+        {
+            BtnFirewallCheck.IsEnabled = false;
+            AppendLog("[FIREWALL]", "Running Firewall Check for all Toolbox firewall rules...", "#00C8FF");
+            SetStatus("Checking Toolbox firewall rules...", "#00C8FF");
+
+            try
+            {
+                string? expectedProgram = null;
+
+                foreach (var group in GetFirewallCheckRuleGroups())
+                {
+                    AppendLog("[FIREWALL]", group.Header, "#C8D8E8");
+                    foreach (string ruleName in group.RuleNames)
+                    {
+                        var result = await RunNetshAsync("advfirewall", "firewall", "show", "rule", $"name={ruleName}", "verbose");
+                        if (result.ExitCode != 0 || !NetshRuleExists(result.Output))
+                        {
+                            LogFirewallRuleMissing(ruleName);
+                            continue;
+                        }
+
+                        expectedProgram ??= ExtractNetshField(result.Output, "Program");
+                        LogFirewallRuleStatus(ruleName, result.Output, logProgram: false);
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(expectedProgram))
+                    AppendLog("[FIREWALL]", $"Program: {expectedProgram}", "#4A5A6A");
+
+                SetStatus("Firewall Check complete.", "#39FF14");
+                AppendLog("[FIREWALL]", "Firewall Check complete.", "#39FF14");
+            }
+            catch (Exception ex)
+            {
+                SetStatus("Firewall Check failed.", "#FF2D55");
+                AppendLog("[ERROR]", $"Firewall Check failed: {ex.Message}", "#FF2D55");
+            }
+            finally
+            {
+                BtnFirewallCheck.IsEnabled = true;
+            }
+        }
+
+        private static IEnumerable<(string Header, string[] RuleNames)> GetFirewallCheckRuleGroups()
+        {
+            yield return ("Campaign rules (port 3478)", GetPortRuleNames(SteamFirewallRulePrefix, 3478));
+            yield return ("Matchmaking rules (port 4379)", GetPortRuleNames(SteamFirewallRulePrefix, 4379));
+        }
+
+        private static string[] GetPortRuleNames(string prefix, int port) => new[]
+        {
+            $"{prefix} {port} TCP Inbound",
+            $"{prefix} {port} UDP Inbound",
+            $"{prefix} {port} TCP Outbound",
+            $"{prefix} {port} UDP Outbound"
+        };
+
+        private static bool NetshRuleExists(string output)
+        {
+            return output.Contains("Rule Name:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void LogFirewallRuleMissing(string ruleName)
+        {
+            AppendLog("[FIREWALL]", $"{GetFirewallRuleShortName(ruleName).PadRight(17)}  MISSING", "#4A5A6A");
+        }
+
+        private void LogFirewallRuleStatus(string ruleName, string netshOutput, bool logProgram = true)
+        {
+            string enabled = ExtractNetshField(netshOutput, "Enabled") ?? "Unknown";
+            string action = ExtractNetshField(netshOutput, "Action") ?? "Unknown";
+            string direction = ExtractNetshField(netshOutput, "Direction") ?? "Unknown";
+            string protocol = ExtractNetshField(netshOutput, "Protocol") ?? "Unknown";
+            string localPort = ExtractNetshField(netshOutput, "LocalPort") ?? "Any";
+            string remotePort = ExtractNetshField(netshOutput, "RemotePort") ?? "Any";
+            string program = ExtractNetshField(netshOutput, "Program") ?? "Any";
+
+            string color = enabled.Equals("Yes", StringComparison.OrdinalIgnoreCase) &&
+                           action.Equals("Block", StringComparison.OrdinalIgnoreCase)
+                ? "#39FF14"
+                : "#FF6A00";
+
+            string shortName = GetFirewallRuleShortName(ruleName);
+            string port = localPort.Equals("Any", StringComparison.OrdinalIgnoreCase) ? remotePort : localPort;
+            string enabledText = enabled.Equals("Yes", StringComparison.OrdinalIgnoreCase) ? "ENABLED " : "DISABLED";
+            string actionText = action.ToUpperInvariant().PadRight(5);
+
+            AppendLog("[FIREWALL]", $"{shortName.PadRight(17)}  Port {port.PadRight(5)}  {enabledText}  {actionText}", color);
+            if (logProgram)
+                AppendLog("[FIREWALL]", $"Program: {program}", "#4A5A6A");
+        }
+
+        private static string GetFirewallRuleShortName(string ruleName)
+        {
+            string shortName = ruleName
+                .Replace(SteamFirewallRulePrefix, "MCC", StringComparison.OrdinalIgnoreCase)
+                .Replace(GlobalSteamFirewallRulePrefix, "GLOBAL", StringComparison.OrdinalIgnoreCase)
+                .Replace(LegacyPort4379FirewallRulePrefix, "LEGACY 4379", StringComparison.OrdinalIgnoreCase)
+                .Replace("Inbound", "IN", StringComparison.OrdinalIgnoreCase)
+                .Replace("Outbound", "OUT", StringComparison.OrdinalIgnoreCase);
+
+            return string.Join(' ', shortName
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                .ToUpperInvariant();
+        }
+
+        private static string? ExtractNetshField(string output, string label)
+        {
+            foreach (string line in output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
+            {
+                int colon = line.IndexOf(':');
+                if (colon < 0)
+                    continue;
+
+                string key = line[..colon].Trim();
+                if (!key.Equals(label, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                return line[(colon + 1)..].Trim();
+            }
+
+            return null;
+        }
+
+        private static async Task<(int ExitCode, string Output)> RunNetshAsync(params string[] arguments)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "netsh.exe",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            foreach (string argument in arguments)
+                startInfo.ArgumentList.Add(argument);
+
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to start netsh.");
+
+            string output = await process.StandardOutput.ReadToEndAsync();
+            string error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            string text = string.IsNullOrWhiteSpace(error) ? output : $"{output}\n{error}";
+            return (process.ExitCode, text.Trim());
         }
 
         private void BtnExportLogs_Click(object sender, RoutedEventArgs e)
@@ -834,11 +1170,15 @@ namespace HaloToolbox
                 AppendLog("[CLEAN]", "Stopped Rejoin Fix proxy and restored proxy settings.", "#C8D8E8");
             }
 
-            ClearToolboxWinInetProxyIfPresent();
-            AppendLog("[CLEAN]", "Cleared Toolbox WinINet proxy setting if it was still active.", "#C8D8E8");
+            if (ClearToolboxWinInetProxyIfPresent())
+                AppendLog("[CLEAN]", $"Cleared WinINet proxy setting: {RejoinFixProxyAddress}", "#C8D8E8");
 
-            await RemoveElevatedToolboxTracesAsync();
-            AppendLog("[CLEAN]", "Removed Toolbox firewall rules, WinHTTP proxy, and trusted proxy certificate.", "#C8D8E8");
+            var elevatedRemovals = await RemoveElevatedToolboxTracesAsync();
+            foreach (var removal in elevatedRemovals)
+                AppendLog("[CLEAN]", removal, "#C8D8E8");
+
+            if (elevatedRemovals.Count == 0)
+                AppendLog("[CLEAN]", "No elevated firewall, WinHTTP proxy, or certificate traces were found.", "#4A5A6A");
 
             DeleteRegistrySubKeyTree(Registry.CurrentUser, ToolboxRegistryPath, "HKCU\\" + ToolboxRegistryPath);
 
@@ -857,7 +1197,7 @@ namespace HaloToolbox
             DeleteDirectoryIfSafe(ToolboxLocalAppDataRoot);
         }
 
-        private static Task RemoveElevatedToolboxTracesAsync()
+        private static async Task<IReadOnlyList<string>> RemoveElevatedToolboxTracesAsync()
         {
             string allRuleNames = string.Join(", ", SteamFirewallRuleNames
                 .Concat(LegacySteamFirewallRuleNames)
@@ -865,6 +1205,8 @@ namespace HaloToolbox
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Select(QuotePowerShellString));
             string certPath = Path.Combine(ToolboxLocalAppDataRoot, "RejoinFix", "proxy-root.pfx");
+            Directory.CreateDirectory(ToolboxLocalAppDataRoot);
+            string resultPath = Path.Combine(ToolboxLocalAppDataRoot, $"trace-cleanup-{Guid.NewGuid():N}.txt");
 
             string script = $@"
 $ErrorActionPreference = 'Continue'
@@ -872,9 +1214,14 @@ $ProgressPreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
 $WarningPreference = 'SilentlyContinue'
 $VerbosePreference = 'SilentlyContinue'
+$removed = New-Object System.Collections.Generic.List[string]
 $ruleNames = @({allRuleNames})
 foreach ($name in $ruleNames) {{
-    Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    $rules = @(Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue)
+    foreach ($rule in $rules) {{
+        $removed.Add(""Removed firewall rule: $($rule.DisplayName)"")
+        $rule | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    }}
 }}
 
 $pfxPath = {QuotePowerShellString(certPath)}
@@ -882,20 +1229,47 @@ if (Test-Path -LiteralPath $pfxPath) {{
     try {{
         $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
         $cert.Import($pfxPath, {QuotePowerShellString(RejoinFixProxyCertificatePassword)}, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet)
-        Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
-            Where-Object {{ $_.Thumbprint -eq $cert.Thumbprint }} |
-            Remove-Item -ErrorAction SilentlyContinue
+        $certs = @(Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
+            Where-Object {{ $_.Thumbprint -eq $cert.Thumbprint }})
+        foreach ($trustedCert in $certs) {{
+            $removed.Add(""Removed trusted certificate: $($trustedCert.Subject) [$($trustedCert.Thumbprint)]"")
+            $trustedCert | Remove-Item -ErrorAction SilentlyContinue
+        }}
     }} catch {{ }}
 }}
 
 $winHttp = (& netsh winhttp show proxy) -join ""`n""
 if ($winHttp -match '127\.0\.0\.1:19999') {{
     & netsh winhttp reset proxy | Out-Null
+    $removed.Add(""Reset WinHTTP proxy: {RejoinFixProxyAddress}"")
 }}
 
+$removed | Set-Content -LiteralPath {QuotePowerShellString(resultPath)} -Encoding UTF8
 exit 0";
 
-            return RunPowerShellAsync(script, elevated: !IsRunningAsAdministrator(), timeoutMs: 30000);
+            try
+            {
+                await RunPowerShellAsync(script, elevated: !IsRunningAsAdministrator(), timeoutMs: 30000);
+                if (!File.Exists(resultPath))
+                    return Array.Empty<string>();
+
+                return File.ReadAllLines(resultPath)
+                    .Select(line => line.Trim())
+                    .Where(line => !string.IsNullOrWhiteSpace(line))
+                    .ToArray();
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(resultPath))
+                        File.Delete(resultPath);
+                }
+                catch
+                {
+                    // The appdata cleanup immediately after this removes the parent directory if needed.
+                }
+            }
         }
 
         private void DisposeHiddenCookieChecker()
@@ -910,18 +1284,18 @@ exit 0";
             }
         }
 
-        private void ClearToolboxWinInetProxyIfPresent()
+        private bool ClearToolboxWinInetProxyIfPresent()
         {
             const string keyPath = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(keyPath, writable: true);
                 if (key is null)
-                    return;
+                    return false;
 
                 var proxyServer = key.GetValue("ProxyServer") as string;
                 if (!string.Equals(proxyServer, RejoinFixProxyAddress, StringComparison.OrdinalIgnoreCase))
-                    return;
+                    return false;
 
                 key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
                 key.DeleteValue("ProxyServer", throwOnMissingValue: false);
@@ -929,10 +1303,13 @@ exit 0";
                 var proxyOverride = key.GetValue("ProxyOverride") as string;
                 if (string.Equals(proxyOverride, "localhost;127.0.0.1;<local>", StringComparison.OrdinalIgnoreCase))
                     key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
+
+                return true;
             }
             catch (Exception ex)
             {
                 AppendLog("[WARN]", $"Could not clear Toolbox WinINet proxy setting: {ex.Message}", "#FF6A00");
+                return false;
             }
         }
 
@@ -1062,6 +1439,9 @@ exit 0";
 
         private static bool IsDiagnosticFile(string path)
         {
+            if (IsSensitiveDiagnosticFile(path))
+                return false;
+
             var ext = Path.GetExtension(path);
             if (DiagnosticExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
                 return true;
@@ -1069,6 +1449,11 @@ exit 0";
             var fileName = Path.GetFileName(path);
             return fileName.Contains(".log.", StringComparison.OrdinalIgnoreCase)
                 || fileName.Contains("crash", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsSensitiveDiagnosticFile(string path)
+        {
+            return Path.GetFileName(path).Equals(StatsTokenFile, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsMccCrashReportFile(string path)
@@ -1587,7 +1972,65 @@ echo All tasks complete.
                 TxtRejoinFixMode.Visibility = Visibility.Collapsed;
             }
 
+            UpdateRejoinFirewallOptionAvailability(isRunning);
             UpdateRejoinFirewallStatus();
+            StatsUpdateCurrentLobbyVisibility(isRunning);
+        }
+
+        private void StatsUpdateCurrentLobbyVisibility(bool isRejoinFixRunning)
+        {
+            if (isRejoinFixRunning)
+            {
+                StatsCurrentLobbyHeader.Visibility = Visibility.Visible;
+                StatsCurrentLobbyList.Visibility = Visibility.Visible;
+                StatsCurrentLobbySplitter.Visibility = Visibility.Visible;
+                StatsCurrentLobbyHeaderRow.Height = GridLength.Auto;
+                StatsCurrentLobbyListRow.Height = new GridLength(260);
+                StatsCurrentLobbyListRow.MinHeight = 170;
+                StatsCurrentLobbySplitterRow.Height = new GridLength(5);
+                return;
+            }
+
+            StatsCurrentLobbyHeader.Visibility = Visibility.Collapsed;
+            StatsCurrentLobbyList.Visibility = Visibility.Collapsed;
+            StatsCurrentLobbySplitter.Visibility = Visibility.Collapsed;
+            StatsCurrentLobbyHeaderRow.Height = new GridLength(0);
+            StatsCurrentLobbyListRow.Height = new GridLength(0);
+            StatsCurrentLobbyListRow.MinHeight = 0;
+            StatsCurrentLobbySplitterRow.Height = new GridLength(0);
+        }
+
+        private void UpdateRejoinFirewallOptionAvailability(bool isRejoinFixRunning)
+        {
+            ChkRejoinFixFirewall.IsEnabled = isRejoinFixRunning;
+            ChkRejoinFixFirewallMatchmaking.IsEnabled = isRejoinFixRunning;
+            ChkRejoinFixFirewall.Content = isRejoinFixRunning
+                ? RejoinFirewallCampaignLabel
+                : RejoinFirewallCampaignLabel + RejoinFirewallDisabledSuffix;
+            ChkRejoinFixFirewallMatchmaking.Content = isRejoinFixRunning
+                ? RejoinFirewallMatchmakingLabel
+                : RejoinFirewallMatchmakingLabel + RejoinFirewallDisabledSuffix;
+
+            string? disabledReason = isRejoinFixRunning
+                ? null
+                : "Start Rejoin Fix before enabling firewall fixes.";
+            ChkRejoinFixFirewall.ToolTip = disabledReason;
+            ChkRejoinFixFirewallMatchmaking.ToolTip = disabledReason;
+
+            if (isRejoinFixRunning)
+                return;
+
+            bool hadSelectedFirewallMode = ChkRejoinFixFirewall.IsChecked == true
+                || ChkRejoinFixFirewallMatchmaking.IsChecked == true;
+
+            if (!hadSelectedFirewallMode)
+                return;
+
+            _rejoinCampaignFirewallApplying = false;
+            _rejoinCampaignFirewallEnabled = false;
+            DisableSteamFirewallAutoMode(logStatus: false);
+            SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+            SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
         }
 
         private void UpdateRejoinFirewallStatus(string? overrideText = null, string? overrideColor = null)
@@ -1642,6 +2085,20 @@ echo All tasks complete.
             }
             else
             {
+                if (_steamFirewallUiState == SteamFirewallState.Enabled)
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: ON - rules are enabled but no Rejoin firewall mode is selected";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#FF6A00");
+                    return;
+                }
+
+                if (_steamFirewallUiState == SteamFirewallState.Partial)
+                {
+                    TxtRejoinFirewallStatus.Text = "FIREWALL: PARTIAL - rules are mixed; restart Rejoin Fix to repair";
+                    TxtRejoinFirewallStatus.Foreground = Brush("#FF6A00");
+                    return;
+                }
+
                 TxtRejoinFirewallStatus.Text = _steamFirewallRulesPrepared
                     ? "FIREWALL: READY - rules installed, currently off"
                     : "FIREWALL: OFF - rules will be prepared when Rejoin Fix starts as admin";
@@ -1839,27 +2296,31 @@ echo All tasks complete.
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
+            if (!_rejoinProxy.IsRunning)
+            {
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                SetStatus("Start Rejoin Fix before enabling firewall fixes.", "#4A5A6A");
+                UpdateRejoinFixUi();
+                return;
+            }
+
             SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
             DisableSteamFirewallAutoMode(logStatus: false);
             _rejoinCampaignFirewallEnabled = false;
             UpdateRejoinFirewallStatus();
 
-            bool wasRunning = _rejoinProxy.IsRunning;
-            if (await EnsureRejoinFixEnabledFromFirewallOptionAsync() && wasRunning)
+            try
             {
-                try
-                {
-                    await ApplyRejoinFirewallOptionAsync();
-                }
-                catch (Exception ex)
-                {
-                    _rejoinCampaignFirewallApplying = false;
-                    _rejoinCampaignFirewallEnabled = false;
-                    AppendLog("[ERROR]", $"Could not enable Firewall Fix (Campaign): {ex.Message}", "#FF2D55");
-                    SetStatus("Firewall Fix (Campaign) failed.", "#FF2D55");
-                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
-                    UpdateRejoinFirewallStatus();
-                }
+                await ApplyRejoinFirewallOptionAsync();
+            }
+            catch (Exception ex)
+            {
+                _rejoinCampaignFirewallApplying = false;
+                _rejoinCampaignFirewallEnabled = false;
+                AppendLog("[ERROR]", $"Could not enable Firewall Fix (Campaign): {ex.Message}", "#FF2D55");
+                SetStatus("Firewall Fix (Campaign) failed.", "#FF2D55");
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                UpdateRejoinFirewallStatus();
             }
         }
 
@@ -1869,7 +2330,13 @@ echo All tasks complete.
                 return;
 
             _rejoinCampaignFirewallEnabled = false;
-            _ = DisableRejoinCampaignFirewallAsync(logStatus: true);
+            if (!_rejoinProxy.IsRunning)
+            {
+                UpdateRejoinFixUi();
+                return;
+            }
+
+            _ = DisableRejoinFirewallRulesAsync(logStatus: true);
         }
 
         private async void ChkRejoinFixFirewallMatchmaking_Checked(object sender, RoutedEventArgs e)
@@ -1877,16 +2344,20 @@ echo All tasks complete.
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
+            if (!_rejoinProxy.IsRunning)
+            {
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                SetStatus("Start Rejoin Fix before enabling firewall fixes.", "#4A5A6A");
+                UpdateRejoinFixUi();
+                return;
+            }
+
             SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
             _rejoinCampaignFirewallApplying = false;
             _rejoinCampaignFirewallEnabled = false;
             UpdateRejoinFirewallStatus();
 
-            bool wasRunning = _rejoinProxy.IsRunning;
-            if (await EnsureRejoinFixEnabledFromFirewallOptionAsync() && wasRunning)
-            {
-                await EnableSteamFirewallAutoModeAsync(ensureObserverRunning: true);
-            }
+            await EnableSteamFirewallAutoModeAsync(ensureObserverRunning: true);
         }
 
         private void ChkSteamFirewallAuto_Unchecked(object sender, RoutedEventArgs e)
@@ -1908,6 +2379,12 @@ echo All tasks complete.
         {
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
+
+            if (!_rejoinProxy.IsRunning)
+            {
+                UpdateRejoinFixUi();
+                return;
+            }
 
             DisableSteamFirewallAutoMode(logStatus: true);
         }
@@ -1953,48 +2430,50 @@ echo All tasks complete.
             SetStatus("Firewall Fix (Matchmaking) disabled.", "#C8D8E8");
         }
 
-        private async Task DisableRejoinCampaignFirewallAsync(bool logStatus)
+        private async Task DisableRejoinFirewallRulesAsync(bool logStatus)
         {
             try
             {
                 string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
-                await SetSteamFirewallEnabledAsync(false, mccExePath, RejoinCampaignFirewallPorts, SteamFirewallPorts);
+                await SetSteamFirewallEnabledAsync(false, mccExePath);
                 SaveSteamFirewallUiState(false);
                 SetSteamFirewallRuntimeState(SteamFirewallState.Disabled);
                 _rejoinCampaignFirewallApplying = false;
                 _rejoinCampaignFirewallEnabled = false;
                 UpdateRejoinFirewallStatus();
-                UpdateRejoinFirewallStatus();
 
                 if (logStatus)
                 {
-                    AppendLog("[FIREWALL]", "Firewall Fix (Campaign) disabled.", "#C8D8E8");
-                    SetStatus("Firewall Fix (Campaign) disabled.", "#C8D8E8");
+                    AppendLog("[FIREWALL]", "Rejoin firewall rules disabled.", "#C8D8E8");
+                    SetStatus("Firewall fixes disabled.", "#C8D8E8");
                 }
             }
             catch (Exception ex)
             {
                 _rejoinCampaignFirewallApplying = false;
-                AppendLog("[ERROR]", $"Could not disable Firewall Fix (Campaign): {ex.Message}", "#FF2D55");
-                SetStatus("Firewall Fix (Campaign) disable failed.", "#FF2D55");
+                AppendLog("[ERROR]", $"Could not disable Rejoin firewall rules: {ex.Message}", "#FF2D55");
+                SetStatus("Firewall fixes disable failed.", "#FF2D55");
             }
         }
 
         private async Task EnsureSteamFirewallRulesPreparedAsync()
         {
-            if (_steamFirewallRulesPrepared)
-                return;
-
             string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
-            UpdateRejoinFirewallStatus("FIREWALL: SETUP - preparing disabled rules for later toggles", "#FF6A00");
-            AppendLog("[FIREWALL]", "Preparing MCC P2P firewall rules for Campaign and Matchmaking toggles...", "#FF6A00");
+            UpdateRejoinFirewallStatus(
+                _steamFirewallRulesPrepared
+                    ? "FIREWALL: SETUP - confirming rules are disabled"
+                    : "FIREWALL: SETUP - preparing disabled rules for later toggles",
+                "#FF6A00");
+            AppendLog("[FIREWALL]", _steamFirewallRulesPrepared
+                ? "Confirming MCC P2P firewall rules are disabled before Rejoin Fix continues..."
+                : "Preparing MCC P2P firewall rules for Campaign and Matchmaking toggles...", "#FF6A00");
 
             await SetSteamFirewallEnabledAsync(false, mccExePath);
             SaveSteamFirewallUiState(false);
             SetSteamFirewallRuntimeState(SteamFirewallState.Disabled);
             _steamFirewallRulesPrepared = true;
 
-            AppendLog("[FIREWALL]", $"MCC P2P firewall rules are ready for {Path.GetFileName(mccExePath)}.", "#39FF14");
+            AppendLog("[FIREWALL]", $"MCC P2P firewall rules are ready and disabled for {Path.GetFileName(mccExePath)}.", "#39FF14");
             UpdateRejoinFirewallStatus();
         }
 
@@ -2017,77 +2496,6 @@ echo All tasks complete.
             {
                 _rejoinFirewallCheckChanging = false;
             }
-        }
-
-        private async Task<bool> EnsureRejoinFixEnabledFromFirewallOptionAsync()
-        {
-            if (_rejoinProxy.IsRunning)
-                return true;
-
-            if (!IsRunningAsAdministrator())
-            {
-                try
-                {
-                    MessageBox.Show(
-                        "Firewall fixes require Rejoin Fix to be running, and Rejoin Fix needs the Toolbox to run as Administrator.\n\nWhen Rejoin Fix starts as Administrator, Toolbox will also prepare the disabled firewall rules so the Campaign and Matchmaking toggles can work later without first-use setup.\n\nThe Toolbox will relaunch as Administrator now.",
-                        "Rejoin Fix -- Halo MCC Toolbox",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-
-                    RelaunchAsAdministrator();
-                    Close();
-                }
-                catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
-                {
-                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
-                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
-                    HandleAdministratorRelaunchCancelled();
-                }
-                catch (Exception ex)
-                {
-                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
-                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
-                    AppendLog("[ERROR]", $"Could not relaunch as Administrator: {ex.Message}", "#FF2D55");
-                    SetStatus("Rejoin Fix requires Administrator.", "#FF2D55");
-                }
-
-                return false;
-            }
-
-            var confirm = MessageBox.Show(
-                "Firewall fixes require Rejoin Fix to be running.\n\nRejoin Fix will enable the Toolbox proxy and change the system proxy while it is running. Toolbox will also prepare disabled MCC firewall rules now, even if no firewall mode is selected yet, so the toggles are ready later.\n\nRestart MCC after it starts.\n\nEnable Rejoin Fix now?",
-                "Rejoin Fix -- Halo MCC Toolbox",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-
-            if (confirm != MessageBoxResult.Yes)
-            {
-                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
-                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
-                AppendLog("[INFO]", "Rejoin Fix cancelled by user.", "#4A5A6A");
-                SetStatus("Rejoin Fix cancelled.", "#4A5A6A");
-                return false;
-            }
-
-            try
-            {
-                await StartRejoinFixAsync();
-            }
-            catch (Exception ex)
-            {
-                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
-                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
-                RejoinFixDiagnostics.Error("proxy", $"Activation failed: {ex.Message}");
-                AppendLog("[ERROR]", $"Rejoin Fix failed: {ex.Message}", "#FF2D55");
-                SetStatus("Rejoin Fix failed to start.", "#FF2D55");
-                MessageBox.Show(
-                    $"Rejoin Fix could not start:\n\n{ex.Message}",
-                    "Rejoin Fix -- Halo MCC Toolbox",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-            }
-
-            return _rejoinProxy.IsRunning;
         }
 
         private void HandleSteamFirewallAutoSignal(ProxyCaptureEntry entry)
@@ -2435,25 +2843,39 @@ if ($existing.Count -eq 0) {{
             if (ChkRejoinFixFirewall.IsChecked != true)
                 return;
 
+            if (!IsRunningAsAdministrator())
+                throw new InvalidOperationException("Firewall Fix (Campaign) requires the Toolbox to run as Administrator.");
+
             string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
             AppendLog("[FIREWALL]", "Enabling MCC P2P firewall fix for Rejoin Fix...", "#FF6A00");
+            AppendLog("[FIREWALL]", "Toolbox is running as Administrator.", "#C8D8E8");
             SetStatus("Enabling MCC P2P firewall fix...", "#FF6A00");
             _rejoinCampaignFirewallApplying = true;
             _rejoinCampaignFirewallEnabled = false;
             UpdateRejoinFirewallStatus();
 
-            await SetSteamFirewallEnabledAsync(true, mccExePath, RejoinCampaignFirewallPorts, SteamFirewallPorts);
-            SaveSteamFirewallUiState(true);
-            SetSteamFirewallRuntimeState(SteamFirewallState.Enabled);
-            _rejoinCampaignFirewallApplying = false;
-            _rejoinCampaignFirewallEnabled = true;
-            UpdateRejoinFirewallStatus();
+            bool applied = false;
+            try
+            {
+                await SetSteamFirewallEnabledAsync(true, mccExePath, RejoinCampaignFirewallPorts, SteamFirewallPorts);
+                SaveSteamFirewallUiState(true);
+                SetSteamFirewallRuntimeState(SteamFirewallState.Enabled);
+                _rejoinCampaignFirewallEnabled = true;
+                applied = true;
+            }
+            finally
+            {
+                _rejoinCampaignFirewallApplying = false;
+                if (!applied)
+                    _rejoinCampaignFirewallEnabled = false;
+                UpdateRejoinFirewallStatus();
+            }
 
             AppendLog("[FIREWALL]", $"MCC P2P firewall fix enabled for Rejoin Fix ({Path.GetFileName(mccExePath)}).", "#39FF14");
             SetStatus("Firewall Fix (Campaign) enabled.", "#39FF14");
         }
 
-        private static Task SetSteamFirewallEnabledAsync(
+        private static async Task SetSteamFirewallEnabledAsync(
             bool enabled,
             string mccExePath,
             IReadOnlyCollection<int>? activePorts = null,
@@ -2482,79 +2904,265 @@ $legacyRulePrefix = {QuotePowerShellString(legacyRulePrefix)}
 $globalRulePrefix = {QuotePowerShellString(globalRulePrefix)}
 $mccExePath = {quotedMccExePath}
 
-function Invoke-NetshChecked([string]$label, [string[]]$arguments) {{
+function Disable-RuleIfPresent([string]$name) {{
+    & netsh advfirewall firewall set rule ""name=$name"" new enable=no | Out-Null
+}}
+
+function Invoke-Netsh([string[]]$arguments) {{
     $output = & netsh @arguments 2>&1
-    if ($LASTEXITCODE -ne 0) {{
-        $message = ($output | Out-String).Trim()
+    $message = ($output | Out-String).Trim()
+    return [pscustomobject]@{{
+        ExitCode = $LASTEXITCODE
+        Text = $message
+    }}
+}}
+
+function Invoke-NetshChecked([string]$label, [string[]]$arguments) {{
+    $result = Invoke-Netsh $arguments
+    $message = $result.Text
+    if ($result.ExitCode -ne 0) {{
         if ([string]::IsNullOrWhiteSpace($message)) {{
             $message = 'netsh returned no output'
         }}
-        Write-Error ""$label failed with exit code $LASTEXITCODE. $message""
-        exit $LASTEXITCODE
+
+        throw ""NETSH_FAILED: $label failed with exit code $($result.ExitCode). $message""
+    }}
+
+    return $message
+}}
+
+function Test-NetshRuleExists([string]$name) {{
+    $result = Invoke-Netsh @('advfirewall', 'firewall', 'show', 'rule', ""name=$name"", 'verbose')
+    if ($result.ExitCode -ne 0) {{
+        return $false
+    }}
+
+    return $result.Text -match 'Rule Name:\s+'
+}}
+
+function Assert-NetshRuleState(
+    [string]$name,
+    [string]$expectedEnabled,
+    [string]$expectedProgram) {{
+    $result = Invoke-Netsh @('advfirewall', 'firewall', 'show', 'rule', ""name=$name"", 'verbose')
+    if ($result.ExitCode -ne 0 -or $result.Text -notmatch 'Rule Name:\s+') {{
+        throw ""NETSH_VERIFY_FAILED: missing rule $name. $($result.Text)""
+    }}
+
+    $enabledMatch = [regex]::Match($result.Text, 'Enabled:\s+(Yes|No)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $enabledMatch.Success) {{
+        throw ""NETSH_VERIFY_FAILED: could not read enabled state for $name. $($result.Text)""
+    }}
+
+    if (-not [string]::Equals($enabledMatch.Groups[1].Value, $expectedEnabled, [System.StringComparison]::OrdinalIgnoreCase)) {{
+        throw ""NETSH_VERIFY_FAILED: wrong enabled state for $name (expected $expectedEnabled, found $($enabledMatch.Groups[1].Value))""
+    }}
+
+    $programMatch = [regex]::Match($result.Text, 'Program:\s+(.+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($programMatch.Success) {{
+        $actualProgram = $programMatch.Groups[1].Value.Trim()
+        if (-not [string]::Equals($actualProgram, $expectedProgram, [System.StringComparison]::OrdinalIgnoreCase)) {{
+            throw ""NETSH_VERIFY_FAILED: wrong program for $name (expected $expectedProgram, found $actualProgram)""
+        }}
     }}
 }}
 
-$allNames = @()
-$allNames += ""$legacyRulePrefix TCP Inbound""
-$allNames += ""$legacyRulePrefix UDP Inbound""
-$allNames += ""$legacyRulePrefix TCP Outbound""
-$allNames += ""$legacyRulePrefix UDP Outbound""
-foreach ($port in $cleanupPorts) {{
-    $allNames += ""$rulePrefix $port TCP Inbound""
-    $allNames += ""$rulePrefix $port UDP Inbound""
-    $allNames += ""$rulePrefix $port TCP Outbound""
-    $allNames += ""$rulePrefix $port UDP Outbound""
-    $allNames += ""$globalRulePrefix $port TCP Inbound""
-    $allNames += ""$globalRulePrefix $port UDP Inbound""
-    $allNames += ""$globalRulePrefix $port TCP Outbound""
-    $allNames += ""$globalRulePrefix $port UDP Outbound""
-}}
+function Ensure-Rule(
+    [string]$name,
+    [string]$direction,
+    [string]$protocol,
+    [string]$portSide,
+    [int]$port,
+    [bool]$ruleEnabled) {{
+    $netshEnabledValue = if ($ruleEnabled) {{ 'yes' }} else {{ 'no' }}
+    $expectedEnabledText = if ($ruleEnabled) {{ 'Yes' }} else {{ 'No' }}
+    $netshDirection = if ($direction -eq 'Inbound') {{ 'dir=in' }} else {{ 'dir=out' }}
+    $netshPortArgument = if ($portSide -eq 'Local') {{ ""localport=$port"" }} else {{ ""remoteport=$port"" }}
 
-foreach ($name in $allNames) {{
-    if ($name.StartsWith($legacyRulePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
-        $name.StartsWith($globalRulePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {{
-        & netsh advfirewall firewall set rule name=""$name"" new enable=no | Out-Null
+    if (Test-NetshRuleExists $name) {{
+        Invoke-NetshChecked ""set $name"" @(
+            'advfirewall',
+            'firewall',
+            'set',
+            'rule',
+            ""name=$name"",
+            'new',
+            ""enable=$netshEnabledValue"") | Out-Null
+    }} else {{
+        Invoke-NetshChecked ""add $name"" @(
+            'advfirewall',
+            'firewall',
+            'add',
+            'rule',
+            ""name=$name"",
+            $netshDirection,
+            'action=block',
+            ""program=$mccExePath"",
+            ""protocol=$protocol"",
+            $netshPortArgument,
+            'profile=any',
+            ""enable=$netshEnabledValue"") | Out-Null
     }}
+
+    Assert-NetshRuleState $name $expectedEnabledText $mccExePath
 }}
 
-foreach ($port in $cleanupPorts) {{
-    if ($ports -notcontains $port) {{
-        & netsh advfirewall firewall set rule name=""$rulePrefix $port TCP Inbound"" new enable=no | Out-Null
-        & netsh advfirewall firewall set rule name=""$rulePrefix $port UDP Inbound"" new enable=no | Out-Null
-        & netsh advfirewall firewall set rule name=""$rulePrefix $port TCP Outbound"" new enable=no | Out-Null
-        & netsh advfirewall firewall set rule name=""$rulePrefix $port UDP Outbound"" new enable=no | Out-Null
-    }}
-}}
-
+$ruleEnabled = [string]::Equals('{targetEnabled}', 'yes', [System.StringComparison]::OrdinalIgnoreCase)
 foreach ($port in $ports) {{
-    if (-not (Get-NetFirewallRule -DisplayName ""$rulePrefix $port TCP Inbound"" -ErrorAction SilentlyContinue)) {{
-        Invoke-NetshChecked ""add $rulePrefix $port TCP Inbound"" @('advfirewall', 'firewall', 'add', 'rule', ""name=$rulePrefix $port TCP Inbound"", 'dir=in', 'action=block', ""program=$mccExePath"", 'protocol=TCP', ""localport=$port"", 'profile=any')
-    }}
-    Invoke-NetshChecked ""set $rulePrefix $port TCP Inbound"" @('advfirewall', 'firewall', 'set', 'rule', ""name=$rulePrefix $port TCP Inbound"", 'new', ""program=$mccExePath"", 'enable={targetEnabled}')
+    Ensure-Rule ""$rulePrefix $port TCP Inbound"" 'Inbound' 'TCP' 'Local' $port $ruleEnabled
+    Ensure-Rule ""$rulePrefix $port UDP Inbound"" 'Inbound' 'UDP' 'Local' $port $ruleEnabled
+    Ensure-Rule ""$rulePrefix $port TCP Outbound"" 'Outbound' 'TCP' 'Remote' $port $ruleEnabled
+    Ensure-Rule ""$rulePrefix $port UDP Outbound"" 'Outbound' 'UDP' 'Remote' $port $ruleEnabled
+}}
 
-    if (-not (Get-NetFirewallRule -DisplayName ""$rulePrefix $port UDP Inbound"" -ErrorAction SilentlyContinue)) {{
-        Invoke-NetshChecked ""add $rulePrefix $port UDP Inbound"" @('advfirewall', 'firewall', 'add', 'rule', ""name=$rulePrefix $port UDP Inbound"", 'dir=in', 'action=block', ""program=$mccExePath"", 'protocol=UDP', ""localport=$port"", 'profile=any')
-    }}
-    Invoke-NetshChecked ""set $rulePrefix $port UDP Inbound"" @('advfirewall', 'firewall', 'set', 'rule', ""name=$rulePrefix $port UDP Inbound"", 'new', ""program=$mccExePath"", 'enable={targetEnabled}')
+Disable-RuleIfPresent ""$legacyRulePrefix TCP Inbound""
+Disable-RuleIfPresent ""$legacyRulePrefix UDP Inbound""
+Disable-RuleIfPresent ""$legacyRulePrefix TCP Outbound""
+Disable-RuleIfPresent ""$legacyRulePrefix UDP Outbound""
 
-    if (-not (Get-NetFirewallRule -DisplayName ""$rulePrefix $port TCP Outbound"" -ErrorAction SilentlyContinue)) {{
-        Invoke-NetshChecked ""add $rulePrefix $port TCP Outbound"" @('advfirewall', 'firewall', 'add', 'rule', ""name=$rulePrefix $port TCP Outbound"", 'dir=out', 'action=block', ""program=$mccExePath"", 'protocol=TCP', ""remoteport=$port"", 'profile=any')
-    }}
-    Invoke-NetshChecked ""set $rulePrefix $port TCP Outbound"" @('advfirewall', 'firewall', 'set', 'rule', ""name=$rulePrefix $port TCP Outbound"", 'new', ""program=$mccExePath"", 'enable={targetEnabled}')
+foreach ($port in $cleanupPorts) {{
+    Disable-RuleIfPresent ""$globalRulePrefix $port TCP Inbound""
+    Disable-RuleIfPresent ""$globalRulePrefix $port UDP Inbound""
+    Disable-RuleIfPresent ""$globalRulePrefix $port TCP Outbound""
+    Disable-RuleIfPresent ""$globalRulePrefix $port UDP Outbound""
 
-    if (-not (Get-NetFirewallRule -DisplayName ""$rulePrefix $port UDP Outbound"" -ErrorAction SilentlyContinue)) {{
-        Invoke-NetshChecked ""add $rulePrefix $port UDP Outbound"" @('advfirewall', 'firewall', 'add', 'rule', ""name=$rulePrefix $port UDP Outbound"", 'dir=out', 'action=block', ""program=$mccExePath"", 'protocol=UDP', ""remoteport=$port"", 'profile=any')
+    if ($ports -notcontains $port) {{
+        Disable-RuleIfPresent ""$rulePrefix $port TCP Inbound""
+        Disable-RuleIfPresent ""$rulePrefix $port UDP Inbound""
+        Disable-RuleIfPresent ""$rulePrefix $port TCP Outbound""
+        Disable-RuleIfPresent ""$rulePrefix $port UDP Outbound""
     }}
-    Invoke-NetshChecked ""set $rulePrefix $port UDP Outbound"" @('advfirewall', 'firewall', 'set', 'rule', ""name=$rulePrefix $port UDP Outbound"", 'new', ""program=$mccExePath"", 'enable={targetEnabled}')
 }}
 
 exit 0";
 
-            return RunPowerShellAsync(script, elevated: !IsRunningAsAdministrator(), timeoutMs: 30000);
+            if (!await SteamFirewallCommandLock.WaitAsync(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("Another firewall command is still running. Close/reopen Toolbox or wait for the previous Windows firewall prompt to finish.");
+
+            try
+            {
+                await RunPowerShellAsync(script, elevated: !IsRunningAsAdministrator(), timeoutMs: 30000);
+                await VerifySteamFirewallRulesAsync(enabled, mccExePath, activePorts, cleanupPorts);
+            }
+            finally
+            {
+                SteamFirewallCommandLock.Release();
+            }
+        }
+
+        private static async Task VerifySteamFirewallRulesAsync(
+            bool enabled,
+            string mccExePath,
+            IReadOnlyCollection<int> activePorts,
+            IReadOnlyCollection<int> cleanupPorts)
+        {
+            string activeRuleNames = string.Join(", ", activePorts.SelectMany(port => new[]
+            {
+                $"{SteamFirewallRulePrefix} {port} TCP Inbound",
+                $"{SteamFirewallRulePrefix} {port} UDP Inbound",
+                $"{SteamFirewallRulePrefix} {port} TCP Outbound",
+                $"{SteamFirewallRulePrefix} {port} UDP Outbound"
+            }).Select(QuotePowerShellString));
+
+            string cleanupRuleNames = string.Join(", ", cleanupPorts
+                .Except(activePorts)
+                .SelectMany(port => new[]
+                {
+                    $"{SteamFirewallRulePrefix} {port} TCP Inbound",
+                    $"{SteamFirewallRulePrefix} {port} UDP Inbound",
+                    $"{SteamFirewallRulePrefix} {port} TCP Outbound",
+                    $"{SteamFirewallRulePrefix} {port} UDP Outbound"
+                })
+                .Select(QuotePowerShellString));
+
+            string expectedEnabled = enabled ? "Yes" : "No";
+            string quotedMccExePath = QuotePowerShellString(mccExePath);
+
+            string script = $@"
+$ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'
+$InformationPreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
+$activeNames = @({activeRuleNames})
+$cleanupNames = @({cleanupRuleNames})
+$expectedEnabled = '{expectedEnabled}'
+$mccExePath = {quotedMccExePath}
+$problems = New-Object System.Collections.Generic.List[string]
+
+function Invoke-Netsh([string[]]$arguments) {{
+    $output = & netsh @arguments 2>&1
+    $message = ($output | Out-String).Trim()
+    return [pscustomobject]@{{
+        ExitCode = $LASTEXITCODE
+        Text = $message
+    }}
+}}
+
+function Read-NetshRule([string]$name) {{
+    Invoke-Netsh @('advfirewall', 'firewall', 'show', 'rule', ""name=$name"", 'verbose')
+}}
+
+foreach ($name in $activeNames) {{
+    $result = Read-NetshRule $name
+    if ($result.ExitCode -ne 0 -or $result.Text -notmatch 'Rule Name:\s+') {{
+        $problems.Add(""missing active rule: $name. $($result.Text)"")
+        continue
+    }}
+
+    $enabledMatch = [regex]::Match($result.Text, 'Enabled:\s+(Yes|No)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $enabledMatch.Success) {{
+        $problems.Add(""could not read enabled state for $name"")
+    }} elseif (-not [string]::Equals($enabledMatch.Groups[1].Value, $expectedEnabled, [System.StringComparison]::OrdinalIgnoreCase)) {{
+        $problems.Add(""wrong enabled state for $name (expected $expectedEnabled, found $($enabledMatch.Groups[1].Value))"")
+    }}
+
+    $programMatch = [regex]::Match($result.Text, 'Program:\s+(.+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($programMatch.Success) {{
+        $actualProgram = $programMatch.Groups[1].Value.Trim()
+        if (-not [string]::Equals($actualProgram, $mccExePath, [System.StringComparison]::OrdinalIgnoreCase)) {{
+            $problems.Add(""wrong program for $name (expected $mccExePath, found $actualProgram)"")
+        }}
+    }}
+}}
+
+foreach ($name in $cleanupNames) {{
+    $result = Read-NetshRule $name
+    if ($result.ExitCode -ne 0 -or $result.Text -notmatch 'Rule Name:\s+') {{
+        continue
+    }}
+
+    $enabledMatch = [regex]::Match($result.Text, 'Enabled:\s+(Yes|No)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($enabledMatch.Success -and [string]::Equals($enabledMatch.Groups[1].Value, 'Yes', [System.StringComparison]::OrdinalIgnoreCase)) {{
+        $problems.Add(""cleanup rule still enabled: $name"")
+    }}
+}}
+
+if ($problems.Count -gt 0) {{
+    Write-Output (""VERIFY_FAILED: "" + ($problems -join '; '))
+    exit 1
+}}
+
+'Verified'";
+
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                try
+                {
+                    await RunPowerShellAsync(script, elevated: false, timeoutMs: 10000);
+                    return;
+                }
+                catch when (attempt < 3)
+                {
+                    await Task.Delay(500);
+                }
+            }
         }
 
         private static async Task<string> RunPowerShellAsync(string script, bool elevated, int timeoutMs = 5000)
         {
+            string? elevatedScriptPath = null;
+            string? elevatedTranscriptPath = null;
             string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
             var startInfo = new ProcessStartInfo
             {
@@ -2566,6 +3174,23 @@ exit 0";
 
             if (elevated)
             {
+                Directory.CreateDirectory(ToolboxLocalAppDataRoot);
+                elevatedScriptPath = Path.Combine(ToolboxLocalAppDataRoot, $"firewall-command-{Guid.NewGuid():N}.ps1");
+                elevatedTranscriptPath = Path.Combine(ToolboxLocalAppDataRoot, "firewall-command-result.txt");
+                string wrappedScript = $@"
+$ErrorActionPreference = 'Continue'
+Start-Transcript -Path {QuotePowerShellString(elevatedTranscriptPath)} -Force | Out-Null
+try {{
+{script}
+}} catch {{
+    Write-Error ($_.Exception | Format-List * -Force | Out-String)
+    exit 1
+}} finally {{
+    try {{ Stop-Transcript | Out-Null }} catch {{ }}
+}}";
+
+                File.WriteAllText(elevatedScriptPath, wrappedScript, Encoding.UTF8);
+                startInfo.Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{elevatedScriptPath}\"";
                 startInfo.Verb = "runas";
             }
             else
@@ -2579,17 +3204,45 @@ exit 0";
 
             if (elevated)
             {
-                await process.WaitForExitAsync();
+                var elevatedWaitTask = process.WaitForExitAsync();
+                if (await Task.WhenAny(elevatedWaitTask, Task.Delay(timeoutMs)) != elevatedWaitTask)
+                {
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch
+                    {
+                        // Best effort cleanup; elevated child processes may outlive us if Windows denies termination.
+                    }
+
+                    throw new TimeoutException("Elevated PowerShell firewall command timed out.");
+                }
+
                 if (process.ExitCode != 0)
                 {
-                    throw new InvalidOperationException($"Elevated firewall command failed with exit code {process.ExitCode}.");
+                    string transcript = "";
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(elevatedTranscriptPath) && File.Exists(elevatedTranscriptPath))
+                            transcript = File.ReadAllText(elevatedTranscriptPath);
+                    }
+                    catch
+                    {
+                        transcript = "";
+                    }
+
+                    transcript = CleanPowerShellError(transcript);
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(transcript)
+                        ? $"Elevated firewall command failed with exit code {process.ExitCode}."
+                        : transcript);
                 }
 
                 return "";
             }
 
-            string output = await process.StandardOutput.ReadToEndAsync();
-            string error = await process.StandardError.ReadToEndAsync();
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
             var waitTask = process.WaitForExitAsync();
             if (await Task.WhenAny(waitTask, Task.Delay(timeoutMs)) != waitTask)
             {
@@ -2604,6 +3257,9 @@ exit 0";
 
                 throw new TimeoutException("PowerShell status check timed out.");
             }
+
+            string output = await outputTask;
+            string error = await errorTask;
 
             if (process.ExitCode != 0)
             {
@@ -2671,9 +3327,42 @@ exit 0";
             }
             catch (Exception ex)
             {
+                _rejoinCampaignFirewallApplying = false;
+                _rejoinCampaignFirewallEnabled = false;
                 AppendLog("[ERROR]", $"Firewall setup after Rejoin Fix start failed: {ex.Message}", "#FF2D55");
                 SetStatus("Rejoin Fix active; firewall setup failed.", "#FF6A00");
                 UpdateRejoinFirewallStatus("FIREWALL: SETUP FAILED - Rejoin Fix is still active", "#FF2D55");
+            }
+        }
+
+        private async Task StartPendingRejoinFixAfterElevationAsync()
+        {
+            if (!App.ConsumePendingRejoinFixAutoStart())
+                return;
+
+            if (!IsRunningAsAdministrator() || _rejoinProxy.IsRunning)
+                return;
+
+            BtnRejoinFix.IsEnabled = false;
+            try
+            {
+                await StartRejoinFixAsync();
+            }
+            catch (Exception ex)
+            {
+                RejoinFixDiagnostics.Error("proxy", $"Automatic activation after elevation failed: {ex.Message}");
+                AppendLog("[ERROR]", $"Rejoin Fix failed: {ex.Message}", "#FF2D55");
+                SetStatus("Rejoin Fix failed to start.", "#FF2D55");
+                MessageBox.Show(
+                    $"Rejoin Fix could not start:\n\n{ex.Message}",
+                    "Rejoin Fix -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                UpdateRejoinFixUi();
+                BtnRejoinFix.IsEnabled = true;
             }
         }
 
@@ -2685,14 +3374,17 @@ exit 0";
             {
                 if (_rejoinProxy.IsRunning)
                 {
-                    bool campaignFirewallWasEnabled = ChkRejoinFixFirewall.IsChecked == true;
+                    bool rejoinFirewallWasEnabled = ChkRejoinFixFirewall.IsChecked == true
+                        || ChkRejoinFixFirewallMatchmaking.IsChecked == true
+                        || _steamFirewallAutoEnabled
+                        || _rejoinCampaignFirewallEnabled;
                     StopRejoinCrashWatcher();
                     _rejoinProxy.Stop();
                     StartNetworkStatsOverlay("");
                     _rejoinWinHttpManualNeeded = false;
                     DisableSteamFirewallAutoMode(logStatus: false);
-                    if (campaignFirewallWasEnabled)
-                        await DisableRejoinCampaignFirewallAsync(logStatus: false);
+                    if (rejoinFirewallWasEnabled)
+                        await DisableRejoinFirewallRulesAsync(logStatus: false);
                     _rejoinCampaignFirewallApplying = false;
                     _rejoinCampaignFirewallEnabled = false;
                     SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
@@ -2705,26 +3397,14 @@ exit 0";
                     if (!IsRunningAsAdministrator())
                     {
                         MessageBox.Show(
-                            "Rejoin Fix needs the Toolbox to run as Administrator so it can change system proxy and firewall settings.\n\nThe Toolbox will relaunch as Administrator now.",
+                            "Rejoin Fix needs the Toolbox to run as Administrator so it can change system proxy and firewall settings.\n\nIf MCC is currently open, you'll need to restart for the Fix to function.\n\nThe Toolbox will relaunch as Administrator now.",
                             "Rejoin Fix -- Halo MCC Toolbox",
                             MessageBoxButton.OK,
                             MessageBoxImage.Information);
 
+                        App.SavePendingRejoinFixAutoStart(true);
                         RelaunchAsAdministrator();
                         Close();
-                        return;
-                    }
-
-                    var confirm = MessageBox.Show(
-                        "Rejoin Fix will enable the Toolbox proxy and change the system proxy while it is running.\n\nRestart MCC after it starts.\n\nRun the fix now?",
-                        "Rejoin Fix -- Halo MCC Toolbox",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Warning);
-
-                    if (confirm != MessageBoxResult.Yes)
-                    {
-                        AppendLog("[INFO]", "Rejoin Fix cancelled by user.", "#4A5A6A");
-                        SetStatus("Rejoin Fix cancelled.", "#4A5A6A");
                         return;
                     }
 
@@ -2755,6 +3435,7 @@ exit 0";
 
         private void HandleAdministratorRelaunchCancelled()
         {
+            App.SavePendingRejoinFixAutoStart(false);
             AppendLog("[INFO]", "Rejoin Fix cancelled at administrator prompt.", "#4A5A6A");
             SetStatus("Rejoin Fix requires Administrator.", "#4A5A6A");
         }
@@ -2900,84 +3581,107 @@ exit 0";
         private void MapRow_Click(object sender, MouseButtonEventArgs e)
         {
             if (sender is FrameworkElement fe && fe.DataContext is MapEntry map && !map.IsHeader)
-                map.IsEnabled = !map.IsEnabled;
+                SetMapEnabled(map, !map.IsEnabled);
         }
 
         private void BtnEnableAll_Click(object sender, RoutedEventArgs e)
         {
-            foreach (var m in _maps.Where(m => !m.IsHeader)) m.IsEnabled = true;
-            AppendLog("[INFO]", "All maps set to ENABLED.", "#39FF14");
+            var maps = _maps.Where(m => !m.IsHeader).ToList();
+            if (maps.Count == 0)
+            {
+                ShowNoMapsLoadedMessage();
+                return;
+            }
+
+            ApplyMapState(maps, true, "Enable All");
         }
 
         private void BtnDisableAll_Click(object sender, RoutedEventArgs e)
         {
-            foreach (var m in _maps.Where(m => !m.IsHeader)) m.IsEnabled = false;
-            AppendLog("[INFO]", "All maps set to DISABLED.", "#FF2D55");
+            var maps = _maps.Where(m => !m.IsHeader).ToList();
+            if (maps.Count == 0)
+            {
+                ShowNoMapsLoadedMessage();
+                return;
+            }
+
+            ApplyMapState(maps, false, "Disable All");
         }
 
         private void BtnDisable343_Click(object sender, RoutedEventArgs e)
         {
-            int count = 0;
-            foreach (var m in _maps.Where(m => !m.IsHeader && Map343Names.Contains(m.BaseName)))
+            var maps = _maps.Where(m => !m.IsHeader && Map343Names.Contains(m.BaseName)).ToList();
+            if (maps.Count == 0)
             {
-                m.IsEnabled = false;
-                count++;
-            }
-            if (count == 0)
                 AppendLog("[WARN]", "No 343 maps found. Load maps first.", "#FF6A00");
-            else
-                AppendLog("[INFO]", $"Disabled {count} 343 map(s): Edge, Waterfall, Icebox. Click APPLY to save.", "#FF2D55");
+                return;
+            }
+
+            ApplyMapState(maps, false, "Disable 343 Maps");
         }
 
-        private void BtnApplyMaps_Click(object sender, RoutedEventArgs e)
+        private void ShowNoMapsLoadedMessage()
         {
-            var applyList = _maps.Where(m => !m.IsHeader).ToList();
-            if (applyList.Count == 0)
+            MessageBox.Show("No maps loaded. Load your maps first.", "Halo MCC Toolbox",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        private void ApplyMapState(IReadOnlyCollection<MapEntry> maps, bool enabled, string actionLabel)
+        {
+            int changed = 0, unchanged = 0, fail = 0;
+            foreach (var map in maps)
             {
-                MessageBox.Show("No maps loaded. Load your maps first.", "Halo MCC Toolbox",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            if (MessageBox.Show(
-                    "Apply map changes?\n\nEnabled maps will have the REMOVED_ prefix removed.\nDisabled maps will be prefixed with REMOVED_ so MCC skips them.\n\nMake sure MCC is closed.",
-                    "Confirm Apply -- Halo MCC Toolbox",
-                    MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-                return;
-
-            int ok = 0, fail = 0;
-            foreach (var map in applyList)
-            {
-                try
-                {
-                    var dir    = Path.GetDirectoryName(map.FileName)!;
-                    var ext    = Path.GetExtension(map.FileName);
-                    var target = map.IsEnabled
-                        ? Path.Combine(dir, map.BaseName + ext)
-                        : Path.Combine(dir, RemovedPrefix + map.BaseName + ext);
-
-                    if (!map.FileName.Equals(target, StringComparison.OrdinalIgnoreCase))
-                    {
-                        File.Move(map.FileName, target);
-                        AppendLog(map.IsEnabled ? "[ENABLE]" : "[REMOVE]",
-                            $"{Path.GetFileName(map.FileName)}  =>  {Path.GetFileName(target)}",
-                            map.IsEnabled ? "#39FF14" : "#FF2D55");
-                        map.FileName = target;
-                    }
-                    ok++;
-                }
-                catch (Exception ex)
-                {
-                    AppendLog("[ERROR]", $"Failed to rename {map.BaseName}: {ex.Message}", "#FF2D55");
+                var result = SetMapEnabled(map, enabled);
+                if (result == MapToggleResult.Changed)
+                    changed++;
+                else if (result == MapToggleResult.Unchanged)
+                    unchanged++;
+                else
                     fail++;
-                }
             }
 
             var col = fail > 0 ? "#FF6A00" : "#39FF14";
-            SetStatus($"Applied: {ok} updated, {fail} failed.", col);
-            AppendLog("[DONE]", $"Applied. {ok} updated, {fail} failed.", "#39FF14");
-            MessageBox.Show($"Done!\n\n{ok} map(s) updated.\n{fail} failed.",
-                "Applied -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Information);
+            SetStatus($"{actionLabel}: {changed} changed, {unchanged} already set, {fail} failed.", col);
+            AppendLog("[DONE]", $"{actionLabel}: {changed} changed, {unchanged} already set, {fail} failed.", col);
+        }
+
+        private MapToggleResult SetMapEnabled(MapEntry map, bool enabled)
+        {
+            if (map.IsHeader)
+                return MapToggleResult.Unchanged;
+
+            try
+            {
+                var dir = Path.GetDirectoryName(map.FileName);
+                if (string.IsNullOrWhiteSpace(dir))
+                    throw new InvalidOperationException("Map path is missing.");
+
+                var ext = Path.GetExtension(map.FileName);
+                var target = enabled
+                    ? Path.Combine(dir, map.BaseName + ext)
+                    : Path.Combine(dir, RemovedPrefix + map.BaseName + ext);
+
+                if (map.FileName.Equals(target, StringComparison.OrdinalIgnoreCase))
+                {
+                    map.IsEnabled = enabled;
+                    return MapToggleResult.Unchanged;
+                }
+
+                File.Move(map.FileName, target);
+                AppendLog(enabled ? "[ENABLE]" : "[REMOVE]",
+                    $"{Path.GetFileName(map.FileName)}  =>  {Path.GetFileName(target)}",
+                    enabled ? "#39FF14" : "#FF2D55");
+                map.FileName = target;
+                map.IsEnabled = enabled;
+                SetStatus($"{map.DisplayName} {(enabled ? "enabled" : "disabled")}.", enabled ? "#39FF14" : "#FF2D55");
+                return MapToggleResult.Changed;
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[ERROR]", $"Failed to rename {map.BaseName}: {ex.Message}", "#FF2D55");
+                SetStatus($"Failed to toggle {map.DisplayName}.", "#FF2D55");
+                return MapToggleResult.Failed;
+            }
         }
 
         private static SolidColorBrush Brush(string hex) =>
@@ -3628,6 +4332,7 @@ exit 0";
         private void StatsInitialize()
         {
             StatsHttp.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0");
+            StatsCurrentLobbyList.ItemsSource = _statsCurrentLobbyRows;
             StatsLobbyList.ItemsSource = _statsLobbyRows;
 
             StatsLoadGamertag();
@@ -3705,7 +4410,12 @@ exit 0";
 
         private void StatsLobbyList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
-            if (StatsLobbyList.SelectedItem is not StatsPlayerRow row) return;
+            StatsPlayerRow? row = sender switch
+            {
+                ListView { SelectedItem: StatsPlayerRow selected } => selected,
+                _ => null
+            };
+            if (row is null) return;
             string token; lock (_statsLock) { token = _statsSpartanToken; }
             if (string.IsNullOrEmpty(token))
             {
@@ -3850,10 +4560,80 @@ exit 0";
             });
         }
 
+        private void StatsRebuildCurrentLobbyRows()
+        {
+            Dictionary<string, MatchmakingPlayerPing> pingSnap;
+            Dictionary<string, string> kdSnap, totSnap, gamesSnap;
+            string myGt;
+
+            lock (_statsLock)
+            {
+                pingSnap = new Dictionary<string, MatchmakingPlayerPing>(_statsMatchmakingPings, StringComparer.OrdinalIgnoreCase);
+                kdSnap = new Dictionary<string, string>(_statsKd, StringComparer.OrdinalIgnoreCase);
+                totSnap = new Dictionary<string, string>(_statsTotals, StringComparer.OrdinalIgnoreCase);
+                gamesSnap = new Dictionary<string, string>(_statsGames, StringComparer.OrdinalIgnoreCase);
+                myGt = _statsGamertag;
+            }
+
+            var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(30);
+            var freshPings = pingSnap.Values
+                .Where(p => p.ObservedAt >= cutoff)
+                .ToList();
+            var squadLabels = StatsBuildSquadLabels(freshPings.Select(StatsGetSquadKey));
+
+            var rows = freshPings
+                .OrderBy(p => StatsSquadSortKey(StatsGetSquadKey(p), squadLabels))
+                .ThenBy(p => StatsNormalizeTeamForSort(p.Team))
+                .ThenBy(p => p.Gamertag)
+                .Select(p =>
+                {
+                    string gt = string.IsNullOrWhiteSpace(p.Gamertag)
+                        ? p.Xuid
+                        : p.Gamertag;
+                    string squadKey = StatsGetSquadKey(p);
+
+                    return new StatsPlayerRow
+                    {
+                        Gamertag = gt,
+                        Xuid = StatsNormalizeXuid(p.Xuid),
+                        Team = StatsNormalizeTeamForDisplay(p.Team),
+                        KD = kdSnap.GetValueOrDefault(gt, "—"),
+                        Totals = totSnap.GetValueOrDefault(gt, ""),
+                        GamesPlayed = gamesSnap.GetValueOrDefault(gt, ""),
+                        BestServer = StatsFormatServerRegion(p.Region),
+                        Ping = p.DisplayPing,
+                        SquadId = squadKey,
+                        SquadLabel = StatsFormatSquadLabel(squadKey, squadLabels),
+                        SkillPercentile = StatsFormatSkillPercentile(p.AverageGroupSkillPercentile),
+                        IsMe = gt.Equals(myGt, StringComparison.OrdinalIgnoreCase),
+                    };
+                })
+                .ToList();
+
+            StatsFillMissingSkillPercentilesFromSquads(rows);
+
+            if (rows.Count > 0)
+            {
+                lock (_statsLock)
+                {
+                    _statsCurrentLobbySnapshotRows = rows.Select(StatsClonePlayerRow).ToList();
+                }
+            }
+
+            Dispatcher.InvokeAsync(() =>
+            {
+                _statsCurrentLobbyRows.Clear();
+                foreach (var row in rows)
+                    _statsCurrentLobbyRows.Add(row);
+            });
+        }
+
         private void StatsRebuildLobbyRows()
         {
             List<XElement> players; string myGt;
             Dictionary<string, string> kdSnap, totSnap, gamesSnap, recentKdSnap;
+            Dictionary<string, MatchmakingPlayerPing> pingSnap;
+            List<StatsPlayerRow> completedLobbyRows;
 
             lock (_statsLock)
             {
@@ -3863,7 +4643,18 @@ exit 0";
                 totSnap      = new Dictionary<string, string>(_statsTotals,   StringComparer.OrdinalIgnoreCase);
                 gamesSnap    = new Dictionary<string, string>(_statsGames,    StringComparer.OrdinalIgnoreCase);
                 recentKdSnap  = new Dictionary<string, string>(_statsRecentKd, StringComparer.OrdinalIgnoreCase);
+                pingSnap      = new Dictionary<string, MatchmakingPlayerPing>(_statsMatchmakingPings, StringComparer.OrdinalIgnoreCase);
+                completedLobbyRows = _statsLastCompletedLobbyRows.Select(StatsClonePlayerRow).ToList();
             }
+
+            var completedByXuid = completedLobbyRows
+                .Where(r => !string.IsNullOrWhiteSpace(r.Xuid))
+                .GroupBy(r => StatsNormalizeXuid(r.Xuid), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            var completedByGamertag = completedLobbyRows
+                .Where(r => !string.IsNullOrWhiteSpace(r.Gamertag))
+                .GroupBy(r => r.Gamertag, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
             bool isFfa = players.Select(p =>
                 p.Attribute("mTeamIndex")?.Value ?? p.Attribute("mTeamId")?.Value ?? "0")
@@ -3875,10 +4666,24 @@ exit 0";
                 .Select(p =>
                 {
                     string gt    = p.Attribute("mGamertagText")?.Value ?? "Unknown";
+                    string xuid  = p.Attribute("mXboxUserId")?.Value ?? "";
+                    string normalizedXuid = StatsNormalizeXuid(xuid);
                     string team  = isFfa ? "FFA"
                         : p.Attribute("mTeamIndex")?.Value ?? p.Attribute("mTeamId")?.Value ?? "0";
                     string kd       = kdSnap.GetValueOrDefault(gt, "—");
                     string recentKd = recentKdSnap.GetValueOrDefault(gt, "");
+                    completedByXuid.TryGetValue(normalizedXuid, out var completedLobbyRow);
+                    if (completedLobbyRow is null)
+                        completedByGamertag.TryGetValue(gt, out completedLobbyRow);
+                    pingSnap.TryGetValue(normalizedXuid, out var playerPing);
+                    if (playerPing is not null && DateTime.UtcNow - playerPing.ObservedAt > TimeSpan.FromHours(2))
+                        playerPing = null;
+
+                    kd = StatsPreferCopiedStat(completedLobbyRow?.KD, kd);
+                    string totals = StatsPreferCopiedStat(completedLobbyRow?.Totals, totSnap.GetValueOrDefault(gt, ""));
+                    string gamesPlayed = StatsPreferCopiedStat(completedLobbyRow?.GamesPlayed, gamesSnap.GetValueOrDefault(gt, ""));
+                    string bestServer = StatsPreferCopiedDisplay(completedLobbyRow?.BestServer, StatsFormatServerRegion(playerPing?.Region ?? ""));
+                    string ping = StatsPreferCopiedDisplay(completedLobbyRow?.Ping, playerPing is null ? "—" : playerPing.DisplayPing);
 
                     string trend = "";
                     if (!string.IsNullOrEmpty(recentKd) &&
@@ -3893,10 +4698,16 @@ exit 0";
                     return new StatsPlayerRow
                     {
                         Gamertag      = gt,
+                        Xuid          = normalizedXuid,
                         Team          = team,
                         KD            = kd,
-                        Totals        = totSnap.GetValueOrDefault(gt, ""),
-                        GamesPlayed   = gamesSnap.GetValueOrDefault(gt, ""),
+                        Totals        = totals,
+                        GamesPlayed   = gamesPlayed,
+                        BestServer    = bestServer,
+                        Ping          = ping,
+                        SquadId       = completedLobbyRow?.SquadId ?? "",
+                        SquadLabel    = completedLobbyRow?.SquadLabel ?? "",
+                        SkillPercentile = StatsPreferCopiedDisplay(completedLobbyRow?.SkillPercentile, "—"),
                         IsMe          = gt.Equals(myGt, StringComparison.OrdinalIgnoreCase),
                         IsScanning    = kd == "…",
                         Standing      = int.TryParse(p.Attribute("mStanding")?.Value, out int s) ? s : 99,
@@ -3951,6 +4762,195 @@ exit 0";
                     StatsTeamSummaryBar.Visibility = Visibility.Collapsed;
                 }
             });
+        }
+
+        private static string StatsPreferCopiedStat(string? copied, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(copied) || copied == "—" || copied == "…")
+                return fallback;
+
+            return copied;
+        }
+
+        private static string StatsPreferCopiedDisplay(string? copied, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(copied) || copied == "—")
+                return fallback;
+
+            return copied;
+        }
+
+        private static StatsPlayerRow StatsClonePlayerRow(StatsPlayerRow row) => new()
+        {
+            Gamertag = row.Gamertag,
+            Xuid = row.Xuid,
+            Team = row.Team,
+            KD = row.KD,
+            Totals = row.Totals,
+            GamesPlayed = row.GamesPlayed,
+            BestServer = row.BestServer,
+            Ping = row.Ping,
+            SquadId = row.SquadId,
+            SquadLabel = row.SquadLabel,
+            SkillPercentile = row.SkillPercentile,
+            IsMe = row.IsMe,
+            IsScanning = row.IsScanning,
+            Standing = row.Standing,
+            RecentKD = row.RecentKD,
+            RecentTrend = row.RecentTrend,
+        };
+
+        private static string StatsNormalizeXuid(string xuid)
+        {
+            if (string.IsNullOrWhiteSpace(xuid))
+                return "";
+
+            string trimmed = xuid.Trim();
+            if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                return ulong.TryParse(
+                        trimmed[2..],
+                        System.Globalization.NumberStyles.HexNumber,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out ulong value)
+                    ? value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : trimmed;
+            }
+
+            return trimmed;
+        }
+
+        private static string StatsNormalizeTeamForDisplay(string team)
+        {
+            if (string.IsNullOrWhiteSpace(team))
+                return "—";
+
+            string trimmed = team.Trim();
+            return trimmed switch
+            {
+                "0" => "0",
+                "1" => "1",
+                _ when trimmed.Equals("red", StringComparison.OrdinalIgnoreCase) => "0",
+                _ when trimmed.Equals("blue", StringComparison.OrdinalIgnoreCase) => "1",
+                _ => trimmed
+            };
+        }
+
+        private static string StatsNormalizeTeamForSort(string team)
+        {
+            string normalized = StatsNormalizeTeamForDisplay(team);
+            return normalized == "—" ? "9" : normalized;
+        }
+
+        private static string StatsFormatServerRegion(string region)
+        {
+            if (string.IsNullOrWhiteSpace(region))
+                return "—";
+
+            var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["WestUs"] = "West US",
+                ["SouthCentralUs"] = "South Central US",
+                ["CentralUs"] = "Central US",
+                ["NorthCentralUs"] = "North Central US",
+                ["EastUs"] = "East US",
+                ["EastUs2"] = "East US 2",
+                ["BrazilSouth"] = "Brazil South",
+                ["NorthEurope"] = "North Europe",
+                ["WestEurope"] = "West Europe",
+                ["SoutheastAsia"] = "Southeast Asia",
+                ["EastAsia"] = "East Asia",
+                ["JapanWest"] = "Japan West",
+                ["JapanEast"] = "Japan East",
+                ["AustraliaSoutheast"] = "Australia Southeast",
+                ["AustraliaEast"] = "Australia East"
+            };
+
+            if (known.TryGetValue(region.Trim(), out var label))
+                return label;
+
+            var spaced = System.Text.RegularExpressions.Regex.Replace(
+                region.Trim(),
+                "([a-z])([A-Z0-9])",
+                "$1 $2");
+            return spaced.ToUpperInvariant() == spaced
+                ? spaced
+                : System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(spaced);
+        }
+
+        private static string StatsFormatSkillPercentile(double? value)
+        {
+            if (!value.HasValue)
+                return "—";
+
+            double percentile = value.Value;
+            if (percentile > 0 && percentile <= 1)
+                percentile *= 100;
+
+            return percentile.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static string StatsGetSquadKey(MatchmakingPlayerPing ping)
+        {
+            if (!string.IsNullOrWhiteSpace(ping.SquadId))
+                return ping.SquadId.Trim();
+
+            if (!ping.AverageGroupSkillPercentile.HasValue)
+                return "";
+
+            double percentile = ping.AverageGroupSkillPercentile.Value;
+            if (percentile > 0 && percentile <= 1)
+                percentile *= 100;
+
+            string team = StatsNormalizeTeamForDisplay(ping.Team);
+            string roundedPercentile = percentile.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+            return $"skill:{team}:{roundedPercentile}";
+        }
+
+        private static void StatsFillMissingSkillPercentilesFromSquads(List<StatsPlayerRow> rows)
+        {
+            var squadPercentiles = rows
+                .Where(r => StatsIsKnownSquadLabel(r.SquadLabel) && r.SkillPercentile != "—")
+                .GroupBy(r => r.SquadLabel, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().SkillPercentile, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var row in rows)
+            {
+                if (row.SkillPercentile != "—" ||
+                    !StatsIsKnownSquadLabel(row.SquadLabel) ||
+                    !squadPercentiles.TryGetValue(row.SquadLabel, out var percentile))
+                {
+                    continue;
+                }
+
+                row.SkillPercentile = percentile;
+            }
+        }
+
+        private static Dictionary<string, string> StatsBuildSquadLabels(IEnumerable<string> squadIds)
+        {
+            return squadIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .GroupBy(id => id, StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() > 1)
+                .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                .Select((g, index) => new { SquadId = g.Key, Label = $"S{index + 1}" })
+                .ToDictionary(x => x.SquadId, x => x.Label, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static string StatsFormatSquadLabel(string squadId, IReadOnlyDictionary<string, string> squadLabels) =>
+            !string.IsNullOrWhiteSpace(squadId) && squadLabels.TryGetValue(squadId.Trim(), out var label)
+                ? label
+                : "?";
+
+        private static bool StatsIsKnownSquadLabel(string squadLabel) =>
+            !string.IsNullOrWhiteSpace(squadLabel) && squadLabel != "?";
+
+        private static string StatsSquadSortKey(string squadId, IReadOnlyDictionary<string, string> squadLabels)
+        {
+            string label = StatsFormatSquadLabel(squadId, squadLabels);
+            return label == "?" ? "ZZZ" : label;
         }
 
         // ── File monitoring ───────────────────────────────────────────────────
@@ -4022,6 +5022,10 @@ exit 0";
             lock (_statsLock)
             {
                 _statsLastPlayers = players;
+                _statsLastCompletedLobbyRows = StatsMatchLobbyRowsToPlayers(_statsCurrentLobbySnapshotRows, players)
+                    .Select(StatsClonePlayerRow)
+                    .ToList();
+                _statsLastGameServerText = _statsCurrentLobbyServerText;
                 if (!_statsSession.ProcessedGameIds.Contains(gId))
                 {
                     var me = players.FirstOrDefault(p =>
@@ -4048,7 +5052,36 @@ exit 0";
 
             StatsRefreshSessionUI();
             StatsRebuildLobbyRows();
+            Dispatcher.InvokeAsync(() => StatsLastGameServerLabel.Text = _statsLastGameServerText);
             if (triggerLobby) _ = StatsFetchLobbyStats();
+        }
+
+        private static List<StatsPlayerRow> StatsMatchLobbyRowsToPlayers(
+            IEnumerable<StatsPlayerRow> lobbyRows,
+            IEnumerable<XElement> players)
+        {
+            var playerXuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var playerGamertags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var player in players)
+            {
+                string xuid = StatsNormalizeXuid(player.Attribute("mXboxUserId")?.Value ?? "");
+                if (!string.IsNullOrWhiteSpace(xuid))
+                    playerXuids.Add(xuid);
+
+                string gamertag = player.Attribute("mGamertagText")?.Value ?? "";
+                if (!string.IsNullOrWhiteSpace(gamertag))
+                    playerGamertags.Add(gamertag);
+            }
+
+            return lobbyRows
+                .Where(row =>
+                {
+                    string xuid = StatsNormalizeXuid(row.Xuid);
+                    return (!string.IsNullOrWhiteSpace(xuid) && playerXuids.Contains(xuid)) ||
+                           (!string.IsNullOrWhiteSpace(row.Gamertag) && playerGamertags.Contains(row.Gamertag));
+                })
+                .ToList();
         }
 
         // ── API orchestration ─────────────────────────────────────────────────
@@ -4138,6 +5171,7 @@ exit 0";
                 if (kdVal != "N/A") StatsAddToCache(gt, kdVal, totals);
                 StatsSetStatus($"[HW] {gt} — K/D: {kdVal}");
                 StatsRefreshLifetimeUI();
+                StatsRebuildCurrentLobbyRows();
                 StatsRebuildLobbyRows();
                 return (true, false);
             }
@@ -4173,6 +5207,7 @@ exit 0";
                 double kd = totalDeaths > 0 ? (double)totalKills / totalDeaths : totalKills;
 
                 lock (_statsLock) { _statsRecentKd[gt] = kd.ToString("F2"); }
+                StatsRebuildCurrentLobbyRows();
                 StatsRebuildLobbyRows();
             }
             catch { }
@@ -4286,6 +5321,7 @@ exit 0";
                 StatsSetStatus($"[wort.gg] Error for {gt}: {ex.Message}");
             }
             StatsRefreshLifetimeUI();
+            StatsRebuildCurrentLobbyRows();
             StatsRebuildLobbyRows();
         }
 
@@ -4367,6 +5403,93 @@ exit 0";
 
             StatsSetStatus("Scan complete.");
             _ = Dispatcher.InvokeAsync(() => StatsScanBtn.IsEnabled = true);
+        }
+
+        private async Task StatsFetchCurrentLobbyStats()
+        {
+            if (!_rejoinProxy.IsRunning)
+                return;
+
+            List<string> gamertags;
+            lock (_statsLock)
+            {
+                if (_statsCurrentLobbyScanRunning)
+                    return;
+
+                _statsCurrentLobbyScanRunning = true;
+                gamertags = _statsMatchmakingPings.Values
+                    .Where(p => p.ObservedAt >= DateTime.UtcNow - TimeSpan.FromMinutes(30))
+                    .Select(p => p.Gamertag.Trim())
+                    .Where(gt => !string.IsNullOrWhiteSpace(gt))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            try
+            {
+                if (!gamertags.Any())
+                    return;
+
+                StatsSetStatus("Scanning current lobby...");
+
+                string hwToken; bool hwExpired;
+                lock (_statsLock) { hwToken = _statsSpartanToken; hwExpired = _statsHwTokenExpired; }
+                bool useHw = !string.IsNullOrEmpty(hwToken) && !hwExpired;
+                var rng = new Random();
+
+                foreach (var gt in gamertags)
+                {
+                    if (!_rejoinProxy.IsRunning)
+                        return;
+
+                    bool skip, hasRecent;
+                    lock (_statsLock)
+                    {
+                        skip = _statsKd.TryGetValue(gt, out string? existing) &&
+                               existing != "ERR" && existing != "N/A" && existing != "…";
+                        hasRecent = _statsRecentKd.ContainsKey(gt);
+                    }
+
+                    if (skip)
+                    {
+                        if (useHw && !hasRecent)
+                            _ = StatsFetchRecentStatsAsync(gt, hwToken);
+                        continue;
+                    }
+
+                    if (gt.Contains('(') || gt.Contains(')'))
+                    {
+                        lock (_statsLock) { _statsKd[gt] = "GUEST"; }
+                        StatsRebuildCurrentLobbyRows();
+                        continue;
+                    }
+
+                    if (!useHw)
+                    {
+                        StatsCachedPlayer? cached;
+                        lock (_statsLock) { _statsPersistentCache.TryGetValue(gt, out cached); }
+                        if (cached != null)
+                        {
+                            lock (_statsLock) { _statsKd[gt] = cached.KD; _statsTotals[gt] = cached.Totals; }
+                            StatsRebuildCurrentLobbyRows();
+                            continue;
+                        }
+                    }
+
+                    lock (_statsLock) { _statsKd[gt] = "…"; }
+                    StatsRebuildCurrentLobbyRows();
+                    await StatsFetchStats(gt);
+                    if (useHw)
+                        _ = StatsFetchRecentStatsAsync(gt, hwToken);
+                    await Task.Delay(useHw ? rng.Next(200, 500) : rng.Next(3500, 6000));
+                }
+
+                StatsSetStatus("Current lobby scan complete.");
+            }
+            finally
+            {
+                lock (_statsLock) { _statsCurrentLobbyScanRunning = false; }
+            }
         }
 
         // ── Persistence ───────────────────────────────────────────────────────
@@ -4497,10 +5620,37 @@ exit 0";
         private string _gamesPlayed = "";
         private string _recentKD = "";
         private string _recentTrend = "";
+        private string _skillPercentile = "—";
 
         public string Gamertag  { get; set; } = "";
+        public string Xuid      { get; set; } = "";
         public string Team      { get; set; } = "0";
-        public string TeamLabel => Team == "FFA" ? "FFA" : $"T{Team}";
+        public string TeamLabel => Team switch
+        {
+            "" or "—" => "—",
+            "FFA" => "FFA",
+            _ => $"T{Team}"
+        };
+        public string BestServer { get; set; } = "—";
+        public string Ping       { get; set; } = "—";
+        public string SquadId    { get; set; } = "";
+        public string SquadLabel { get; set; } = "";
+        public string SquadToolTip
+        {
+            get
+            {
+                if (SquadLabel == "?")
+                    return "Squad unknown: MCC did not expose a party id for this player";
+
+                if (string.IsNullOrWhiteSpace(SquadLabel))
+                    return "";
+
+                if (SquadId.StartsWith("skill:", StringComparison.OrdinalIgnoreCase))
+                    return $"Squad {SquadLabel}: inferred from group skill";
+
+                return $"Squad {SquadLabel}: {SquadId}";
+            }
+        }
         public bool   IsMe      { get; set; }
         public bool   IsScanning { get; set; }
         public int    Standing  { get; set; }
@@ -4533,6 +5683,12 @@ exit 0";
         {
             get => _recentTrend;
             set { _recentTrend = value; OnPropertyChanged(nameof(RecentTrend)); OnPropertyChanged(nameof(TrendColor)); }
+        }
+
+        public string SkillPercentile
+        {
+            get => _skillPercentile;
+            set { _skillPercentile = value; OnPropertyChanged(nameof(SkillPercentile)); }
         }
 
         public Brush KdColor
