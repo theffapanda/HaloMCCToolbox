@@ -39,6 +39,52 @@ namespace HaloToolbox
             catch { }
         }
 
+        public static bool LoadObsBrowserOverlayEnabled()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return (key?.GetValue("ObsBrowserOverlay") as string) == "Enabled";
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static void SaveObsBrowserOverlayEnabled(bool enabled)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("ObsBrowserOverlay", enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        public static bool LoadObsBrowserOverlaySessionStatsEnabled()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return (key?.GetValue("ObsBrowserOverlaySessionStats") as string) != "Disabled";
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        public static void SaveObsBrowserOverlaySessionStatsEnabled(bool enabled)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("ObsBrowserOverlaySessionStats", enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
         public static void SavePendingRejoinFixAutoStart(bool pending)
         {
             try
@@ -197,6 +243,29 @@ namespace HaloToolbox
             {
                 using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
                 key.SetValue("MccInstallationPath", path.Trim());
+            }
+            catch { }
+        }
+
+        public static string LoadDownpatchWorkspacePath()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return key?.GetValue("DownpatchWorkspacePath") as string ?? "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        public static void SaveDownpatchWorkspacePath(string path)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("DownpatchWorkspacePath", path.Trim());
             }
             catch { }
         }

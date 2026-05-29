@@ -119,6 +119,8 @@ namespace HaloToolbox
             new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _statsRecentKd =
             new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _statsGamertagsByXuid =
+            new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, MatchmakingPlayerPing> _statsMatchmakingPings =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, StatsCachedPlayer> _statsPersistentCache =
@@ -132,9 +134,15 @@ namespace HaloToolbox
         private readonly ProxyService _rejoinProxy = new();
         private readonly NetworkStatsMonitor _networkStatsMonitor = new();
         private readonly GameServerConnectionMonitor _gameServerConnectionMonitor = new();
+        private readonly ObsOverlayServer _obsOverlayServer = new();
         private GameNetworkStatsOverlayWindow? _gameNetworkStatsOverlay;
         private bool _networkStatsOverlayEnabled = true;
         private bool _networkStatsOverlayMoveEnabled;
+        private bool _obsBrowserOverlayEnabled;
+        private bool _obsBrowserOverlaySessionStatsEnabled = true;
+        private NetworkStatsSnapshot? _lastNetworkStatsSnapshot;
+        private NetworkTrafficSnapshot? _lastNetworkTrafficSnapshot;
+        private Rect _lastOverlayRelativePlacement = new(0, 0, 760.0 / 1920.0, 132.0 / 1080.0);
         private GameServerInfo? _lastNetworkStatsRelayServer;
         private GameServerInfo? _trustedDedicatedServer;
         private bool _mainWindowInitialized;
@@ -318,6 +326,13 @@ namespace HaloToolbox
 
             // Initialize the Stats tab (lobby monitor)
             StatsInitialize();
+            _obsBrowserOverlayEnabled = App.LoadObsBrowserOverlayEnabled();
+            _obsBrowserOverlaySessionStatsEnabled = App.LoadObsBrowserOverlaySessionStatsEnabled();
+            StatsObsOverlayToggle.IsChecked = _obsBrowserOverlayEnabled;
+            StatsObsSessionStatsToggle.IsChecked = _obsBrowserOverlaySessionStatsEnabled;
+            StatsRefreshObsOverlayUi();
+            if (_obsBrowserOverlayEnabled)
+                TryStartObsOverlayServer(logStatus: false);
             _rejoinProxy.WinHttpManualSetRequired += (_, command) =>
                 Dispatcher.InvokeAsync(() =>
                 {
@@ -345,21 +360,27 @@ namespace HaloToolbox
                 Dispatcher.InvokeAsync(() => HandleTrustedGameServerChanged(serverInfo));
             _rejoinProxy.OnMatchmakingPlayerPingsObserved += (_, pings) =>
             {
-                lock (_statsLock)
+                Dispatcher.InvokeAsync(() =>
                 {
-                    _statsMatchmakingPings.Clear();
-                    foreach (var ping in pings)
+                    lock (_statsLock)
                     {
-                        string normalizedXuid = StatsNormalizeXuid(ping.Xuid);
-                        if (!string.IsNullOrWhiteSpace(normalizedXuid))
-                            _statsMatchmakingPings[normalizedXuid] = ping;
+                        _statsMatchmakingPings.Clear();
+                        foreach (var ping in pings)
+                        {
+                            string normalizedXuid = StatsNormalizeXuid(ping.Xuid);
+                            if (!string.IsNullOrWhiteSpace(normalizedXuid))
+                            {
+                                _statsMatchmakingPings[normalizedXuid] = ping;
+                                StatsRememberGamertagForXuid(normalizedXuid, ping.Gamertag);
+                            }
+                        }
                     }
-                }
 
-                StatsRebuildCurrentLobbyRows();
-                StatsRebuildLobbyRows();
-                if (_rejoinProxy.IsRunning && pings.Count > 0)
-                    _ = StatsFetchCurrentLobbyStats();
+                    StatsRebuildCurrentLobbyRows();
+                    StatsRebuildLobbyRows();
+                    if (_rejoinProxy.IsRunning && pings.Count > 0)
+                        _ = StatsFetchCurrentLobbyStats();
+                });
             };
             _rejoinProxy.OnRequestCaptured += (_, entry) =>
                 Dispatcher.InvokeAsync(() => HandleSteamFirewallAutoSignal(entry));
@@ -376,6 +397,7 @@ namespace HaloToolbox
                 StopRejoinCrashWatcher();
                 _gameServerConnectionMonitor.Dispose();
                 _networkStatsMonitor.Dispose();
+                _obsOverlayServer.Dispose();
                 _rejoinProxy.Dispose();
             };
             Closing += (_, _) => SaveMainWindowPlacement();
@@ -574,22 +596,33 @@ namespace HaloToolbox
                 _gameServerConnectionMonitor.Stop();
                 _networkStatsMonitor.Stop();
                 CloseGameNetworkStatsOverlay();
+                ClearNetworkOverlaySnapshots();
                 _lastNetworkStatsRelayServer = null;
+                PublishObsOverlaySnapshot();
                 return;
             }
 
             _gameServerConnectionMonitor.Start();
 
-            if (!_networkStatsOverlayEnabled)
+            if (!_networkStatsOverlayEnabled && !_obsBrowserOverlayEnabled)
             {
                 _networkStatsMonitor.Stop();
                 CloseGameNetworkStatsOverlay();
+                ClearNetworkOverlaySnapshots();
+                PublishObsOverlaySnapshot();
                 return;
             }
 
-            EnsureGameNetworkStatsOverlay();
-            _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
-            _gameNetworkStatsOverlay?.SetMoveMode(_networkStatsOverlayMoveEnabled);
+            if (_networkStatsOverlayEnabled)
+            {
+                EnsureGameNetworkStatsOverlay();
+                _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
+                _gameNetworkStatsOverlay?.SetMoveMode(_networkStatsOverlayMoveEnabled);
+            }
+            else
+            {
+                CloseGameNetworkStatsOverlay();
+            }
 
             if (string.IsNullOrWhiteSpace(targetIp))
             {
@@ -597,8 +630,11 @@ namespace HaloToolbox
                 return;
             }
 
-            _gameNetworkStatsOverlay?.UpdateServer(serverInfo ?? _rejoinProxy.CurrentGameServerInfo);
+            if (_networkStatsOverlayEnabled)
+                _gameNetworkStatsOverlay?.UpdateServer(serverInfo ?? _rejoinProxy.CurrentGameServerInfo);
+
             _networkStatsMonitor.Start(targetIp);
+            PublishObsOverlaySnapshot();
             var port = serverInfo?.Ports.FirstOrDefault()?.Num;
             var endpoint = port is > 0 ? $"{targetIp}:{port}" : targetIp;
             AppendLog("[NET]", $"Monitoring server latency for {endpoint}.", "#00C8FF");
@@ -656,33 +692,56 @@ namespace HaloToolbox
             _statsLastGameServerText = label;
             StatsCurrentLobbyServerLabel.Text = label;
             StatsLastGameServerLabel.Text = label;
+            PublishObsOverlaySnapshot();
         }
 
         private void ClearNetworkStatsOverlayDisplay()
         {
-            if (!_networkStatsOverlayEnabled || !_rejoinProxy.IsRunning)
+            if ((!_networkStatsOverlayEnabled && !_obsBrowserOverlayEnabled) || !_rejoinProxy.IsRunning)
                 return;
 
-            EnsureGameNetworkStatsOverlay();
-            _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
-            _gameNetworkStatsOverlay?.SetMoveMode(_networkStatsOverlayMoveEnabled);
+            if (_networkStatsOverlayEnabled)
+            {
+                EnsureGameNetworkStatsOverlay();
+                _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
+                _gameNetworkStatsOverlay?.SetMoveMode(_networkStatsOverlayMoveEnabled);
+            }
             _networkStatsMonitor.Stop();
-            _gameNetworkStatsOverlay?.ClearStats();
+            ClearNetworkOverlaySnapshots();
+            if (_networkStatsOverlayEnabled)
+                _gameNetworkStatsOverlay?.ClearStats();
+            PublishObsOverlaySnapshot();
+        }
+
+        private void ClearNetworkOverlaySnapshots()
+        {
+            _lastNetworkStatsSnapshot = null;
+            _lastNetworkTrafficSnapshot = null;
         }
 
         private void UpdateNetworkStatsOverlay(NetworkStatsSnapshot snapshot)
         {
-            EnsureGameNetworkStatsOverlay();
-            _gameNetworkStatsOverlay?.UpdateStats(snapshot);
+            _lastNetworkStatsSnapshot = snapshot;
+            if (_networkStatsOverlayEnabled)
+            {
+                EnsureGameNetworkStatsOverlay();
+                _gameNetworkStatsOverlay?.UpdateStats(snapshot);
+            }
+            PublishObsOverlaySnapshot();
         }
 
         private void UpdateNetworkTrafficOverlay(NetworkTrafficSnapshot snapshot)
         {
-            if (!_networkStatsOverlayEnabled || !_rejoinProxy.IsRunning)
+            _lastNetworkTrafficSnapshot = snapshot;
+            if ((!_networkStatsOverlayEnabled && !_obsBrowserOverlayEnabled) || !_rejoinProxy.IsRunning)
                 return;
 
-            EnsureGameNetworkStatsOverlay();
-            _gameNetworkStatsOverlay?.UpdateTrafficStats(snapshot);
+            if (_networkStatsOverlayEnabled)
+            {
+                EnsureGameNetworkStatsOverlay();
+                _gameNetworkStatsOverlay?.UpdateTrafficStats(snapshot);
+            }
+            PublishObsOverlaySnapshot();
         }
 
         private string GetNetworkStatsTargetIp()
@@ -704,15 +763,37 @@ namespace HaloToolbox
         private void EnsureGameNetworkStatsOverlay()
         {
             if (_gameNetworkStatsOverlay is not null)
+            {
+                EnsureOverlaySourceServer(logStatus: false);
+                _gameNetworkStatsOverlay.SetOverlaySource(_obsOverlayServer.GameOverlayUrl);
                 return;
+            }
 
-            _gameNetworkStatsOverlay = new GameNetworkStatsOverlayWindow
+            EnsureOverlaySourceServer(logStatus: false);
+
+            var overlay = new GameNetworkStatsOverlayWindow
             {
                 Owner = this
             };
-            _gameNetworkStatsOverlay.Closed += (_, _) => _gameNetworkStatsOverlay = null;
-            _gameNetworkStatsOverlay.Show();
-            _gameNetworkStatsOverlay.SetMoveMode(_networkStatsOverlayMoveEnabled);
+            overlay.RelativePlacementChanged += GameNetworkStatsOverlay_RelativePlacementChanged;
+            overlay.Closed += (_, _) =>
+            {
+                overlay.RelativePlacementChanged -= GameNetworkStatsOverlay_RelativePlacementChanged;
+                if (ReferenceEquals(_gameNetworkStatsOverlay, overlay))
+                    _gameNetworkStatsOverlay = null;
+            };
+            _gameNetworkStatsOverlay = overlay;
+            overlay.Show();
+            overlay.SetOverlaySource(_obsOverlayServer.GameOverlayUrl);
+            overlay.SetMoveMode(_networkStatsOverlayMoveEnabled);
+            overlay.UpdateSessionStats(BuildObsOverlaySnapshot());
+            PublishObsOverlaySnapshot();
+        }
+
+        private void GameNetworkStatsOverlay_RelativePlacementChanged(object? sender, Rect placement)
+        {
+            _lastOverlayRelativePlacement = placement;
+            PublishObsOverlaySnapshot();
         }
 
         private static int? TryGetMccProcessId()
@@ -762,6 +843,8 @@ namespace HaloToolbox
             _gameServerConnectionMonitor.Stop();
             _networkStatsMonitor.Stop();
             CloseGameNetworkStatsOverlay();
+            if (!_obsBrowserOverlayEnabled)
+                _obsOverlayServer.Stop();
             AppendLog("[NET]", "Game network stats overlay disabled.", "#C8D8E8");
         }
 
@@ -4349,6 +4432,21 @@ try {{
                 if (!string.IsNullOrEmpty(_statsSpartanToken))
                     _ = StatsFetchRecentStatsAsync(_statsGamertag, _statsSpartanToken);
             }
+
+            StatsLoadLastGameOnStartup();
+        }
+
+        private void StatsLoadLastGameOnStartup()
+        {
+            if (!Directory.Exists(StatsWatchPath))
+                return;
+
+            var file = StatsLatestCarnageFile();
+            if (file is null)
+                return;
+
+            StatsSetStatus($"Loading last game: {file.Name}");
+            Task.Run(() => StatsProcessFile(file.FullName, countTowardSession: false));
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -4400,6 +4498,43 @@ try {{
             StatsAutoToggle.Content = "AUTO: OFF";
         }
 
+        private void StatsObsOverlayToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            _obsBrowserOverlayEnabled = true;
+            App.SaveObsBrowserOverlayEnabled(true);
+            EnsureOverlaySourceServer(logStatus: true);
+            StartNetworkStatsOverlay(GetNetworkStatsTargetIp(), GetNetworkStatsTargetServerInfo());
+            StatsRefreshObsOverlayUi();
+            PublishObsOverlaySnapshot();
+            TryCopyObsOverlayUrlToClipboard();
+        }
+
+        private void StatsObsOverlayToggle_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _obsBrowserOverlayEnabled = false;
+            App.SaveObsBrowserOverlayEnabled(false);
+            if (!_networkStatsOverlayEnabled)
+                _obsOverlayServer.Stop();
+            if (!_networkStatsOverlayEnabled)
+                StartNetworkStatsOverlay(GetNetworkStatsTargetIp(), GetNetworkStatsTargetServerInfo());
+            StatsRefreshObsOverlayUi();
+            StatsSetStatus("OBS overlay stopped.");
+        }
+
+        private void StatsObsSessionStatsToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            _obsBrowserOverlaySessionStatsEnabled = true;
+            App.SaveObsBrowserOverlaySessionStatsEnabled(true);
+            PublishObsOverlaySnapshot();
+        }
+
+        private void StatsObsSessionStatsToggle_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _obsBrowserOverlaySessionStatsEnabled = false;
+            App.SaveObsBrowserOverlaySessionStatsEnabled(false);
+            PublishObsOverlaySnapshot();
+        }
+
         private void StatsHwAuthBtn_Click(object sender, RoutedEventArgs e)
         {
             string gt; lock (_statsLock) { gt = _statsGamertag; }
@@ -4448,6 +4583,119 @@ try {{
         {
             Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
             e.Handled = true;
+        }
+
+        private void TryStartObsOverlayServer(bool logStatus)
+        {
+            EnsureOverlaySourceServer(logStatus);
+        }
+
+        private void EnsureOverlaySourceServer(bool logStatus)
+        {
+            try
+            {
+                _obsOverlayServer.Start();
+                if (logStatus)
+                    StatsSetStatus($"OBS overlay ready: {_obsOverlayServer.Url}");
+                if (logStatus)
+                    AppendLog("[OBS]", $"Browser source ready at {_obsOverlayServer.Url}", "#00C8FF");
+            }
+            catch (Exception ex)
+            {
+                if (_obsBrowserOverlayEnabled)
+                {
+                    _obsBrowserOverlayEnabled = false;
+                    App.SaveObsBrowserOverlayEnabled(false);
+                    Dispatcher.InvokeAsync(() => StatsObsOverlayToggle.IsChecked = false);
+                }
+                StatsSetStatus($"OBS overlay could not start: {ex.Message}");
+                AppendLog("[OBS]", $"Overlay server could not start: {ex.Message}", "#FF2D55");
+            }
+        }
+
+        private void TryCopyObsOverlayUrlToClipboard()
+        {
+            if (!_obsOverlayServer.IsRunning)
+                return;
+
+            try
+            {
+                Clipboard.SetText(_obsOverlayServer.Url);
+                StatsSetStatus($"OBS overlay URL copied: {_obsOverlayServer.Url}");
+            }
+            catch (Exception ex)
+            {
+                StatsSetStatus($"OBS overlay ready, but clipboard copy failed: {ex.Message}");
+            }
+        }
+
+        private void StatsRefreshObsOverlayUi()
+        {
+            StatsObsOverlayToggle.Content = _obsBrowserOverlayEnabled
+                ? "OBS OVERLAY: ON"
+                : "OBS OVERLAY: OFF";
+            StatsObsOverlayUrlLabel.Text = _obsBrowserOverlayEnabled
+                ? _obsOverlayServer.Url
+                : "";
+            StatsObsSessionStatsToggle.IsEnabled = _obsBrowserOverlayEnabled;
+        }
+
+        private void PublishObsOverlaySnapshot()
+        {
+            var snapshot = BuildObsOverlaySnapshot();
+
+            if (_networkStatsOverlayEnabled && _gameNetworkStatsOverlay is not null)
+                _gameNetworkStatsOverlay.UpdateSessionStats(snapshot);
+
+            if (_obsOverlayServer.IsRunning)
+                _obsOverlayServer.Update(snapshot);
+        }
+
+        private ObsOverlaySnapshot BuildObsOverlaySnapshot()
+        {
+            int wins, losses, games;
+            long kills, deaths;
+            lock (_statsLock)
+            {
+                wins = _statsSession.Wins;
+                losses = _statsSession.Losses;
+                games = _statsSession.GamesPlayed;
+                kills = _statsSession.Kills;
+                deaths = _statsSession.Deaths;
+            }
+
+            double kd = deaths > 0 ? (double)kills / deaths : kills;
+            var serverInfo = GetNetworkStatsTargetServerInfo();
+            string serverLabel = GameServerRegionResolver.GetRegionLabel(serverInfo);
+            if (string.IsNullOrWhiteSpace(serverLabel))
+                serverLabel = _statsCurrentLobbyServerText.Replace("Server - ", "", StringComparison.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(serverLabel))
+                serverLabel = "SERVER: --";
+
+            var rttHistory = _lastNetworkStatsSnapshot?.RttHistory
+                .Select(x => x.HasValue ? (int?)Math.Clamp(x.Value, int.MinValue, int.MaxValue) : null)
+                .ToArray() ?? Array.Empty<int?>();
+
+            return new ObsOverlaySnapshot(
+                ShowSessionStats: _obsBrowserOverlaySessionStatsEnabled,
+                ServerLabel: serverLabel,
+                RttMs: _lastNetworkStatsSnapshot?.RttMs is long rtt ? (int?)Math.Clamp(rtt, int.MinValue, int.MaxValue) : null,
+                PacketLossPercent: _lastNetworkStatsSnapshot?.PacketLossPercent ?? 0,
+                RttHistoryMs: rttHistory,
+                UploadKilobytesPerSecond: _lastNetworkTrafficSnapshot?.UploadKilobytesPerSecond,
+                DownloadKilobytesPerSecond: _lastNetworkTrafficSnapshot?.DownloadKilobytesPerSecond,
+                UploadPacketsPerSecond: _lastNetworkTrafficSnapshot?.UploadPacketsPerSecond,
+                DownloadPacketsPerSecond: _lastNetworkTrafficSnapshot?.DownloadPacketsPerSecond,
+                Wins: wins,
+                Losses: losses,
+                GamesPlayed: games,
+                Kills: kills,
+                Deaths: deaths,
+                SessionKd: kd.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                OverlayLeftRatio: _lastOverlayRelativePlacement.X,
+                OverlayTopRatio: _lastOverlayRelativePlacement.Y,
+                OverlayWidthRatio: _lastOverlayRelativePlacement.Width,
+                OverlayHeightRatio: _lastOverlayRelativePlacement.Height);
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -4542,6 +4790,7 @@ try {{
                 StatsSessionKillsLabel.Text = $"{kills:N0}K";
                 StatsSessionDeathsLabel.Text = $"{deaths:N0}D";
             });
+            PublishObsOverlaySnapshot();
         }
 
         private void StatsRefreshLifetimeUI()
@@ -4564,6 +4813,7 @@ try {{
         {
             Dictionary<string, MatchmakingPlayerPing> pingSnap;
             Dictionary<string, string> kdSnap, totSnap, gamesSnap;
+            Dictionary<string, string> gamertagsByXuid;
             string myGt;
 
             lock (_statsLock)
@@ -4572,6 +4822,7 @@ try {{
                 kdSnap = new Dictionary<string, string>(_statsKd, StringComparer.OrdinalIgnoreCase);
                 totSnap = new Dictionary<string, string>(_statsTotals, StringComparer.OrdinalIgnoreCase);
                 gamesSnap = new Dictionary<string, string>(_statsGames, StringComparer.OrdinalIgnoreCase);
+                gamertagsByXuid = new Dictionary<string, string>(_statsGamertagsByXuid, StringComparer.OrdinalIgnoreCase);
                 myGt = _statsGamertag;
             }
 
@@ -4583,20 +4834,18 @@ try {{
 
             var rows = freshPings
                 .OrderBy(p => StatsSquadSortKey(StatsGetSquadKey(p), squadLabels))
-                .ThenBy(p => StatsNormalizeTeamForSort(p.Team))
-                .ThenBy(p => p.Gamertag)
+                .ThenBy(p => StatsResolveGamertag(p, gamertagsByXuid))
+                .ThenBy(p => StatsNormalizeXuid(p.Xuid))
                 .Select(p =>
                 {
-                    string gt = string.IsNullOrWhiteSpace(p.Gamertag)
-                        ? p.Xuid
-                        : p.Gamertag;
+                    string gt = StatsResolveGamertag(p, gamertagsByXuid);
                     string squadKey = StatsGetSquadKey(p);
 
                     return new StatsPlayerRow
                     {
                         Gamertag = gt,
                         Xuid = StatsNormalizeXuid(p.Xuid),
-                        Team = StatsNormalizeTeamForDisplay(p.Team),
+                        Team = "",
                         KD = kdSnap.GetValueOrDefault(gt, "—"),
                         Totals = totSnap.GetValueOrDefault(gt, ""),
                         GamesPlayed = gamesSnap.GetValueOrDefault(gt, ""),
@@ -4626,6 +4875,7 @@ try {{
                 foreach (var row in rows)
                     _statsCurrentLobbyRows.Add(row);
             });
+            PublishObsOverlaySnapshot();
         }
 
         private void StatsRebuildLobbyRows()
@@ -4842,6 +5092,52 @@ try {{
             return normalized == "—" ? "9" : normalized;
         }
 
+        private void StatsRememberGamertagForXuid(string xuid, string gamertag)
+        {
+            string normalizedXuid = StatsNormalizeXuid(xuid);
+            if (string.IsNullOrWhiteSpace(normalizedXuid) || string.IsNullOrWhiteSpace(gamertag))
+                return;
+
+            string trimmedGamertag = gamertag.Trim();
+            if (StatsLooksLikeXuid(trimmedGamertag))
+                return;
+
+            _statsGamertagsByXuid[normalizedXuid] = trimmedGamertag;
+        }
+
+        private static string StatsResolveGamertag(
+            MatchmakingPlayerPing ping,
+            IReadOnlyDictionary<string, string> gamertagsByXuid)
+        {
+            string normalizedXuid = StatsNormalizeXuid(ping.Xuid);
+            if (!string.IsNullOrWhiteSpace(ping.Gamertag) && !StatsLooksLikeXuid(ping.Gamertag))
+                return ping.Gamertag.Trim();
+
+            if (!string.IsNullOrWhiteSpace(normalizedXuid) &&
+                gamertagsByXuid.TryGetValue(normalizedXuid, out var cachedGamertag) &&
+                !string.IsNullOrWhiteSpace(cachedGamertag))
+            {
+                return cachedGamertag;
+            }
+
+            return string.IsNullOrWhiteSpace(normalizedXuid) ? "Resolving..." : $"Resolving {StatsShortXuid(normalizedXuid)}";
+        }
+
+        private static bool StatsLooksLikeXuid(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            string trimmed = StatsNormalizeXuid(value);
+            return trimmed.Length >= 12 && trimmed.All(char.IsDigit);
+        }
+
+        private static string StatsShortXuid(string xuid)
+        {
+            string normalized = StatsNormalizeXuid(xuid);
+            return normalized.Length <= 4 ? normalized : $"...{normalized[^4..]}";
+        }
+
         private static string StatsFormatServerRegion(string region)
         {
             if (string.IsNullOrWhiteSpace(region))
@@ -4902,9 +5198,8 @@ try {{
             if (percentile > 0 && percentile <= 1)
                 percentile *= 100;
 
-            string team = StatsNormalizeTeamForDisplay(ping.Team);
             string roundedPercentile = percentile.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
-            return $"skill:{team}:{roundedPercentile}";
+            return $"skill:{roundedPercentile}";
         }
 
         private static void StatsFillMissingSkillPercentilesFromSquads(List<StatsPlayerRow> rows)
@@ -4991,7 +5286,7 @@ try {{
         private static string StatsSig(FileInfo f) =>
             $"{f.FullName}|{f.Length}|{f.LastWriteTime.Ticks}";
 
-        private void StatsProcessFile(string path)
+        private void StatsProcessFile(string path, bool countTowardSession = true)
         {
             XDocument? doc = null;
             for (int i = 0; i < 10; i++)
@@ -5022,11 +5317,17 @@ try {{
             lock (_statsLock)
             {
                 _statsLastPlayers = players;
+                foreach (var player in players)
+                {
+                    StatsRememberGamertagForXuid(
+                        player.Attribute("mXboxUserId")?.Value ?? "",
+                        player.Attribute("mGamertagText")?.Value ?? "");
+                }
                 _statsLastCompletedLobbyRows = StatsMatchLobbyRowsToPlayers(_statsCurrentLobbySnapshotRows, players)
                     .Select(StatsClonePlayerRow)
                     .ToList();
                 _statsLastGameServerText = _statsCurrentLobbyServerText;
-                if (!_statsSession.ProcessedGameIds.Contains(gId))
+                if (countTowardSession && !_statsSession.ProcessedGameIds.Contains(gId))
                 {
                     var me = players.FirstOrDefault(p =>
                         p.Attribute("mGamertagText")?.Value
@@ -5053,6 +5354,8 @@ try {{
             StatsRefreshSessionUI();
             StatsRebuildLobbyRows();
             Dispatcher.InvokeAsync(() => StatsLastGameServerLabel.Text = _statsLastGameServerText);
+            if (!countTowardSession)
+                StatsSetStatus($"Loaded last game: {Path.GetFileName(path)}");
             if (triggerLobby) _ = StatsFetchLobbyStats();
         }
 
@@ -5417,10 +5720,12 @@ try {{
                     return;
 
                 _statsCurrentLobbyScanRunning = true;
+                var gamertagsByXuid = new Dictionary<string, string>(_statsGamertagsByXuid, StringComparer.OrdinalIgnoreCase);
                 gamertags = _statsMatchmakingPings.Values
                     .Where(p => p.ObservedAt >= DateTime.UtcNow - TimeSpan.FromMinutes(30))
-                    .Select(p => p.Gamertag.Trim())
-                    .Where(gt => !string.IsNullOrWhiteSpace(gt))
+                    .Select(p => StatsResolveGamertag(p, gamertagsByXuid))
+                    .Where(gt => !string.IsNullOrWhiteSpace(gt) &&
+                                 !gt.StartsWith("Resolving", StringComparison.OrdinalIgnoreCase))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
             }

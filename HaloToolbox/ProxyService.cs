@@ -55,6 +55,7 @@ public class ProxyService : IDisposable
 
     // Last observed squad session state — drives solo vs party handling and UI labeling.
     private RejoinSquadState? _lastSquadState;
+    private SavedHandleInfo? _lastSquadHandle;
 
     // Set true when MCC exits and we have a saved match session.  Tells the proxy to
     // (a) do a JIT PUT+handle on the first sessiondirectory request, and
@@ -121,6 +122,7 @@ public class ProxyService : IDisposable
     {
         _cachedGameServerInfo = LoadPersistedGameServer();
         _lastSquadState = LoadPersistedSquadState();
+        _lastSquadHandle = LoadPersistedHandle();
     }
 
     /// <summary>Clears cached game server info and disables redirection.</summary>
@@ -203,6 +205,23 @@ public class ProxyService : IDisposable
         catch (Exception ex)
         {
             RejoinFixDiagnostics.Warn("squad", $"Failed to load cached squad state: {ex.Message}");
+            return null;
+        }
+    }
+
+    private SavedHandleInfo? LoadPersistedHandle()
+    {
+        try
+        {
+            if (!File.Exists(RejoinFixPaths.LastHandleFile))
+                return null;
+
+            var json = File.ReadAllText(RejoinFixPaths.LastHandleFile);
+            return JsonSerializer.Deserialize<SavedHandleInfo>(json);
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("capture", $"Failed to load cached activity handle: {ex.Message}");
             return null;
         }
     }
@@ -1002,7 +1021,7 @@ public class ProxyService : IDisposable
                 {
                     foreach (var member in property.Value.EnumerateObject())
                     {
-                        if (TryParseMatchmakingPlayerPing(member.Value, out var ping))
+                        if (TryParseMatchmakingPlayerPing(member.Value, member.Name, out var ping))
                             pings.Add(ping);
                     }
                 }
@@ -1017,7 +1036,7 @@ public class ProxyService : IDisposable
         }
     }
 
-    private static bool TryParseMatchmakingPlayerPing(JsonElement member, out MatchmakingPlayerPing ping)
+    private static bool TryParseMatchmakingPlayerPing(JsonElement member, string memberKey, out MatchmakingPlayerPing ping)
     {
         ping = new MatchmakingPlayerPing();
 
@@ -1025,6 +1044,8 @@ public class ProxyService : IDisposable
             return false;
 
         string xuid = FindStringPropertyRecursive(member, "xuid", "Xuid", "xboxUserId", "XboxUserId");
+        if (string.IsNullOrWhiteSpace(xuid) && LooksLikeSessionMemberXuid(memberKey))
+            xuid = memberKey;
         string gamertag = FindStringPropertyRecursive(member, "gamertag", "Gamertag", "gamerTag", "GamerTag");
         if (string.IsNullOrWhiteSpace(xuid) && string.IsNullOrWhiteSpace(gamertag))
             return false;
@@ -1047,6 +1068,19 @@ public class ProxyService : IDisposable
         };
 
         return true;
+    }
+
+    private static bool LooksLikeSessionMemberXuid(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Equals("me", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string trimmed = value.Trim();
+        if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            return trimmed.Length > 2 &&
+                   trimmed[2..].All(Uri.IsHexDigit);
+
+        return trimmed.Length >= 12 && trimmed.All(char.IsDigit);
     }
 
     private static bool TryFindBestNetworkRegionLatency(JsonElement element, out NetworkRegionLatency best)
@@ -1372,11 +1406,23 @@ public class ProxyService : IDisposable
                 }
             }
 
+            if (_pendingCrashRestore &&
+                ShouldKeepExistingSquadHandleDuringRestore(_lastSquadHandle, info))
+            {
+                RejoinFixDiagnostics.Warn(
+                    "restore",
+                    $"Kept saved party squad handle {_lastSquadHandle!.SessionShort}; ignored weaker post-crash handle {info.SessionShort} [{info.Mode.ToDisplayLabel()}].");
+                return;
+            }
+
             var dir  = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HaloMCCToolbox", "RejoinFix");
             Directory.CreateDirectory(dir);
             File.WriteAllText(
                 Path.Combine(dir, "last-handle.json"),
                 JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = true }));
+            if (info.TemplateName.Equals("cascadesquadsession", StringComparison.OrdinalIgnoreCase))
+                _lastSquadHandle = info;
+
             string modeSuffix = info.Mode == RejoinSessionMode.Unknown
                 ? ""
                 : $" [{info.Mode.ToDisplayLabel()}]";
@@ -1452,6 +1498,12 @@ public class ProxyService : IDisposable
                 ConnectionGuid = connectionGuid,
                 RequestHeaders = new Dictionary<string, string>(requestHeaders, StringComparer.OrdinalIgnoreCase),
             };
+
+            if (_lastSquadState is not null)
+            {
+                info.ObservedSquadMemberCount = _lastSquadState.MemberCount;
+                info.ObservedSquadSessionName = _lastSquadState.SessionName;
+            }
 
             if (_lastMatchSession is not null &&
                 string.Equals(_lastMatchSession.TemplateName, info.TemplateName, StringComparison.OrdinalIgnoreCase) &&
@@ -1576,6 +1628,23 @@ public class ProxyService : IDisposable
         return score;
     }
 
+    private static bool ShouldKeepExistingSquadHandleDuringRestore(SavedHandleInfo? existing, SavedHandleInfo incoming)
+    {
+        if (existing is null)
+            return false;
+
+        if (!IsSquadHandle(existing) || !IsSquadHandle(incoming))
+            return false;
+
+        if ((DateTime.UtcNow - existing.SavedAt).TotalMinutes > 30)
+            return false;
+
+        return existing.IsPartySquad && !incoming.IsPartySquad;
+    }
+
+    private static bool IsSquadHandle(SavedHandleInfo info) =>
+        info.TemplateName.Equals("cascadesquadsession", StringComparison.OrdinalIgnoreCase);
+
     private void ObserveSquadSessionDocument(string url, string body, string source)
     {
         RejoinSquadState? nextState = null;
@@ -1645,6 +1714,14 @@ public class ProxyService : IDisposable
             || _lastSquadState.AcceptedCount != nextState.AcceptedCount
             || _lastSquadState.ActiveCount != nextState.ActiveCount;
 
+        if (_pendingCrashRestore && ShouldKeepExistingSquadStateDuringRestore(_lastSquadState, nextState))
+        {
+            RejoinFixDiagnostics.Warn(
+                "restore",
+                $"Kept saved party squad state {_lastSquadState!.SessionName[..Math.Min(13, _lastSquadState.SessionName.Length)]}...; ignored weaker post-crash squad {nextState.SessionName[..Math.Min(13, nextState.SessionName.Length)]}... [{nextState.Mode.ToDisplayLabel()}].");
+            return;
+        }
+
         _lastSquadState = nextState;
 
         if (observedMemberConnectionState && connectedCount == 0)
@@ -1669,6 +1746,17 @@ public class ProxyService : IDisposable
                 $"Observed {nextState.Mode.ToDisplayLabel()} squad state for {nextState.SessionName[..Math.Min(13, nextState.SessionName.Length)]}… ({nextState.MemberCount} members) via {source}.");
             OnRejoinContextChanged?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    private static bool ShouldKeepExistingSquadStateDuringRestore(RejoinSquadState? existing, RejoinSquadState incoming)
+    {
+        if (existing is null)
+            return false;
+
+        if ((DateTime.UtcNow - existing.SavedAt).TotalMinutes > 30)
+            return false;
+
+        return existing.Mode == RejoinSessionMode.Party && incoming.Mode != RejoinSessionMode.Party;
     }
 
     private static string TryGetSessionNameFromUrl(string url)
@@ -1812,10 +1900,11 @@ public class ProxyService : IDisposable
             {
                 // PUT /members/me — active:true + connection GUID (required by
                 // connectionRequiredForActiveMembers capability)
-                string connGuid = Guid.NewGuid().ToString();
+                string connGuid = GetCurrentGhostConnectionGuid();
+                int restoreMemberCount = GetObservedSquadMemberCountForRestore();
                 using var putReq = new HttpRequestMessage(HttpMethod.Put, match.SessionUrl);
                 putReq.Content = new StringContent(
-                    "{\"members\":{\"me\":{\"properties\":{\"system\":{\"active\":true,\"connection\":\"" + connGuid + "\"},\"custom\":{}}}}}",
+                    "{\"members\":{\"me\":{\"properties\":{\"system\":{\"active\":true,\"connection\":\"" + connGuid + "\"},\"custom\":{\"membercount\":" + restoreMemberCount + "}}}}}",
                     System.Text.Encoding.UTF8, "application/json");
                 putReq.Headers.TryAddWithoutValidation("If-Match", etag);
                 foreach (var (k, v) in freshHeaders)
@@ -2118,7 +2207,8 @@ public class ProxyService : IDisposable
                     // The linked-list "next" field on our member points to newNext (end sentinel).
                     // The PREVIOUS last member's "next" already == nextIdx, so it
                     // naturally chains into our new member without modification.
-                    string connGuid = Guid.NewGuid().ToString();
+                    string connGuid = GetCurrentGhostConnectionGuid();
+                    int restoreMemberCount = GetObservedSquadMemberCountForRestore();
                     string gt = !string.IsNullOrEmpty(_playerGamertag)
                         ? ",\"gamertag\":\"" + _playerGamertag + "\""
                         : "";
@@ -2130,7 +2220,7 @@ public class ProxyService : IDisposable
                         "\"properties\":{\"system\":{" +
                         "\"active\":true," +
                         "\"connection\":\"" + connGuid + "\"" +
-                        "},\"custom\":{}}" +
+                        "},\"custom\":{\"membercount\":" + restoreMemberCount + "}}" +
                         gt +
                         ",\"activeTitleId\":\"1144039928\"}";
 
@@ -2495,8 +2585,8 @@ public class ProxyService : IDisposable
     // session while we sync with real MPSD in the background.
 
     /// <summary>
-    /// Check if a request is for the ghosted match session only.
-    /// Fresh squad sessions created during restart must always pass through to MPSD.
+    /// Check if a request is for the ghosted match session.
+    /// CascadeSquadSession stays service-authoritative during restart.
     /// </summary>
     private bool IsRequestForGhostSession(Titanium.Web.Proxy.Http.Request req)
     {
@@ -2519,8 +2609,8 @@ public class ProxyService : IDisposable
     {
         if (_ghostSession is null) return false;
 
-        string method = req.Method.ToUpperInvariant();
-        string url = req.RequestUri.AbsolutePath;
+        string method = (req.Method ?? "").ToUpperInvariant();
+        string url = req.RequestUri?.AbsolutePath ?? "";
         string sessionName = _ghostSession.SessionName.ToLowerInvariant();
 
         // Determine if this is the saved match session
@@ -2708,6 +2798,20 @@ public class ProxyService : IDisposable
         return PlaceholderConnectionGuid;
     }
 
+    private int GetObservedSquadMemberCountForRestore()
+    {
+        if (_ghostSession?.ObservedSquadMemberCount > 0)
+            return _ghostSession.ObservedSquadMemberCount;
+
+        if (_lastMatchSession?.ObservedSquadMemberCount > 0)
+            return _lastMatchSession.ObservedSquadMemberCount;
+
+        if (_lastSquadState?.MemberCount > 0)
+            return _lastSquadState.MemberCount;
+
+        return 1;
+    }
+
     private void TryUpgradeGhostSessionConnectionGuid(string requestBody)
     {
         if (_ghostSession is null || string.IsNullOrWhiteSpace(requestBody))
@@ -2831,6 +2935,7 @@ public class ProxyService : IDisposable
             string connectionField = string.IsNullOrEmpty(currentGuid)
                 ? ""
                 : $",\"connection\":\"{currentGuid}\"";
+            int restoreMemberCount = GetObservedSquadMemberCountForRestore();
 
             var putBody = $$"""
 {
@@ -2840,7 +2945,9 @@ public class ProxyService : IDisposable
         "system": {
           "active": true{{connectionField}}
         },
-        "custom": {}
+        "custom": {
+          "membercount": {{restoreMemberCount}}
+        }
       }
     }
   }
