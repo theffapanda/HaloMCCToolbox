@@ -1511,6 +1511,29 @@
                                               Margin="0,0,6,0"
                                               Checked="StatsAutoToggle_Checked"
                                               Unchecked="StatsAutoToggle_Unchecked"/>
+                                <ToggleButton x:Name="StatsObsOverlayToggle"
+                                              Content="OBS OVERLAY: OFF"
+                                              Style="{StaticResource StatsToggleBtn}"
+                                              Margin="10,0,6,0"
+                                              ToolTip="Starts a local browser-source overlay for OBS and copies the current overlay URL."
+                                              Checked="StatsObsOverlayToggle_Checked"
+                                              Unchecked="StatsObsOverlayToggle_Unchecked"/>
+                                <CheckBox x:Name="StatsObsSessionStatsToggle"
+                                          Content="SHOW SESSION STATS"
+                                          Style="{StaticResource MapCheckBox}"
+                                          FontSize="10"
+                                          VerticalAlignment="Center"
+                                          Margin="4,0,0,0"
+                                          ToolTip="Show or hide the session W/L, K/D, kills, and deaths in the OBS overlay."
+                                          Checked="StatsObsSessionStatsToggle_Checked"
+                                          Unchecked="StatsObsSessionStatsToggle_Unchecked"/>
+                                <TextBlock x:Name="StatsObsOverlayUrlLabel"
+                                           Text=""
+                                           FontFamily="Consolas"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           VerticalAlignment="Center"
+                                           Margin="12,0,0,0"/>
                             </StackPanel>
                         </Border>
 
@@ -1626,17 +1649,6 @@
                                                                FontWeight="SemiBold"
                                                                Padding="6,5"
                                                                HorizontalAlignment="Center"/>
-                                                </DataTemplate>
-                                            </GridViewColumn.CellTemplate>
-                                        </GridViewColumn>
-
-                                        <GridViewColumn Header="TEAM" Width="70">
-                                            <GridViewColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding TeamLabel}"
-                                                               Foreground="{DynamicResource MutedBrush}"
-                                                               FontFamily="Consolas"
-                                                               Padding="6,5" HorizontalAlignment="Center"/>
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>

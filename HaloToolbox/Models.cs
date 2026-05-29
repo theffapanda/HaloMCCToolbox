@@ -276,6 +276,7 @@ public class TheaterClip : INotifyPropertyChanged
     public string MapDisplayName { get; init; } = "";  // resolved human-readable map name
     public long   FileSizeBytes { get; init; }
     public DateTime RecordedAt  { get; init; }
+    public string RecordedAtSource { get; init; } = "File modified";
     public string SourcePath    { get; init; } = "";
     public string BackupPath    { get; init; } = "";
 

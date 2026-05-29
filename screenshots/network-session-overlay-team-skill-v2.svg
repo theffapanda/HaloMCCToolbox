@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06131b" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#02080d" stop-opacity="0.82"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="760" height="420" fill="#12181d"/>
+  <g opacity="0.22">
+    <path d="M0 92 H760 M0 176 H760 M0 260 H760 M112 0 V420 M248 0 V420 M384 0 V420 M520 0 V420 M656 0 V420" stroke="#6f8795"/>
+  </g>
+
+  <g transform="translate(184 48)" filter="url(#shadow)">
+    <rect width="392" height="306" rx="5" fill="url(#panel)" stroke="#194154" stroke-width="1.2"/>
+    <rect x="10" y="9" width="372" height="288" rx="3" fill="none" stroke="#0e2834"/>
+
+    <text x="20" y="32" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#00c8ff">NETWORK</text>
+    <text x="372" y="32" text-anchor="end" font-family="Consolas, monospace" font-size="13" fill="#8fb8d8">EAST US 2</text>
+
+    <text x="20" y="70" font-family="Consolas, monospace" font-size="26" font-weight="700" fill="#39ff14">Ping: 42 ms</text>
+    <text x="372" y="70" text-anchor="end" font-family="Consolas, monospace" font-size="21" font-weight="700" fill="#c8d8e8">Loss: 0%</text>
+
+    <text x="20" y="101" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#39ff14">UP</text>
+    <text x="48" y="101" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#c8d8e8">18.4 KB/s</text>
+    <text x="278" y="101" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#00c8ff">DOWN</text>
+    <text x="372" y="101" text-anchor="end" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#c8d8e8">64.8 KB/s</text>
+
+    <text x="20" y="123" font-family="Consolas, monospace" font-size="12" fill="#8fb8d8">42 packets/s</text>
+    <text x="372" y="123" text-anchor="end" font-family="Consolas, monospace" font-size="12" fill="#8fb8d8">96 packets/s</text>
+    <polyline points="20,144 55,138 90,141 125,132 160,136 195,123 230,127 265,118 300,124 335,113 372,119"
+              fill="none" stroke="#39ff14" stroke-width="2.5" stroke-linejoin="round"/>
+
+    <line x1="20" y1="164" x2="372" y2="164" stroke="#123340"/>
+    <text x="20" y="188" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#8fb8d8">SESSION</text>
+    <text x="372" y="188" text-anchor="end" font-family="Consolas, monospace" font-size="12" fill="#8fb8d8">7 games</text>
+
+    <text x="20" y="224" font-family="Consolas, monospace" font-size="30" font-weight="700" fill="#39ff14">5W</text>
+    <text x="78" y="224" font-family="Consolas, monospace" font-size="30" font-weight="700" fill="#53636e">-</text>
+    <text x="108" y="224" font-family="Consolas, monospace" font-size="30" font-weight="700" fill="#ff2d55">2L</text>
+    <text x="372" y="215" text-anchor="end" font-family="Consolas, monospace" font-size="13" fill="#8fb8d8">WIN RATE</text>
+    <text x="372" y="238" text-anchor="end" font-family="Consolas, monospace" font-size="26" font-weight="700" fill="#00c8ff">71%</text>
+
+    <rect x="20" y="249" width="352" height="40" rx="3" fill="#071119" stroke="#143645"/>
+    <text x="34" y="273" font-family="Consolas, monospace" font-size="12" fill="#8fb8d8">K/D</text>
+    <text x="76" y="276" font-family="Consolas, monospace" font-size="20" font-weight="700" fill="#c8d8e8">1.64</text>
+    <text x="164" y="273" font-family="Consolas, monospace" font-size="12" fill="#39ff14">115K</text>
+    <text x="232" y="273" font-family="Consolas, monospace" font-size="12" fill="#ff2d55">70D</text>
+
+    <rect x="20" y="296" width="352" height="40" rx="3" fill="#120f07" stroke="#5c4105"/>
+    <text x="34" y="321" font-family="Consolas, monospace" font-size="12" font-weight="700" fill="#ffb000">TEAM SKILL</text>
+    <text x="372" y="321" text-anchor="end" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#ffb000">RED 62% / BLUE 58%</text>
+  </g>
+
+  <text x="380" y="386" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" fill="#97a8b4">
+    V2 mockup: conditional TEAM SKILL, not raw MMR
+  </text>
+</svg>

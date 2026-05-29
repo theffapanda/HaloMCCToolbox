@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -6,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Microsoft.Web.WebView2.Core;
 
 namespace HaloToolbox;
 
@@ -22,8 +24,16 @@ public partial class GameNetworkStatsOverlayWindow : Window
     private Size? _manualSize;
     private bool _moveMode;
     private bool _isUserEditingPlacement;
-    private string _serverLabel = "SERVER: --";
-    private NetworkStatsSnapshot? _lastSnapshot;
+    private bool _browserInitialized;
+    private string _overlaySource = "";
+    private Rect? _lastRelativePlacement;
+
+    private static readonly string OverlayWebViewUserDataFolder = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "HaloMCCToolbox",
+        "OverlayWebView2",
+        Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
+
     private static readonly string OverlayPositionFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "HaloMCCToolbox",
@@ -46,12 +56,10 @@ public partial class GameNetworkStatsOverlayWindow : Window
             Interval = TimeSpan.FromMilliseconds(250)
         };
         _positionTimer.Tick += (_, _) => FollowGameWindow();
-        SizeChanged += (_, _) =>
-        {
-            if (!_isUserEditingPlacement && _lastSnapshot is not null)
-                DrawGraph(_lastSnapshot);
-        };
+        Loaded += OnLoadedAsync;
     }
+
+    internal event EventHandler<Rect>? RelativePlacementChanged;
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -67,54 +75,38 @@ public partial class GameNetworkStatsOverlayWindow : Window
         base.OnClosed(e);
     }
 
+    public void SetOverlaySource(string url)
+    {
+        if (string.Equals(_overlaySource, url, StringComparison.Ordinal))
+            return;
+
+        _overlaySource = url;
+        NavigateOverlayBrowser();
+    }
+
     public void UpdateStats(NetworkStatsSnapshot snapshot)
     {
-        TxtNetworkServer.Text = string.IsNullOrWhiteSpace(_serverLabel)
-            ? "ACTIVE SERVER"
-            : _serverLabel;
-
-        if (snapshot.RttMs.HasValue)
-        {
-            TxtNetworkPing.Text = $"Ping: {snapshot.RttMs.Value} ms";
-            TxtNetworkPing.Foreground = GetPingBrush(snapshot.RttMs.Value);
-        }
-        else
-        {
-            TxtNetworkPing.Text = "Ping: timeout";
-            TxtNetworkPing.Foreground = Brush("#FF2D55");
-        }
-
-        TxtNetworkPacketLoss.Text = $"Loss: {snapshot.PacketLossPercent:0}%";
-        TxtNetworkPacketLoss.Foreground = snapshot.PacketLossPercent > 0
-            ? Brush("#FF6A00")
-            : Brush("#C8D8E8");
-
-        _lastSnapshot = snapshot;
-        DrawGraph(snapshot);
+        // The WebView overlay polls the shared local state endpoint.
     }
 
     public void UpdateTrafficStats(NetworkTrafficSnapshot snapshot)
     {
-        TxtNetworkUpload.Text = $"{FormatKilobytes(snapshot.UploadKilobytesPerSecond)}/s";
-        TxtNetworkDownload.Text = $"{FormatKilobytes(snapshot.DownloadKilobytesPerSecond)}/s";
-        TxtNetworkUploadPackets.Text = $"{snapshot.UploadPacketsPerSecond:0} packets/s";
-        TxtNetworkDownloadPackets.Text = $"{snapshot.DownloadPacketsPerSecond:0} packets/s";
+        // The WebView overlay polls the shared local state endpoint.
+    }
+
+    internal void UpdateSessionStats(ObsOverlaySnapshot snapshot)
+    {
+        // The WebView overlay polls the shared local state endpoint.
     }
 
     public void ClearStats()
     {
-        _serverLabel = "";
-        TxtNetworkServer.Text = "";
-        TxtNetworkPing.Text = "";
-        TxtNetworkPacketLoss.Foreground = Brush("#C8D8E8");
-        TxtNetworkPacketLoss.Text = "";
-        TxtNetworkUpload.Text = "";
-        TxtNetworkDownload.Text = "";
-        TxtNetworkUploadPackets.Text = "";
-        TxtNetworkDownloadPackets.Text = "";
-        _lastSnapshot = null;
-        PingGraphLine.Points.Clear();
-        PingGraphGlow.Points.Clear();
+        // The WebView overlay polls the shared local state endpoint.
+    }
+
+    public void UpdateServer(GameServerInfo? serverInfo)
+    {
+        // The WebView overlay polls the shared local state endpoint.
     }
 
     public void SetPreferredProcessId(int? processId)
@@ -127,29 +119,48 @@ public partial class GameNetworkStatsOverlayWindow : Window
     {
         _moveMode = enabled;
         OverlayRoot.IsHitTestVisible = enabled;
+        DragSurface.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         Cursor = enabled ? Cursors.SizeAll : Cursors.Arrow;
         ResizeMode = enabled ? ResizeMode.CanResizeWithGrip : ResizeMode.NoResize;
         ResizeThumb.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-        OverlayRoot.Background = enabled ? Brush("#B0081018") : Brushes.Transparent;
-        OverlayRoot.BorderBrush = enabled ? Brush("#8800C8FF") : Brushes.Transparent;
-        GraphBorder.Background = enabled ? Brush("#33040A10") : Brushes.Transparent;
-        GraphBorder.BorderBrush = enabled ? Brush("#3300C8FF") : Brushes.Transparent;
+        OverlayRoot.Background = enabled ? Brush("#66081018") : Brushes.Transparent;
+        OverlayRoot.BorderBrush = enabled ? Brush("#CC00C8FF") : Brushes.Transparent;
         ApplyWindowInteractionMode();
     }
 
-    public void UpdateServer(GameServerInfo? serverInfo)
+    private async void OnLoadedAsync(object sender, RoutedEventArgs e)
     {
-        if (serverInfo is null)
+        try
         {
-            ClearStats();
-            return;
+            var env = await CoreWebView2Environment.CreateAsync(
+                browserExecutableFolder: null,
+                userDataFolder: OverlayWebViewUserDataFolder);
+            OverlayBrowser.DefaultBackgroundColor = System.Drawing.Color.Transparent;
+            await OverlayBrowser.EnsureCoreWebView2Async(env);
+            OverlayBrowser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            OverlayBrowser.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            _browserInitialized = true;
+            NavigateOverlayBrowser();
         }
+        catch
+        {
+            // If WebView2 is unavailable, keep the transparent overlay window harmless.
+        }
+    }
 
-        var regionLabel = GameServerRegionResolver.GetRegionLabel(serverInfo);
-        _serverLabel = !string.IsNullOrWhiteSpace(regionLabel)
-            ? regionLabel
-            : "ACTIVE SERVER";
-        TxtNetworkServer.Text = _serverLabel;
+    private void NavigateOverlayBrowser()
+    {
+        if (!_browserInitialized || string.IsNullOrWhiteSpace(_overlaySource))
+            return;
+
+        try
+        {
+            OverlayBrowser.CoreWebView2.Navigate(_overlaySource);
+        }
+        catch
+        {
+            // Navigation is best-effort; the next SetOverlaySource can retry.
+        }
     }
 
     private void ApplyWindowInteractionMode()
@@ -205,6 +216,7 @@ public partial class GameNetworkStatsOverlayWindow : Window
         }
 
         Visibility = Visibility.Visible;
+        PublishRelativePlacement(dipRect, width, height);
     }
 
     private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -269,8 +281,6 @@ public partial class GameNetworkStatsOverlayWindow : Window
     private void EndPlacementEdit()
     {
         _isUserEditingPlacement = false;
-        if (_lastSnapshot is not null)
-            DrawGraph(_lastSnapshot);
         FollowGameWindow();
         if (!_positionTimer.IsEnabled)
             _positionTimer.Start();
@@ -292,6 +302,7 @@ public partial class GameNetworkStatsOverlayWindow : Window
         double y = Math.Clamp(Top, dipRect.Top, maxTop) - dipRect.Top;
         _manualOffset = new Point(x, y);
         _manualSize = new Size(width, height);
+        PublishRelativePlacement(dipRect, width, height);
 
         try
         {
@@ -302,6 +313,30 @@ public partial class GameNetworkStatsOverlayWindow : Window
         {
             // Placement persistence is best-effort; dragging/resizing should still work.
         }
+    }
+
+    private void PublishRelativePlacement(Rect gameRect, double width, double height)
+    {
+        if (gameRect.Width <= 0 || gameRect.Height <= 0)
+            return;
+
+        var relative = new Rect(
+            Math.Clamp((Left - gameRect.Left) / gameRect.Width, 0, 1),
+            Math.Clamp((Top - gameRect.Top) / gameRect.Height, 0, 1),
+            Math.Clamp(width / gameRect.Width, 0, 1),
+            Math.Clamp(height / gameRect.Height, 0, 1));
+
+        if (_lastRelativePlacement.HasValue &&
+            Math.Abs(_lastRelativePlacement.Value.X - relative.X) < 0.0005 &&
+            Math.Abs(_lastRelativePlacement.Value.Y - relative.Y) < 0.0005 &&
+            Math.Abs(_lastRelativePlacement.Value.Width - relative.Width) < 0.0005 &&
+            Math.Abs(_lastRelativePlacement.Value.Height - relative.Height) < 0.0005)
+        {
+            return;
+        }
+
+        _lastRelativePlacement = relative;
+        RelativePlacementChanged?.Invoke(this, relative);
     }
 
     private Size CoerceOverlaySizeToGameRect(Rect gameRect)
@@ -363,44 +398,6 @@ public partial class GameNetworkStatsOverlayWindow : Window
         return new Rect(topLeft, bottomRight);
     }
 
-    private void DrawGraph(NetworkStatsSnapshot snapshot)
-    {
-        var history = snapshot.RttHistory;
-        if (history.Count == 0)
-        {
-            PingGraphLine.Points.Clear();
-            PingGraphGlow.Points.Clear();
-            return;
-        }
-
-        double width = Math.Max(24, GraphCanvas.ActualWidth);
-        double height = Math.Max(24, GraphCanvas.ActualHeight);
-        const double minMs = 0;
-        const double maxMs = 180;
-        double step = history.Count <= 1 ? width : width / (history.Count - 1);
-        var points = new PointCollection();
-
-        GraphGuideTop.X2 = width;
-        GraphGuideTop.Y1 = GraphGuideTop.Y2 = height / 3;
-        GraphGuideBottom.X2 = width;
-        GraphGuideBottom.Y1 = GraphGuideBottom.Y2 = height * 2 / 3;
-
-        for (int i = 0; i < history.Count; i++)
-        {
-            long value = history[i] ?? (long)maxMs;
-            double clamped = Math.Clamp(value, minMs, maxMs);
-            double x = i * step;
-            double y = height - ((clamped - minMs) / (maxMs - minMs) * (height - 4)) - 2;
-            points.Add(new Point(x, y));
-        }
-
-        PingGraphLine.Points = points;
-        PingGraphGlow.Points = points.Clone();
-        PingGraphLine.Stroke = snapshot.RttMs.HasValue
-            ? GetPingBrush(snapshot.RttMs.Value)
-            : Brush("#FF2D55");
-    }
-
     private static IntPtr FindMccWindow(int? preferredProcessId)
     {
         if (preferredProcessId.HasValue)
@@ -448,25 +445,6 @@ public partial class GameNetworkStatsOverlayWindow : Window
         }, IntPtr.Zero);
 
         return found;
-    }
-
-    private static SolidColorBrush GetPingBrush(long rttMs)
-    {
-        if (rttMs < 60)
-            return Brush("#39FF14");
-
-        if (rttMs > 150)
-            return Brush("#FF2D55");
-
-        return Brush("#FFD700");
-    }
-
-    private static string FormatKilobytes(double kilobytesPerSecond)
-    {
-        if (kilobytesPerSecond >= 1024)
-            return $"{kilobytesPerSecond / 1024.0:0.0} MB";
-
-        return $"{kilobytesPerSecond:0.0} KB";
     }
 
     private static SolidColorBrush Brush(string hex) =>
