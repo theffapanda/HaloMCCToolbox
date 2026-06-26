@@ -1445,6 +1445,13 @@
                                             Padding="8,3" FontSize="11"
                                             Margin="16,0,0,0" VerticalAlignment="Center"
                                             Click="BtnStatsMyHistory_Click"/>
+                                    <Button x:Name="BtnStatsBanChecker"
+                                            Content="BAN CHECKER"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Padding="8,3" FontSize="11"
+                                            Margin="8,0,0,0" VerticalAlignment="Center"
+                                            ToolTip="Check a target XUID using the latest MCC banprocessor token captured by Rejoin Fix."
+                                            Click="BtnStatsBanChecker_Click"/>
                                 </StackPanel>
 
                                 <!-- Session stats -->

@@ -119,6 +119,9 @@ public partial class GameNetworkStatsOverlayWindow : Window
     {
         _moveMode = enabled;
         OverlayRoot.IsHitTestVisible = enabled;
+        OverlayBrowser.IsHitTestVisible = !enabled;
+        OverlayBrowser.IsEnabled = !enabled;
+        DragSurface.IsHitTestVisible = enabled;
         DragSurface.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         Cursor = enabled ? Cursors.SizeAll : Cursors.Arrow;
         ResizeMode = enabled ? ResizeMode.CanResizeWithGrip : ResizeMode.NoResize;

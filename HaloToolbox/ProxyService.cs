@@ -7,6 +7,8 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -18,6 +20,9 @@ namespace HaloToolbox;
 
 public class ProxyService : IDisposable
 {
+    private const string BanProcessorHost = "banprocessor.svc.halowaypoint.com";
+    private const string BanSummaryPath = "/hmcc/bansummary";
+
     // ── Configuration ─────────────────────────────────────────────────────────
     public int Port { get; set; } = 8888;
     private const int CertificateSetupTimeoutMs = 30000;
@@ -49,6 +54,11 @@ public class ProxyService : IDisposable
 
     // Raised when MPSD exposes per-member matchmaking region measurements.
     public event EventHandler<IReadOnlyList<MatchmakingPlayerPing>>? OnMatchmakingPlayerPingsObserved;
+
+    private readonly object _banSpartanTokenLock = new();
+    private string _latestBanSpartanToken = "";
+    private DateTimeOffset _latestBanSpartanTokenCapturedAtUtc;
+    private string _latestBanSpartanTokenSourceHost = "";
 
     // In-memory copy of the saved matchmaking session — used for session discovery injection
     private SavedHandleInfo? _lastMatchSession;
@@ -123,6 +133,120 @@ public class ProxyService : IDisposable
         _cachedGameServerInfo = LoadPersistedGameServer();
         _lastSquadState = LoadPersistedSquadState();
         _lastSquadHandle = LoadPersistedHandle();
+        LoadPersistedBanSpartanToken();
+    }
+
+    public void CaptureBanSpartanToken(string token, DateTimeOffset capturedAtUtc, string sourceHost)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return;
+
+        lock (_banSpartanTokenLock)
+        {
+            _latestBanSpartanToken = token;
+            _latestBanSpartanTokenCapturedAtUtc = capturedAtUtc;
+            _latestBanSpartanTokenSourceHost = sourceHost;
+        }
+
+        PersistBanSpartanToken(token, capturedAtUtc, sourceHost);
+    }
+
+    public bool TryGetLatestBanSpartanToken(
+        out string token,
+        out DateTimeOffset capturedAtUtc,
+        out string sourceHost)
+    {
+        lock (_banSpartanTokenLock)
+        {
+            token = _latestBanSpartanToken;
+            capturedAtUtc = _latestBanSpartanTokenCapturedAtUtc;
+            sourceHost = _latestBanSpartanTokenSourceHost;
+
+            if (string.IsNullOrWhiteSpace(token))
+                return false;
+
+            return true;
+        }
+    }
+
+    public void ClearBanSpartanToken(string token)
+    {
+        lock (_banSpartanTokenLock)
+        {
+            if (!string.Equals(_latestBanSpartanToken, token, StringComparison.Ordinal))
+                return;
+
+            _latestBanSpartanToken = "";
+            _latestBanSpartanTokenCapturedAtUtc = default;
+            _latestBanSpartanTokenSourceHost = "";
+        }
+
+        try { File.Delete(RejoinFixPaths.BanSpartanTokenFile); } catch { }
+    }
+
+    private void PersistBanSpartanToken(string token, DateTimeOffset capturedAtUtc, string sourceHost)
+    {
+        try
+        {
+            RejoinFixPaths.EnsureRootDirectory();
+            var payload = new PersistedBanSpartanToken
+            {
+                ProtectedToken = Convert.ToBase64String(ProtectedData.Protect(
+                    Encoding.UTF8.GetBytes(token),
+                    optionalEntropy: null,
+                    DataProtectionScope.CurrentUser)),
+                CapturedAtUtc = capturedAtUtc,
+                SourceHost = sourceHost,
+            };
+
+            File.WriteAllText(RejoinFixPaths.BanSpartanTokenFile, JsonSerializer.Serialize(payload));
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("ban-checker", $"Failed to persist encrypted banprocessor token: {ex.Message}");
+        }
+    }
+
+    private void LoadPersistedBanSpartanToken()
+    {
+        try
+        {
+            string path = RejoinFixPaths.BanSpartanTokenFile;
+            if (!File.Exists(path))
+                return;
+
+            var payload = JsonSerializer.Deserialize<PersistedBanSpartanToken>(File.ReadAllText(path));
+            if (payload is null || string.IsNullOrWhiteSpace(payload.ProtectedToken))
+                return;
+
+            byte[] encrypted = Convert.FromBase64String(payload.ProtectedToken);
+            string token = Encoding.UTF8.GetString(ProtectedData.Unprotect(
+                encrypted,
+                optionalEntropy: null,
+                DataProtectionScope.CurrentUser));
+
+            if (string.IsNullOrWhiteSpace(token))
+                return;
+
+            lock (_banSpartanTokenLock)
+            {
+                _latestBanSpartanToken = token;
+                _latestBanSpartanTokenCapturedAtUtc = payload.CapturedAtUtc;
+                _latestBanSpartanTokenSourceHost = payload.SourceHost;
+            }
+        }
+        catch (Exception ex)
+        {
+            try { File.Delete(RejoinFixPaths.BanSpartanTokenFile); } catch { }
+            RejoinFixDiagnostics.Warn("ban-checker", $"Failed to load encrypted banprocessor token: {ex.Message}");
+        }
+    }
+
+    private sealed class PersistedBanSpartanToken
+    {
+        public string ProtectedToken { get; set; } = "";
+        public DateTimeOffset CapturedAtUtc { get; set; }
+        public string SourceHost { get; set; } = "";
     }
 
     /// <summary>Clears cached game server info and disables redirection.</summary>
@@ -238,10 +362,11 @@ public class ProxyService : IDisposable
         _cachedInjectedMatchEtag = "";
 
         // RACE CONDITION FIX: Accept matchSession parameter from caller (MainWindow)
-        // to ensure we don't rely on _lastMatchSession timing. Prefer the more
-        // complete session so a post-crash partial capture cannot become the restore source.
+        // to ensure we don't rely on _lastMatchSession timing. Prefer the stronger
+        // restore source so a post-crash solo-looking capture cannot replace a
+        // pre-crash squad capture.
         if (matchSession is not null &&
-            (_lastMatchSession is null || IsSavedMatchSessionMoreComplete(matchSession, _lastMatchSession)))
+            (_lastMatchSession is null || IsBetterRestoreSource(matchSession, _lastMatchSession)))
         {
             _lastMatchSession = matchSession;
             RejoinFixDiagnostics.Info("restore", $"Recovered saved match session from UI state: {matchSession.TemplateName}/{matchSession.SessionShort}");
@@ -550,6 +675,16 @@ public class ProxyService : IDisposable
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var h in req.Headers)
             headers[h.Name] = h.Value;
+
+        var requestUri = req.RequestUri;
+        if (string.Equals(req.Method, "GET", StringComparison.OrdinalIgnoreCase) &&
+            requestUri is not null &&
+            requestUri.Host.Equals(BanProcessorHost, StringComparison.OrdinalIgnoreCase) &&
+            requestUri.AbsolutePath.StartsWith(BanSummaryPath, StringComparison.OrdinalIgnoreCase) &&
+            headers.TryGetValue("X-343-Authorization-Spartan", out var banToken))
+        {
+            CaptureBanSpartanToken(banToken, DateTimeOffset.UtcNow, BanProcessorHost);
+        }
 
         // ── Capture auth headers for background polling ────────────────────
         if (req.RequestUri.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase) ||
@@ -1521,12 +1656,16 @@ public class ProxyService : IDisposable
                     info.PlayerXuid = _lastMatchSession.PlayerXuid;
                 }
 
-                if (info.ObservedSquadMemberCount == 0 && _lastMatchSession.ObservedSquadMemberCount > 0)
+                bool preserveExistingSquadContext =
+                    info.ObservedSquadMemberCount < _lastMatchSession.ObservedSquadMemberCount;
+
+                if (preserveExistingSquadContext)
                 {
                     info.ObservedSquadMemberCount = _lastMatchSession.ObservedSquadMemberCount;
                 }
 
-                if (string.IsNullOrWhiteSpace(info.ObservedSquadSessionName) &&
+                if ((string.IsNullOrWhiteSpace(info.ObservedSquadSessionName) ||
+                     preserveExistingSquadContext) &&
                     !string.IsNullOrWhiteSpace(_lastMatchSession.ObservedSquadSessionName))
                 {
                     info.ObservedSquadSessionName = _lastMatchSession.ObservedSquadSessionName;
@@ -1534,12 +1673,19 @@ public class ProxyService : IDisposable
             }
 
             if (_pendingCrashRestore &&
-                _lastMatchSession is not null &&
-                ShouldKeepExistingMatchSessionDuringRestore(_lastMatchSession, info))
+                _lastMatchSession is not null)
             {
+                if (!string.IsNullOrWhiteSpace(info.ConnectionGuid) &&
+                    !string.Equals(_lastMatchSession.ConnectionGuid, info.ConnectionGuid, StringComparison.OrdinalIgnoreCase))
+                {
+                    _lastMatchSession.ConnectionGuid = info.ConnectionGuid;
+                    PersistSavedMatchSessionSnapshot(_lastMatchSession);
+                    RejoinFixDiagnostics.Info("guid", $"Upgraded saved match session with replacement connection GUID from post-crash match touch: {info.ConnectionGuid}");
+                }
+
                 RejoinFixDiagnostics.Warn(
                     "restore",
-                    $"Kept saved match session {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionShort}; ignored weaker post-crash capture {info.TemplateName}/{info.SessionShort} (guid={info.ConnectionGuid}).");
+                    $"Kept saved match session {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionShort}; ignored post-crash match capture {info.TemplateName}/{info.SessionShort} (guid={info.ConnectionGuid}).");
 
                 OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
                 {
@@ -1547,7 +1693,7 @@ public class ProxyService : IDisposable
                     Url          = url,
                     Host         = "sessiondirectory.xboxlive.com",
                     Path         = new Uri(url).AbsolutePath,
-                    RequestBody  = $"Crash restore is armed; ignored weaker capture {info.TemplateName}/{info.SessionShort}",
+                    RequestBody  = "Crash restore is armed; preserved saved match context and only accepted replacement GUID",
                     StatusCode   = 0,
                     ResponseBody = $"Preserved {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionShort}",
                 });
@@ -1611,6 +1757,17 @@ public class ProxyService : IDisposable
     private static bool IsSavedMatchSessionMoreComplete(SavedHandleInfo left, SavedHandleInfo right) =>
         GetSavedMatchSessionCompletenessScore(left) > GetSavedMatchSessionCompletenessScore(right);
 
+    private static bool IsBetterRestoreSource(SavedHandleInfo candidate, SavedHandleInfo current)
+    {
+        if (candidate.ObservedSquadMemberCount > current.ObservedSquadMemberCount)
+            return true;
+
+        if (candidate.ObservedSquadMemberCount < current.ObservedSquadMemberCount)
+            return false;
+
+        return IsSavedMatchSessionMoreComplete(candidate, current);
+    }
+
     private static int GetSavedMatchSessionCompletenessScore(SavedHandleInfo info)
     {
         int score = 0;
@@ -1618,6 +1775,8 @@ public class ProxyService : IDisposable
         if (!string.IsNullOrWhiteSpace(info.Scid)) score++;
         if (!string.IsNullOrWhiteSpace(info.TemplateName)) score++;
         if (!string.IsNullOrWhiteSpace(info.SessionName)) score++;
+        if (info.ObservedSquadMemberCount > 1) score += 5;
+        else if (info.ObservedSquadMemberCount == 1) score++;
         if (!string.IsNullOrWhiteSpace(info.ConnectionGuid)) score += 4;
         if (!string.IsNullOrWhiteSpace(info.PlayerXuid)) score += 3;
         if (!string.IsNullOrWhiteSpace(info.SubscriptionId)) score += 2;
@@ -1708,11 +1867,15 @@ public class ProxyService : IDisposable
             return;
         }
 
+        ArmCrashRestoreIfRestartSquadWriteDetected(nextState, source, observedMemberConnectionState, connectedCount);
+
         bool changed = _lastSquadState is null
             || !string.Equals(_lastSquadState.SessionName, nextState.SessionName, StringComparison.OrdinalIgnoreCase)
             || _lastSquadState.MemberCount != nextState.MemberCount
             || _lastSquadState.AcceptedCount != nextState.AcceptedCount
             || _lastSquadState.ActiveCount != nextState.ActiveCount;
+
+        ArmCrashRestoreIfRestartSquadDetected(_lastSquadState, nextState, source);
 
         if (_pendingCrashRestore && ShouldKeepExistingSquadStateDuringRestore(_lastSquadState, nextState))
         {
@@ -1746,6 +1909,73 @@ public class ProxyService : IDisposable
                 $"Observed {nextState.Mode.ToDisplayLabel()} squad state for {nextState.SessionName[..Math.Min(13, nextState.SessionName.Length)]}… ({nextState.MemberCount} members) via {source}.");
             OnRejoinContextChanged?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    private void ArmCrashRestoreIfRestartSquadWriteDetected(
+        RejoinSquadState incoming,
+        string source,
+        bool observedMemberConnectionState,
+        int connectedCount)
+    {
+        if (_pendingCrashRestore ||
+            _lastMatchSession is null ||
+            !source.Equals("request-put", StringComparison.OrdinalIgnoreCase) ||
+            !observedMemberConnectionState ||
+            connectedCount != 0)
+        {
+            return;
+        }
+
+        if ((DateTime.UtcNow - _lastMatchSession.SavedAt).TotalMinutes > CRASH_RESTORE_TIMEOUT_MINUTES)
+            return;
+
+        if (_lastSquadState is not null &&
+            string.Equals(_lastSquadState.SessionName, incoming.SessionName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        SetPendingCrashRestore(_lastMatchSession);
+        RejoinFixDiagnostics.Warn(
+            "restore",
+            $"Detected restart squad write {incoming.SessionName[..Math.Min(13, incoming.SessionName.Length)]}... [{incoming.Mode.ToDisplayLabel()}] with no live connection via {source}; armed crash restore for {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionShort}.");
+    }
+
+    private void ArmCrashRestoreIfRestartSquadDetected(
+        RejoinSquadState? existing,
+        RejoinSquadState incoming,
+        string source)
+    {
+        if (_pendingCrashRestore ||
+            _lastMatchSession is null ||
+            existing is null)
+        {
+            return;
+        }
+
+        if ((DateTime.UtcNow - _lastMatchSession.SavedAt).TotalMinutes > CRASH_RESTORE_TIMEOUT_MINUTES)
+            return;
+
+        bool newSquadAfterRecentMatch =
+            existing.SavedAt <= _lastMatchSession.SavedAt &&
+            incoming.SavedAt > _lastMatchSession.SavedAt &&
+            !string.Equals(existing.SessionName, incoming.SessionName, StringComparison.OrdinalIgnoreCase);
+
+        bool partyCollapsedToSolo =
+            existing.Mode == RejoinSessionMode.Party &&
+            incoming.Mode == RejoinSessionMode.Solo &&
+            !string.Equals(existing.SessionName, incoming.SessionName, StringComparison.OrdinalIgnoreCase);
+
+        if ((!newSquadAfterRecentMatch && !partyCollapsedToSolo) ||
+            string.Equals(existing.SessionName, incoming.SessionName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        SetPendingCrashRestore(_lastMatchSession);
+        RejoinFixDiagnostics.Warn(
+            "restore",
+            $"Inferred missed MCC restart from squad transition {existing.SessionName[..Math.Min(13, existing.SessionName.Length)]}... [{existing.Mode.ToDisplayLabel()}] -> {incoming.SessionName[..Math.Min(13, incoming.SessionName.Length)]}... [{incoming.Mode.ToDisplayLabel()}] via {source}; armed crash restore for {_lastMatchSession.TemplateName}/{_lastMatchSession.SessionShort}.");
     }
 
     private static bool ShouldKeepExistingSquadStateDuringRestore(RejoinSquadState? existing, RejoinSquadState incoming)
@@ -2390,8 +2620,14 @@ public class ProxyService : IDisposable
                         return;  // Skip normal body capture, we already have the data
                     }
                     // On restart: if we have cached server info, redirect to it
-                    else if (_cachedGameServerInfo is not null && _pendingCrashRestore)
+                    else if (_pendingCrashRestore && !string.IsNullOrWhiteSpace(serverInfo.IPv4Address))
                     {
+                        bool changedServer = !string.Equals(
+                            _currentObservedGameServerInfo?.IPv4Address,
+                            serverInfo.IPv4Address,
+                            StringComparison.OrdinalIgnoreCase);
+
+                        SetCurrentGameServer(serverInfo);
                         _gameServerRedirectionActive = false;
                         // CRITICAL FIX: Do NOT clear _pendingCrashRestore here!
                         // MCC might make multiple RequestParty calls during the rejoin sequence,
@@ -2402,6 +2638,17 @@ public class ProxyService : IDisposable
 
                         entry.ResponseBody = body;
                         e.SetResponseBodyString(body);
+
+                        OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                        {
+                            Method = "LIVE[GameServer]",
+                            Url = entry.Url,
+                            Host = entry.Host,
+                            Path = entry.Path,
+                            RequestBody = "Crash restore active; accepted current PlayFab server assignment",
+                            StatusCode = 200,
+                            ResponseBody = $"{(changedServer ? "UPDATED" : "REFRESHED")} live server: {serverInfo.ServerShort}",
+                        });
                         return;
                     }
                 }

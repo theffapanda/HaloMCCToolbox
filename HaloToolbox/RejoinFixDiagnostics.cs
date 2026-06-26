@@ -18,6 +18,7 @@ internal static class RejoinFixPaths
     public static string LastSquadStateFile => Path.Combine(RootDirectory, "last-squad-state.json");
     public static string LastGameServerFile => Path.Combine(RootDirectory, "last-game-server.json");
     public static string LastMatchmakingPingsFile => Path.Combine(RootDirectory, "last-matchmaking-pings.json");
+    public static string BanSpartanTokenFile => Path.Combine(RootDirectory, "ban-spartan-token.dat");
     public static string ProxyRootCertificateFile => Path.Combine(RootDirectory, "proxy-root.pfx");
     public static string RecentLogFile => Path.Combine(RootDirectory, "rejoin-fix.log");
 

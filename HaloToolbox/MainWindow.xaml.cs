@@ -1884,6 +1884,33 @@ echo All tasks complete.
                 return;
             }
 
+            var liveProcessIds = new HashSet<int>(processes.Select(process => process.Id));
+            List<int> vanishedProcessIds = new();
+
+            lock (_rejoinCrashWatchLock)
+            {
+                foreach (int watchedPid in _rejoinWatchedMccProcesses.Keys.ToList())
+                {
+                    if (liveProcessIds.Contains(watchedPid))
+                        continue;
+
+                    vanishedProcessIds.Add(watchedPid);
+                    if (_rejoinWatchedMccProcesses.Remove(watchedPid, out var vanishedProcess))
+                    {
+                        try { vanishedProcess.Exited -= MccProcess_Exited; } catch { }
+                        try { vanishedProcess.Dispose(); } catch { }
+                    }
+                }
+            }
+
+            foreach (int vanishedPid in vanishedProcessIds)
+            {
+                RejoinFixDiagnostics.Warn(
+                    "restore",
+                    $"MCC process vanished before the Exited event fired pid={vanishedPid}; treating as unexpected exit.");
+                Dispatcher.InvokeAsync(() => ArmRejoinCrashRestoreFromMccExit(vanishedPid, null));
+            }
+
             foreach (var process in processes)
             {
                 bool keepProcess = false;
@@ -4577,6 +4604,303 @@ try {{
             }
             var win = new PlayerMatchHistoryWindow(gt, token) { Owner = this };
             win.Show();
+        }
+
+        private void BtnStatsBanChecker_Click(object sender, RoutedEventArgs e)
+            => _ = StatsCheckBanForAppliedGamertagAsync();
+
+        private async Task StatsCheckBanForAppliedGamertagAsync()
+        {
+            string target = StatsGamertagBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                StatsSetStatus("Enter a gamertag or XUID first.");
+                MessageBox.Show(this, "Enter a gamertag or XUID first.", "Ban Checker", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (!_rejoinProxy.TryGetLatestBanSpartanToken(out var token, out var capturedAtUtc, out _))
+            {
+                StatsSetStatus("Start Rejoin Fix, then let MCC make a ban summary request before using Ban Checker.");
+                MessageBox.Show(
+                    this,
+                    "No fresh MCC banprocessor token is available yet.\n\nStart Rejoin Fix, let MCC make a /hmcc/bansummary request, then try Ban Checker again.",
+                    "Ban Checker",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            string xuid = await StatsResolveEnteredTargetToXuidAsync(target, token);
+            if (string.IsNullOrWhiteSpace(xuid))
+            {
+                StatsSetStatus($"Ban Checker needs an XUID for {target}.");
+                MessageBox.Show(
+                    this,
+                    $"I could not resolve an XUID for \"{target}\".\n\nCheck the gamertag spelling, then try again.",
+                    "Ban Checker",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            StatsSetStatus($"Checking ban summary for {target}...");
+            try
+            {
+                var result = await StatsFetchBanSummaryAsync(xuid, token);
+                StatsSetStatus(result.Status);
+                MessageBox.Show(
+                    this,
+                    $"Target: {target}\nXUID: {xuid}\nToken captured: {capturedAtUtc.LocalDateTime:g}\n\n{result.Message}",
+                    "Ban Checker",
+                    MessageBoxButton.OK,
+                    result.HasActiveBans ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                StatsSetStatus($"Ban Checker error: {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Ban Checker Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async Task<string> StatsResolveEnteredTargetToXuidAsync(string target, string token)
+        {
+            string normalized = StatsNormalizeXuid(target);
+            if (StatsLooksLikeXuid(normalized))
+                return normalized;
+
+            string cached = StatsResolveEnteredTargetToCachedXuid(target);
+            if (!string.IsNullOrWhiteSpace(cached))
+                return cached;
+
+            StatsSetStatus($"Resolving XUID for {target}...");
+            string resolved = await StatsFetchXuidForGamertagAsync(target, token);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                StatsRememberGamertagForXuid(resolved, target);
+                return resolved;
+            }
+
+            return "";
+        }
+
+        private string StatsResolveEnteredTargetToCachedXuid(string target)
+        {
+            lock (_statsLock)
+            {
+                foreach (var (xuid, gamertag) in _statsGamertagsByXuid)
+                {
+                    if (gamertag.Equals(target, StringComparison.OrdinalIgnoreCase))
+                        return StatsNormalizeXuid(xuid);
+                }
+
+                foreach (var row in _statsCurrentLobbySnapshotRows.Concat(_statsLastCompletedLobbyRows))
+                {
+                    if (row.Gamertag.Equals(target, StringComparison.OrdinalIgnoreCase))
+                        return StatsNormalizeXuid(row.Xuid);
+                }
+
+                foreach (var player in _statsLastPlayers)
+                {
+                    string gamertag = player.Attribute("mGamertagText")?.Value ?? "";
+                    if (gamertag.Equals(target, StringComparison.OrdinalIgnoreCase))
+                        return StatsNormalizeXuid(player.Attribute("mXboxUserId")?.Value ?? "");
+                }
+            }
+
+            return "";
+        }
+
+        private static async Task<string> StatsFetchXuidForGamertagAsync(string gamertag, string token)
+        {
+            string escaped = Uri.EscapeDataString(gamertag);
+            string mccXuid = await StatsFetchXuidFromMccServiceRecordAsync(escaped, token);
+            if (StatsLooksLikeXuid(mccXuid))
+                return mccXuid;
+
+            string[] urls =
+            {
+                $"https://api.geysermc.org/v2/xbox/xuid/{escaped}",
+                $"https://playerdb.co/api/player/xbox/{escaped}",
+            };
+
+            foreach (string url in urls)
+            {
+                string xuid = await StatsTryFetchXuidFromUrlAsync(url);
+                if (StatsLooksLikeXuid(xuid))
+                    return xuid;
+            }
+
+            return "";
+        }
+
+        private static async Task<string> StatsFetchXuidFromMccServiceRecordAsync(string escapedGamertag, string token)
+        {
+            try
+            {
+                string url = $"https://mccapi.svc.halowaypoint.com/hmcc/users/gt({escapedGamertag})/service-record";
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.TryAddWithoutValidation("x-343-authorization-spartan", token);
+                req.Headers.TryAddWithoutValidation("Accept", "application/json");
+                req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0");
+
+                using var res = await StatsHttp.SendAsync(req);
+                string body = await res.Content.ReadAsStringAsync();
+                if (!res.IsSuccessStatusCode || string.IsNullOrWhiteSpace(body))
+                    return "";
+
+                return StatsExtractXuidFromLookupResponse(body);
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static async Task<string> StatsTryFetchXuidFromUrlAsync(string url)
+        {
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.TryAddWithoutValidation("Accept", "application/json,text/plain,text/html,*/*");
+                req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0");
+                req.Headers.TryAddWithoutValidation("Referer", "https://cxkes.me/xbox/xuid");
+
+                using var res = await StatsHttp.SendAsync(req);
+                string body = await res.Content.ReadAsStringAsync();
+                if (!res.IsSuccessStatusCode || string.IsNullOrWhiteSpace(body))
+                    return "";
+
+                return StatsExtractXuidFromLookupResponse(body);
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string StatsExtractXuidFromLookupResponse(string body)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                string fromJson = StatsFindXuidInJson(doc.RootElement);
+                if (!string.IsNullOrWhiteSpace(fromJson))
+                    return fromJson;
+            }
+            catch { }
+
+            var match = System.Text.RegularExpressions.Regex.Match(body, @"\b(253327\d{10})\b");
+            return match.Success ? match.Groups[1].Value : "";
+        }
+
+        private static string StatsFindXuidInJson(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        if (property.Name.Contains("xuid", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string candidate = property.Value.ValueKind == JsonValueKind.String
+                                ? property.Value.GetString() ?? ""
+                                : property.Value.GetRawText();
+                            candidate = StatsNormalizeXuid(candidate);
+                            if (StatsLooksLikeXuid(candidate))
+                                return candidate;
+                        }
+
+                        string nested = StatsFindXuidInJson(property.Value);
+                        if (!string.IsNullOrWhiteSpace(nested))
+                            return nested;
+                    }
+                    break;
+
+                case JsonValueKind.Array:
+                    foreach (var item in element.EnumerateArray())
+                    {
+                        string nested = StatsFindXuidInJson(item);
+                        if (!string.IsNullOrWhiteSpace(nested))
+                            return nested;
+                    }
+                    break;
+
+                case JsonValueKind.String:
+                    string value = StatsNormalizeXuid(element.GetString() ?? "");
+                    if (StatsLooksLikeXuid(value))
+                        return value;
+                    break;
+            }
+
+            return "";
+        }
+
+        private async Task<(bool HasActiveBans, string Message, string Status)> StatsFetchBanSummaryAsync(string xuid, string token)
+        {
+            string url =
+                $"https://banprocessor.svc.halowaypoint.com/hmcc/bansummary" +
+                $"?targets=xuid({xuid}),Authenticated(Device)";
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("X-343-Authorization-Spartan", token);
+            req.Headers.TryAddWithoutValidation("Accept", "application/json");
+            req.Headers.TryAddWithoutValidation("User-Agent", "cpprestsdk/2.9.0");
+
+            using var res = await StatsHttp.SendAsync(req);
+            string body = await res.Content.ReadAsStringAsync();
+
+            if (res.StatusCode == HttpStatusCode.BadRequest)
+                return (false, "HTTP 400: request shape is wrong.", "Ban Checker: bad request shape.");
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _rejoinProxy.ClearBanSpartanToken(token);
+                return (false, "HTTP 401: token expired, wrong, or not an MCC in-game token.", "Ban Checker: token rejected.");
+            }
+            if (res.StatusCode == HttpStatusCode.NotFound)
+                return (false, "HTTP 404: wrong endpoint path.", "Ban Checker: endpoint not found.");
+            if (!res.IsSuccessStatusCode)
+                return (false, $"HTTP {(int)res.StatusCode} {res.ReasonPhrase}\n\n{body}", $"Ban Checker: HTTP {(int)res.StatusCode}.");
+
+            return StatsParseBanSummaryResponse(xuid, body);
+        }
+
+        private static (bool HasActiveBans, string Message, string Status) StatsParseBanSummaryResponse(string xuid, string body)
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("Results", out var results) ||
+                results.ValueKind != JsonValueKind.Array ||
+                results.GetArrayLength() == 0)
+            {
+                return (false, "HTTP 200, but no Results were returned.", "Ban Checker: no results.");
+            }
+
+            var target = results.EnumerateArray().First();
+            int resultCode = target.TryGetProperty("ResultCode", out var codeEl) && codeEl.TryGetInt32(out var code)
+                ? code
+                : -1;
+
+            if (!target.TryGetProperty("Result", out var result) ||
+                !result.TryGetProperty("BansInEffect", out var bans) ||
+                bans.ValueKind != JsonValueKind.Array ||
+                bans.GetArrayLength() == 0)
+            {
+                return (false, $"Not banned.\n\nNo active bans for xuid({xuid}).\nResultCode: {resultCode}", "Ban Checker: not banned.");
+            }
+
+            var banLines = bans.EnumerateArray().Select((ban, index) =>
+            {
+                int typeValue = ban.TryGetProperty("Type", out var typeEl) && typeEl.TryGetInt32(out var parsedType) ? parsedType : -1;
+                int scopeValue = ban.TryGetProperty("Scope", out var scopeEl) && scopeEl.TryGetInt32(out var parsedScope) ? parsedScope : -1;
+                string until = "unknown";
+                if (ban.TryGetProperty("EnforceUntilUtc", out var untilObj) &&
+                    untilObj.TryGetProperty("ISO8601Date", out var dateEl))
+                    until = dateEl.GetString() ?? until;
+
+                return $"{index + 1}. Type {typeValue}, Scope {scopeValue}, Until {until}";
+            });
+
+            return (true, $"BANNED.\n\nActive bans:\n{string.Join(Environment.NewLine, banLines)}\n\nResultCode: {resultCode}", "Ban Checker: active ban found.");
         }
 
         private void StatsHyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
