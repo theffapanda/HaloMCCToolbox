@@ -10,6 +10,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 using Titanium.Web.Proxy;
@@ -46,6 +47,9 @@ public class ProxyService : IDisposable
     // Raised when observed squad context changes between solo / party / unknown.
     public event EventHandler? OnRejoinContextChanged;
 
+    // Raised when crash-restore mode arms or clears so UI-owned helpers can stand down.
+    public event EventHandler<bool>? OnCrashRestorePendingChanged;
+
     // Raised when the proxy learns the active PlayFab dedicated server.
     public event EventHandler<GameServerInfo?>? OnGameServerChanged;
 
@@ -55,7 +59,13 @@ public class ProxyService : IDisposable
     // Raised when MPSD exposes per-member matchmaking region measurements.
     public event EventHandler<IReadOnlyList<MatchmakingPlayerPing>>? OnMatchmakingPlayerPingsObserved;
 
+    public event EventHandler<SmartMatchWaitEstimate>? OnSmartMatchWaitEstimateChanged;
+    public event EventHandler? OnSmartMatchWaitCancelled;
+
     private readonly object _banSpartanTokenLock = new();
+    private readonly object _smartMatchAuthLock = new();
+    private Dictionary<string, string> _smartMatchRequestHeaders = new(StringComparer.OrdinalIgnoreCase);
+    private string _smartMatchServiceConfigId = "";
     private string _latestBanSpartanToken = "";
     private DateTimeOffset _latestBanSpartanTokenCapturedAtUtc;
     private string _latestBanSpartanTokenSourceHost = "";
@@ -127,7 +137,6 @@ public class ProxyService : IDisposable
     public RejoinSessionMode CurrentRejoinMode => _lastSquadState?.Mode ?? RejoinSessionMode.Unknown;
     public string CurrentRejoinModeLabel => CurrentRejoinMode.ToDisplayLabel();
     public int CurrentSquadMemberCount => _lastSquadState?.MemberCount ?? 0;
-
     public ProxyService()
     {
         _cachedGameServerInfo = LoadPersistedGameServer();
@@ -385,6 +394,8 @@ public class ProxyService : IDisposable
             // Start background sync immediately
             _ghostSessionSyncTask = AutoSyncGhostSessionAsync();
         }
+
+        OnCrashRestorePendingChanged?.Invoke(this, true);
     }
 
     public void ClearGhostSessionMode()
@@ -426,15 +437,56 @@ public class ProxyService : IDisposable
     // IMPORTANT: use the most specific suffix possible.
     //
     // BeforeTunnelConnectRequest below sets DecryptSsl=false for any host NOT in this
-    // list, so only these three hosts are SSL-intercepted.  Everything else
-    // (presence-heartbeat, userpresence, smartmatch, auth, …) becomes a plain TCP
+    // list, so only these hosts are SSL-intercepted.  Everything else
+    // (presence-heartbeat, userpresence, auth, …) becomes a plain TCP
     // tunnel with zero TLS overhead and zero interference with Xbox Live session state.
     private static readonly string[] _watchedDomains =
     [
         "halowaypoint.com",              // Halo Waypoint API + Spartan token extraction
         "sessiondirectory.xboxlive.com", // Xbox Live MPSD — session documents with skill data
-        "smartmatch.xboxlive.com",       // Smartmatch queue tickets (multi-queue interception)
+        "smartmatch.xboxlive.com",       // Xbox Live SmartMatch queue ticket estimates
         "playfabapi.com",                // PlayFab matchmaking / telemetry
+    ];
+
+    private static readonly string[] _xboxShellProcessNames =
+    [
+        "GameBar",
+        "GameBarFTServer",
+        "GameBarPresenceWriter",
+        "XboxApp",
+        "XboxPcApp",
+        "XboxPcAppFT",
+        "XboxGameBarWidgets",
+        "XboxGamingOverlay",
+        "GamingServices",
+        "GamingServicesNet",
+    ];
+
+    private static readonly string[] _systemProxyBypassHosts =
+    [
+        "localhost",
+        "127.0.0.1",
+        "<local>",
+        "*.auth.xboxlive.com",
+        "accounts.xboxlive.com",
+        "achievements.xboxlive.com",
+        "activityhub.xboxlive.com",
+        "avty.xboxlive.com",
+        "clubhub.xboxlive.com",
+        "conversationhub.xboxlive.com",
+        "gameclipsmetadata.xboxlive.com",
+        "peoplehub.xboxlive.com",
+        "privacy.xboxlive.com",
+        "profile.xboxlive.com",
+        "reputation.xboxlive.com",
+        "social.xboxlive.com",
+        "titlehub.xboxlive.com",
+        "user.auth.xboxlive.com",
+        "userpresence.xboxlive.com",
+        "userstats.xboxlive.com",
+        "xblmessaging.xboxlive.com",
+        "presence-heartbeat.xboxlive.com",
+        "xnotify.xboxlive.com",
     ];
 
     // Bodies to skip even within watched domains.
@@ -616,14 +668,17 @@ public class ProxyService : IDisposable
     // ── Tunnel-connect filter ─────────────────────────────────────────────────
     //
     // With decryptSsl:true on the endpoint, Titanium would MITM every HTTPS
-    // connection by default — including presence heartbeats, auth, smartmatch —
+    // connection by default — including presence heartbeats and auth —
     // adding TLS handshake overhead that disrupts Xbox Live session state.
     //
     // Here we opt non-watched domains OUT of SSL decryption: they become plain
-    // TCP tunnels (zero overhead).  Only the three watched hosts are intercepted.
+    // TCP tunnels (zero overhead).  Known Xbox shell clients also stay tunneled
+    // on shared Xbox hosts so Game Bar can coexist with MCC rejoin capture.
     private Task OnBeforeTunnelConnectRequest(object sender, TunnelConnectSessionEventArgs e)
     {
-        e.DecryptSsl = IsDomainWatched(e.HttpClient.Request.RequestUri.Host);
+        e.DecryptSsl = ShouldDecryptTunnel(
+            e.HttpClient.Request.RequestUri.Host,
+            e.HttpClient.ProcessId.Value);
         return Task.CompletedTask;
     }
 
@@ -687,16 +742,6 @@ public class ProxyService : IDisposable
         }
 
         // ── Capture auth headers for background polling ────────────────────
-        if (req.RequestUri.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase) ||
-            req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase))
-        {
-            // Extract SCID from URL if present (format: /serviceconfigs/{scid}/...)
-            var scidMatch = System.Text.RegularExpressions.Regex.Match(
-                req.RequestUri.AbsolutePath,
-                @"/serviceconfigs/([^/]+)/",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        }
-
         var entry = new ProxyCaptureEntry
         {
             Method         = req.Method,
@@ -706,6 +751,18 @@ public class ProxyService : IDisposable
             RequestHeaders = headers,
             RequestBody    = "",
         };
+
+        if (req.RequestUri.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var segments = req.RequestUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            int serviceConfigsIndex = Array.FindIndex(segments, x => x.Equals("serviceconfigs", StringComparison.OrdinalIgnoreCase));
+            lock (_smartMatchAuthLock)
+            {
+                _smartMatchRequestHeaders = new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase);
+                if (serviceConfigsIndex >= 0 && serviceConfigsIndex + 1 < segments.Length)
+                    _smartMatchServiceConfigId = segments[serviceConfigsIndex + 1];
+            }
+        }
 
         // Safely capture request body for /handles endpoints (rejoin handle observation)
         if (req.HasBody && ShouldCaptureRequestBody(req))
@@ -717,10 +774,26 @@ public class ProxyService : IDisposable
 
             // Persist to disk IMMEDIATELY — before awaiting the response — so a game
             // crash between the request and response doesn't lose the game session ref.
-            PersistHandleToDisk(entry.RequestBody, headers);
+            if (req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
+                req.RequestUri.AbsolutePath.Contains("/handles", StringComparison.OrdinalIgnoreCase))
+            {
+                PersistHandleToDisk(entry.RequestBody, headers);
+            }
+
         }
 
         // ── Block match leave during crash restore ────────────────────────────
+        // MCC cancels a queue either by deleting its SmartMatch ticket or by
+        // leaving the associated CascadeMatchTicketSession.
+        bool isSmartMatchDelete = req.Method == "DELETE" &&
+            req.RequestUri.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase);
+        bool isTicketSessionLeave = req.Method == "PUT" &&
+            req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
+            req.RequestUri.AbsolutePath.Contains("/CascadeMatchTicketSession/sessions/", StringComparison.OrdinalIgnoreCase) &&
+            entry.RequestBody.Contains("\"me\":null", StringComparison.Ordinal);
+        if (isSmartMatchDelete || isTicketSessionLeave)
+            OnSmartMatchWaitCancelled?.Invoke(this, EventArgs.Empty);
+
         // Cap 16 proved: on startup MCC sends {"members":{"me":null}} to
         // CascadeMatchmaking to leave any leftover match.  This removes the
         // player from MPSD BEFORE the rejoin check (which fires when the user
@@ -813,14 +886,15 @@ public class ProxyService : IDisposable
         e.UserData = entry;
     }
 
-    /// <summary>Returns true for POST/PUT to /handles OR /sessions/ on the session directory.
+    /// <summary>Returns true for POST/PUT to known finite matchmaking endpoints.
     /// Captures PUT request bodies to session URLs so we can see what MCC writes
     /// (e.g., the 23-byte match session touch, squad session properties, etc.).</summary>
     private static bool ShouldCaptureRequestBody(Titanium.Web.Proxy.Http.Request req) =>
         (req.Method == "POST" || req.Method == "PUT") &&
-        req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
-        (req.RequestUri.AbsolutePath.Contains("/handles", StringComparison.OrdinalIgnoreCase) ||
-         req.RequestUri.AbsolutePath.Contains("/sessions/", StringComparison.OrdinalIgnoreCase));
+        ((req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
+          (req.RequestUri.AbsolutePath.Contains("/handles", StringComparison.OrdinalIgnoreCase) ||
+           req.RequestUri.AbsolutePath.Contains("/sessions/", StringComparison.OrdinalIgnoreCase))) ||
+         req.RequestUri.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase));
 
     private static string ShortServerId(string serverId) =>
         string.IsNullOrWhiteSpace(serverId)
@@ -955,24 +1029,19 @@ public class ProxyService : IDisposable
         var nextPings = new Dictionary<string, MatchmakingPlayerPing>(StringComparer.OrdinalIgnoreCase);
         foreach (var ping in observed)
         {
+            ping.Xuid = NormalizeXuid(ping.Xuid);
             if (string.IsNullOrWhiteSpace(ping.Xuid))
                 continue;
 
+            // An MPSD document commonly contains the same member in several nested
+            // objects.  Some copies only contain measurements while another holds
+            // identity/group data.  Merge every copy instead of letting the last,
+            // often sparse, occurrence erase a gamertag or squad discovered earlier.
+            if (nextPings.TryGetValue(ping.Xuid, out var observedEarlier))
+                MergeMatchmakingPlayerPing(ping, observedEarlier);
+
             if (_matchmakingPlayerPings.TryGetValue(ping.Xuid, out var existing))
-            {
-                if (string.IsNullOrWhiteSpace(ping.Region))
-                    ping.Region = existing.Region;
-                if (ping.LatencyMs <= 0)
-                    ping.LatencyMs = existing.LatencyMs;
-                if (string.IsNullOrWhiteSpace(ping.Gamertag))
-                    ping.Gamertag = existing.Gamertag;
-                if (string.IsNullOrWhiteSpace(ping.Team))
-                    ping.Team = existing.Team;
-                if (string.IsNullOrWhiteSpace(ping.SquadId))
-                    ping.SquadId = existing.SquadId;
-                if (!ping.AverageGroupSkillPercentile.HasValue)
-                    ping.AverageGroupSkillPercentile = existing.AverageGroupSkillPercentile;
-            }
+                MergeMatchmakingPlayerPing(ping, existing);
 
             nextPings[ping.Xuid] = ping;
         }
@@ -1004,6 +1073,42 @@ public class ProxyService : IDisposable
         RejoinFixDiagnostics.Info("network", $"Observed current lobby members for {snapshot.Count} players via {source}.");
         PersistMatchmakingPlayerPings(snapshot, source);
         OnMatchmakingPlayerPingsObserved?.Invoke(this, snapshot);
+    }
+
+    private static void MergeMatchmakingPlayerPing(
+        MatchmakingPlayerPing target,
+        MatchmakingPlayerPing fallback)
+    {
+        if (string.IsNullOrWhiteSpace(target.Region))
+            target.Region = fallback.Region;
+        if (target.LatencyMs <= 0)
+            target.LatencyMs = fallback.LatencyMs;
+        if (string.IsNullOrWhiteSpace(target.Gamertag))
+            target.Gamertag = fallback.Gamertag;
+        if (string.IsNullOrWhiteSpace(target.Team))
+            target.Team = fallback.Team;
+        if (string.IsNullOrWhiteSpace(target.SquadId))
+            target.SquadId = fallback.SquadId;
+        if (!target.AverageGroupSkillPercentile.HasValue)
+            target.AverageGroupSkillPercentile = fallback.AverageGroupSkillPercentile;
+    }
+
+    private static string NormalizeXuid(string xuid)
+    {
+        if (string.IsNullOrWhiteSpace(xuid))
+            return "";
+
+        string trimmed = xuid.Trim();
+        if (!trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            return trimmed;
+
+        return ulong.TryParse(
+                trimmed[2..],
+                System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out ulong value)
+            ? value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : trimmed;
     }
 
     private void PreserveRecentLobbyPingsForPartialObservation(
@@ -1085,6 +1190,11 @@ public class ProxyService : IDisposable
                 $"LOBBY {name} ({ShortXuid(ping.Xuid)}) team={FormatTeamForLog(ping.Team)} squad={FormatSquadForLog(ping.SquadId)} {FormatRegionForLog(ping.Region)} | {ping.DisplayPing} ms via {source}");
         }
     }
+
+    private static string TruncateForLog(string value, int maxLength) =>
+        string.IsNullOrEmpty(value) || value.Length <= maxLength
+            ? value
+            : value[..maxLength] + "...";
 
     private static string FormatTeamForLog(string team) =>
         string.IsNullOrWhiteSpace(team) ? "?" : team.Trim();
@@ -2021,6 +2131,7 @@ public class ProxyService : IDisposable
         _cachedInjectedMatchEtag = "";
         ClearGhostSessionMode();  // Also clear ghost mode when clearing saved session
         RejoinFixDiagnostics.Info("capture", "Cleared saved match-session state.");
+        OnCrashRestorePendingChanged?.Invoke(this, false);
     }
 
     /// <summary>
@@ -2211,6 +2322,20 @@ public class ProxyService : IDisposable
         bool isJson = ct.Contains("json", StringComparison.OrdinalIgnoreCase)
                    || ct.Contains("text", StringComparison.OrdinalIgnoreCase)
                    || ct.Contains("xml",  StringComparison.OrdinalIgnoreCase);
+
+        // SmartMatch ticket creation is a known finite response. Some MCC/Xbox
+        // responses omit a useful Content-Type, so this must not depend on isJson.
+        bool smartMatchBodyRead = false;
+        if (entry.Method == "POST" &&
+            entry.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
+            resp.HasBody)
+        {
+            var smartMatchBody = await e.GetResponseBodyAsString();
+            entry.ResponseBody = smartMatchBody;
+            e.SetResponseBodyString(smartMatchBody);
+            smartMatchBodyRead = true;
+            ObserveSmartMatchResponse(entry, smartMatchBody);
+        }
 
         // ── Session discovery injection (PASSIVE MODE) ─────────────────────
         // When MCC restarts after a crash it queries GET /sessions?xuid=... .
@@ -2407,6 +2532,7 @@ public class ProxyService : IDisposable
             resp.HasBody)
         {
             var body = await e.GetResponseBodyAsString();
+            PersistMatchmakingSessionDocument(entry.Url, body);
             // Only inject if our player is NOT in the members list
             if (!body.Contains(_playerXuid))
             {
@@ -2689,16 +2815,54 @@ public class ProxyService : IDisposable
                 entry.ResponseBody = squadBody;
         }
 
-        if (!injected && !memberInjected && isJson && resp.HasBody && (entry.Method == "GET" || entry.Method == "POST") && ShouldReadBody(entry.Url))
+        if (!smartMatchBodyRead && !injected && !memberInjected && isJson && resp.HasBody && (entry.Method == "GET" || entry.Method == "POST") && ShouldReadBody(entry.Url))
         {
             var body = await e.GetResponseBodyAsString();
             ObserveNetworkRegionLatencies(body, "response-body");
+            PersistMatchmakingSessionDocument(entry.Url, body);
             entry.ResponseBody = body;
             // Must re-set or the connection will fail (body stream is consumed)
             e.SetResponseBodyString(body);
         }
 
         OnRequestCaptured?.Invoke(this, entry);
+    }
+
+    private static void PersistMatchmakingSessionDocument(string url, string body)
+    {
+        if (string.IsNullOrWhiteSpace(body) ||
+            !url.Contains("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        string? path = null;
+        string label = "";
+        if (url.Contains("/CascadeMatchTicketSession/sessions/", StringComparison.OrdinalIgnoreCase))
+        {
+            path = RejoinFixPaths.LastMatchTicketSessionDocumentFile;
+            label = "match ticket session";
+        }
+        else if (url.Contains("/CascadeMatchmaking/sessions/", StringComparison.OrdinalIgnoreCase))
+        {
+            path = RejoinFixPaths.LastMatchmakingSessionDocumentFile;
+            label = "matchmaking session";
+        }
+
+        if (path is null)
+            return;
+
+        try
+        {
+            // Validate before replacing the last known-good capture, then preserve
+            // the exact service document rather than reshaping it.
+            using var _ = JsonDocument.Parse(body);
+            RejoinFixPaths.EnsureRootDirectory();
+            File.WriteAllText(path, body);
+            RejoinFixDiagnostics.Info("capture", $"Saved latest {label} document for passive analysis.");
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("capture", $"Failed to persist {label} document: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -2721,6 +2885,9 @@ public class ProxyService : IDisposable
 
         // PlayFab — matchmaking / telemetry (finite JSON)
         if (url.Contains("playfabapi.com", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (url.Contains("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase))
             return true;
 
         // Xbox Live activity/rejoin handles — POST response contains the new handle ID;
@@ -2751,6 +2918,151 @@ public class ProxyService : IDisposable
         return false;
     }
 
+    private void ObserveSmartMatchResponse(ProxyCaptureEntry entry, string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("waitTime", out var waitElement) ||
+                !waitElement.TryGetInt32(out int waitSeconds) || waitSeconds < 0)
+                return;
+
+            string ticketId = doc.RootElement.TryGetProperty("ticketId", out var ticketElement)
+                ? ticketElement.GetString() ?? ""
+                : "";
+            int giveUpSeconds = 120;
+            try
+            {
+                using var requestDoc = JsonDocument.Parse(entry.RequestBody);
+                if (requestDoc.RootElement.TryGetProperty("giveUpDuration", out var giveUpElement) &&
+                    giveUpElement.TryGetInt32(out int parsedGiveUp) && parsedGiveUp > 0)
+                    giveUpSeconds = parsedGiveUp;
+            }
+            catch { }
+
+            string hopperName = "";
+            var pathSegments = entry.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            int hopperIndex = Array.FindIndex(pathSegments, x => x.Equals("hoppers", StringComparison.OrdinalIgnoreCase));
+            if (hopperIndex >= 0 && hopperIndex + 1 < pathSegments.Length)
+                hopperName = Uri.UnescapeDataString(pathSegments[hopperIndex + 1]);
+
+            var estimate = new SmartMatchWaitEstimate(ticketId, hopperName, waitSeconds, giveUpSeconds, DateTimeOffset.UtcNow);
+            OnSmartMatchWaitEstimateChanged?.Invoke(this, estimate);
+
+            RejoinFixPaths.EnsureRootDirectory();
+            File.WriteAllText(RejoinFixPaths.LastSmartMatchTicketFile, JsonSerializer.Serialize(new
+            {
+                capturedAt = estimate.CapturedAtUtc,
+                stage = "response",
+                entry.Method,
+                entry.Url,
+                entry.Host,
+                entry.Path,
+                entry.StatusCode,
+                entry.RequestBody,
+                responseBody = body
+            }, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("smartmatch", $"Failed to parse wait estimate: {ex.Message}");
+        }
+    }
+
+    public async Task<HopperPopulationResult> GetHopperStatisticsAsync(string hopperName, CancellationToken cancellationToken = default)
+    {
+        Dictionary<string, string> headers;
+        string scid;
+        lock (_smartMatchAuthLock)
+        {
+            headers = new Dictionary<string, string>(_smartMatchRequestHeaders, StringComparer.OrdinalIgnoreCase);
+            scid = _smartMatchServiceConfigId;
+        }
+
+        if (string.IsNullOrWhiteSpace(scid) || headers.Count == 0)
+            return new HopperPopulationResult(hopperName, null, null, "Start a matchmaking search to authorize population data.");
+
+        string url = $"https://smartmatch.xboxlive.com/serviceconfigs/{Uri.EscapeDataString(scid)}/hoppers/{Uri.EscapeDataString(hopperName)}/stats";
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            foreach (var (name, value) in headers)
+            {
+                if (name.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("Signature", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("If-Match", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                request.Headers.TryAddWithoutValidation(name, value);
+            }
+            request.Headers.Remove("X-Xbl-Contract-Version");
+            request.Headers.TryAddWithoutValidation("X-Xbl-Contract-Version", "103");
+
+            using var response = await _refreshClient.SendAsync(request, cancellationToken);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                string detail = body.Length > 180 ? body[..180] + "…" : body;
+                return new HopperPopulationResult(
+                    hopperName,
+                    null,
+                    null,
+                    string.IsNullOrWhiteSpace(detail)
+                        ? $"HTTP {(int)response.StatusCode}"
+                        : $"HTTP {(int)response.StatusCode}: {detail}");
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            int? waitTime = doc.RootElement.TryGetProperty("waitTime", out var wait) && wait.TryGetInt32(out int parsedWait)
+                ? parsedWait : null;
+            int? population = doc.RootElement.TryGetProperty("population", out var pop) && pop.TryGetInt32(out int parsedPopulation)
+                ? parsedPopulation : null;
+            return new HopperPopulationResult(hopperName, waitTime, population, "");
+        }
+        catch (Exception ex)
+        {
+            return new HopperPopulationResult(hopperName, null, null, ex.Message);
+        }
+    }
+
+    private static bool ShouldDecryptTunnel(string host, int processId)
+    {
+        if (!IsDomainWatched(host))
+            return false;
+
+        if (IsKnownXboxShellProcess(processId))
+        {
+            RejoinFixDiagnostics.Info("proxy", $"Bypassed TLS interception for Xbox shell process on {host}.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsKnownXboxShellProcess(int processId)
+    {
+        if (processId <= 0)
+            return false;
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            string processName = process.ProcessName;
+            foreach (var name in _xboxShellProcessNames)
+            {
+                if (processName.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        catch
+        {
+            // If process lookup fails, keep the old host-based behavior so rejoin capture still works.
+        }
+
+        return false;
+    }
+
     // ── WinINet (no admin) ────────────────────────────────────────────────────
     private void SetWinINetProxy(string proxyAddress)
     {
@@ -2764,7 +3076,7 @@ public class ProxyService : IDisposable
 
         reg.SetValue("ProxyEnable",   1,                                  RegistryValueKind.DWord);
         reg.SetValue("ProxyServer",   proxyAddress,                       RegistryValueKind.String);
-        reg.SetValue("ProxyOverride", "localhost;127.0.0.1;<local>",      RegistryValueKind.String);
+        reg.SetValue("ProxyOverride", string.Join(';', _systemProxyBypassHosts), RegistryValueKind.String);
 
         InternetSetOption(IntPtr.Zero, INTERNET_OPTION_SETTINGS_CHANGED, IntPtr.Zero, 0);
         InternetSetOption(IntPtr.Zero, INTERNET_OPTION_REFRESH,          IntPtr.Zero, 0);
@@ -3301,6 +3613,19 @@ public class ProxyService : IDisposable
     // ── IDisposable ───────────────────────────────────────────────────────────
     public void Dispose() => Stop();
 }
+
+public sealed record SmartMatchWaitEstimate(
+    string TicketId,
+    string HopperName,
+    int WaitSeconds,
+    int GiveUpSeconds,
+    DateTimeOffset CapturedAtUtc);
+
+public sealed record HopperPopulationResult(
+    string HopperName,
+    int? WaitSeconds,
+    int? Population,
+    string Error);
 
 
 

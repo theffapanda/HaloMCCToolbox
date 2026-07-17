@@ -79,6 +79,45 @@
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         </Style>
 
+        <!-- Shared toggle style used by Advanced Features and Stats. -->
+        <Style x:Key="StatsToggleBtn" TargetType="ToggleButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="2"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource StatsMyRowBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#39FF14"/>
+                                <Setter Property="Foreground" Value="#39FF14"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#00C8FF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
     <!-- Outer chrome -->
@@ -145,6 +184,63 @@
                                 Orientation="Horizontal"
                                 VerticalAlignment="Center"
                                 Margin="0,0,8,0">
+
+                        <!-- Main-section visibility settings -->
+                        <Button x:Name="SectionSettingsBtn"
+                                Content="⚙"
+                                Width="36" Height="28"
+                                FontSize="15"
+                                ToolTip="Choose visible sections"
+                                Click="SectionSettingsBtn_Click"
+                                Background="Transparent"
+                                Foreground="{DynamicResource MutedBrush}"
+                                BorderThickness="0"
+                                Cursor="Hand"/>
+                        <Popup x:Name="SectionSettingsPopup"
+                               PlacementTarget="{Binding ElementName=SectionSettingsBtn}"
+                               Placement="Bottom"
+                               StaysOpen="False"
+                               AllowsTransparency="True"
+                               PopupAnimation="Fade">
+                            <Border Background="{DynamicResource PanelBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="14"
+                                    MinWidth="210">
+                                <Border.Resources>
+                                    <Style TargetType="CheckBox">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                                        <Setter Property="FontFamily" Value="Consolas"/>
+                                        <Setter Property="FontSize" Value="11"/>
+                                    </Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                                        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                                        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                                        <Setter Property="BorderThickness" Value="1"/>
+                                        <Setter Property="Cursor" Value="Hand"/>
+                                    </Style>
+                                </Border.Resources>
+                                <StackPanel>
+                                    <TextBlock Text="VISIBLE SECTIONS" FontFamily="Consolas"
+                                               FontWeight="Bold" FontSize="11"
+                                               Foreground="{DynamicResource AccentBrush}"
+                                               Margin="0,0,0,10"/>
+                                    <CheckBox Content="Tools" IsChecked="True" IsEnabled="False" Margin="0,3"/>
+                                    <CheckBox x:Name="ShowH3ModsSection" Content="H3 Mods" Tag="H3Mods" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowReportSection" Content="Report" Tag="Report" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowStatsSection" Content="Stats" Tag="Stats" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowTheaterSection" Content="Theater" Tag="Theater" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowPlaylistsSection" Content="Playlists" Tag="Playlists" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowAboutSection" Content="About" Tag="About" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowLogSection" Content="Log" Tag="Log" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <Button x:Name="ToggleAllSectionsBtn" Content="HIDE ALL" Margin="0,12,0,0" Padding="8,4"
+                                            FontFamily="Consolas" FontSize="10"
+                                            Click="ToggleAllSections_Click"/>
+                                </StackPanel>
+                            </Border>
+                        </Popup>
 
                         <!-- Theme toggle -->
                         <Button x:Name="ThemeToggleBtn"
@@ -276,7 +372,7 @@
             <!-- ══ MAIN CONTENT ══ -->
             <Grid Grid.Row="1">
                 <!-- TabControl fills the grid -->
-                <TabControl
+                <TabControl x:Name="MainTabs"
                         Style="{StaticResource DarkTab}"
                         Background="{DynamicResource BgBrush}"
                         Margin="0">
@@ -305,7 +401,7 @@
                 </TabControl.Template>
 
                 <!-- ═══ TAB 1: TOOLS ═══ -->
-                <TabItem Header="⚙  TOOLS" Style="{StaticResource DarkTabItem}">
+                <TabItem x:Name="ToolsSection" Header="⚙  TOOLS" Style="{StaticResource DarkTabItem}">
                     <!-- No outer scroll — layout fills available space, map list scrolls internally -->
                     <Grid Margin="20,12,20,12">
                         <Grid.RowDefinitions>
@@ -425,7 +521,7 @@
                             </Grid>
                         </Border>
 
-                        <!-- Fix Rejoins Card -->
+                        <!-- Advanced Features Card -->
                         <Border Grid.Row="3"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
@@ -446,9 +542,9 @@
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <TextBlock Text="↻ "
                                                        FontSize="16"
-                                                       Foreground="#39FF14"
+                                                       Foreground="#00C8FF"
                                                        VerticalAlignment="Center"/>
-                                            <TextBlock Text="REJOIN FIX: EXPERIMENTAL"
+                                            <TextBlock Text="ADVANCED FEATURES"
                                                        FontFamily="Consolas"
                                                        FontSize="13"
                                                        FontWeight="Bold"
@@ -457,14 +553,14 @@
                                         </StackPanel>
                                     </Expander.Header>
                                     <StackPanel Margin="0,10,0,0">
-                                        <TextBlock Text="Activates the Toolbox proxy and silently captures the handle, match session, and connection GUID data needed for rejoin troubleshooting. Restart MCC after turning it on. Use with care because this changes the system proxy while active."
+                                        <TextBlock Text="Provides live MCC data to Toolbox features. Required services start automatically when you enable a feature."
                                                    FontFamily="Consolas"
                                                    FontSize="11"
                                                    Foreground="{DynamicResource MutedBrush}"
                                                    TextWrapping="Wrap"
                                                    LineHeight="18"/>
                                         <TextBlock x:Name="TxtRejoinFixStatus"
-                                                   Text="OFF"
+                                                   Text="● STOPPED"
                                                    FontFamily="Consolas"
                                                    FontSize="10"
                                                    Margin="0,8,0,0"
@@ -482,20 +578,13 @@
                                                    FontSize="10"
                                                    Margin="0,4,0,0"
                                                    Foreground="{DynamicResource MutedBrush}"/>
-                                        <CheckBox x:Name="ChkNetworkStatsOverlay"
-                                                  Content="GAME NETWORK STATS OVERLAY"
+                                        <CheckBox x:Name="ChkRejoinRecovery"
+                                                  Content="REJOIN RECOVERY"
                                                   Style="{StaticResource MapCheckBox}"
                                                   FontSize="10"
                                                   Margin="0,8,0,0"
-                                                  Checked="ChkNetworkStatsOverlay_Checked"
-                                                  Unchecked="ChkNetworkStatsOverlay_Unchecked"/>
-                                        <CheckBox x:Name="ChkNetworkStatsOverlayMove"
-                                                  Content="MOVE OVERLAY (DRAG MODE)"
-                                                  Style="{StaticResource MapCheckBox}"
-                                                  FontSize="10"
-                                                  Margin="0,6,0,0"
-                                                  Checked="ChkNetworkStatsOverlayMove_Checked"
-                                                  Unchecked="ChkNetworkStatsOverlayMove_Unchecked"/>
+                                                  Focusable="False"
+                                                  IsHitTestVisible="False"/>
                                         <CheckBox x:Name="ChkRejoinFixFirewall"
                                                   Content="Firewall Fix (Campaign)"
                                                   Style="{StaticResource MapCheckBox}"
@@ -510,13 +599,96 @@
                                                   Margin="0,6,0,0"
                                                   Checked="ChkRejoinFixFirewallMatchmaking_Checked"
                                                   Unchecked="ChkRejoinFixFirewallMatchmaking_Unchecked"/>
+                                        <Grid Margin="0,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="OVERLAYS"
+                                                       FontFamily="Consolas"
+                                                       FontSize="10"
+                                                       FontWeight="Bold"
+                                                       Foreground="{DynamicResource AccentBrush}"
+                                                       VerticalAlignment="Center"/>
+                                            <Border Grid.Column="1"
+                                                    Height="1"
+                                                    Background="{DynamicResource BorderBrush}"
+                                                    Margin="10,0,0,0"
+                                                    VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <TextBlock Text="CONTENT"
+                                                   FontFamily="Consolas"
+                                                   FontSize="9"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   Margin="0,7,0,0"/>
+                                        <Grid Margin="0,5,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox x:Name="ChkNetworkStatsOverlay"
+                                                      Grid.Column="0"
+                                                      Content="NETWORK STATS"
+                                                      Style="{StaticResource MapCheckBox}"
+                                                      FontSize="10"
+                                                      VerticalAlignment="Center"
+                                                      Checked="ChkNetworkStatsOverlay_Checked"
+                                                      Unchecked="ChkNetworkStatsOverlay_Unchecked"/>
+                                            <Button x:Name="BtnNetworkStatsOverlayMove"
+                                                    Grid.Column="1"
+                                                    Content="REPOSITION"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Padding="8,3"
+                                                    FontSize="10"
+                                                    Margin="12,0,0,0"
+                                                    Visibility="Collapsed"
+                                                    Click="BtnNetworkStatsOverlayMove_Click"/>
+                                        </Grid>
+                                        <CheckBox x:Name="ChkMatchmakingWaitOverlay"
+                                                  Content="MATCHMAKING WAIT ESTIMATE"
+                                                  ToolTip="Show SmartMatch's initial estimated wait and the actual elapsed search time."
+                                                  Style="{StaticResource MapCheckBox}"
+                                                  FontSize="10"
+                                                  Margin="0,6,0,0"
+                                                  Checked="ChkMatchmakingWaitOverlay_Checked"
+                                                  Unchecked="ChkMatchmakingWaitOverlay_Unchecked"/>
+                                        <CheckBox x:Name="StatsObsSessionStatsToggle"
+                                                  Content="SESSION STATS"
+                                                  Style="{StaticResource MapCheckBox}"
+                                                  FontSize="10"
+                                                  Margin="0,6,0,0"
+                                                  ToolTip="Include session W/L, K/D, kills, and deaths in both the in-game and OBS overlays."
+                                                  Checked="StatsObsSessionStatsToggle_Checked"
+                                                  Unchecked="StatsObsSessionStatsToggle_Unchecked"/>
+                                        <TextBlock Text="OUTPUT"
+                                                   FontFamily="Consolas"
+                                                   FontSize="9"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   Margin="0,9,0,0"/>
+                                        <CheckBox x:Name="StatsObsOverlayToggle"
+                                                  Content="OBS BROWSER OVERLAY"
+                                                  Style="{StaticResource MapCheckBox}"
+                                                  FontSize="10"
+                                                  Margin="0,5,0,0"
+                                                  ToolTip="Starts a local browser-source overlay for OBS and copies the current overlay URL."
+                                                  Checked="StatsObsOverlayToggle_Checked"
+                                                  Unchecked="StatsObsOverlayToggle_Unchecked"/>
+                                        <TextBlock x:Name="StatsObsOverlayUrlLabel"
+                                                   Text=""
+                                                   FontFamily="Consolas"
+                                                   FontSize="10"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Visibility="Collapsed"
+                                                   Margin="0,5,0,0"/>
                                     </StackPanel>
                                 </Expander>
                                 <Button Grid.Column="1"
                                         x:Name="BtnRejoinFix"
-                                        Content="RUN FIX"
+                                        Content="START SERVICES"
                                         Style="{StaticResource OrangeButton}"
-                                        Width="110"
+                                        Width="140"
                                         Click="BtnRejoinFix_Click"
                                         VerticalAlignment="Top"/>
                             </Grid>
@@ -892,9 +1064,14 @@
                     </Grid>
                 </TabItem>
 
+                <!-- ═══ TAB 2: H3 MODS ═══ -->
+                <TabItem x:Name="H3ModsSection" Header="🔧  H3 MODS" Style="{StaticResource DarkTabItem}">
+                    <local:H3Mods x:Name="H3ModsTab"/>
+                </TabItem>
+
                 <!-- ═══ TAB 2: LOG ═══ -->
                 <!-- ═══ TAB 3: REPORT CHEATER ═══ -->
-                <TabItem Header="🚨  REPORT" Style="{StaticResource DarkTabItem}">
+                <TabItem x:Name="ReportSection" Header="🚨  REPORT" Style="{StaticResource DarkTabItem}">
                     <Grid Margin="20,12,20,12">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>  <!-- header / load button -->
@@ -1236,7 +1413,7 @@
                 </TabItem>
 
                 <!-- ═══ TAB 3: STATS ═══ -->
-                <TabItem Header="📊  STATS" Style="{StaticResource DarkTabItem}">
+                <TabItem x:Name="StatsSection" Header="📊  STATS" Style="{StaticResource DarkTabItem}">
                     <TabItem.Resources>
                         <!-- ListView implicit styles scoped to this tab only -->
                         <Style TargetType="ListView">
@@ -1308,44 +1485,6 @@
                                 </MultiDataTrigger>
                             </Style.Triggers>
                         </Style>
-                        <!-- Toggle button for Auto-Lobby -->
-                        <Style x:Key="StatsToggleBtn" TargetType="ToggleButton">
-                            <Setter Property="Background"      Value="Transparent"/>
-                            <Setter Property="Foreground"      Value="{DynamicResource MutedBrush}"/>
-                            <Setter Property="BorderBrush"     Value="{DynamicResource BorderBrush}"/>
-                            <Setter Property="BorderThickness" Value="1"/>
-                            <Setter Property="Padding"         Value="10,6"/>
-                            <Setter Property="FontFamily"      Value="Consolas"/>
-                            <Setter Property="FontSize"        Value="12"/>
-                            <Setter Property="Cursor"          Value="Hand"/>
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="Bd"
-                                                Background="{TemplateBinding Background}"
-                                                BorderBrush="{TemplateBinding BorderBrush}"
-                                                BorderThickness="{TemplateBinding BorderThickness}"
-                                                CornerRadius="2"
-                                                Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="Bd" Property="Background"  Value="{DynamicResource StatsMyRowBrush}"/>
-                                                <Setter TargetName="Bd" Property="BorderBrush" Value="#39FF14"/>
-                                                <Setter Property="Foreground" Value="#39FF14"/>
-                                            </Trigger>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="Bd" Property="BorderBrush" Value="#00C8FF"/>
-                                            </Trigger>
-                                            <Trigger Property="IsEnabled" Value="False">
-                                                <Setter Property="Opacity" Value="0.4"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
                     </TabItem.Resources>
 
                     <Grid>
@@ -1353,9 +1492,10 @@
                             <RowDefinition Height="Auto"/> <!-- 0: Gamertag input -->
                             <RowDefinition Height="Auto"/> <!-- 1: Stats bar -->
                             <RowDefinition Height="Auto"/> <!-- 2: Buttons -->
-                            <RowDefinition Height="Auto"/> <!-- 3: Team summary -->
-                            <RowDefinition Height="*"/>    <!-- 4: Lobby list -->
-                            <RowDefinition Height="Auto"/> <!-- 5: Status bar -->
+                            <RowDefinition Height="Auto"/> <!-- 3: Population -->
+                            <RowDefinition Height="Auto"/> <!-- 4: Team summary -->
+                            <RowDefinition Height="*"/>    <!-- 5: Lobby list -->
+                            <RowDefinition Height="Auto"/> <!-- 6: Status bar -->
                         </Grid.RowDefinitions>
 
                         <!-- ── Row 0: Gamertag input ──────────────────────────────────── -->
@@ -1450,7 +1590,7 @@
                                             Style="{StaticResource PrimaryButton}"
                                             Padding="8,3" FontSize="11"
                                             Margin="8,0,0,0" VerticalAlignment="Center"
-                                            ToolTip="Check a target XUID using the latest MCC banprocessor token captured by Rejoin Fix."
+                                            ToolTip="Open the multi-player ban checker (up to 15 gamertags or XUIDs)."
                                             Click="BtnStatsBanChecker_Click"/>
                                 </StackPanel>
 
@@ -1513,40 +1653,77 @@
                                         Margin="0,0,6,0"
                                         Click="StatsScanBtn_Click"/>
                                 <ToggleButton x:Name="StatsAutoToggle"
-                                              Content="AUTO: OFF"
+                                              Content="AUTO: ON"
                                               Style="{StaticResource StatsToggleBtn}"
                                               Margin="0,0,6,0"
                                               Checked="StatsAutoToggle_Checked"
                                               Unchecked="StatsAutoToggle_Unchecked"/>
-                                <ToggleButton x:Name="StatsObsOverlayToggle"
-                                              Content="OBS OVERLAY: OFF"
-                                              Style="{StaticResource StatsToggleBtn}"
-                                              Margin="10,0,6,0"
-                                              ToolTip="Starts a local browser-source overlay for OBS and copies the current overlay URL."
-                                              Checked="StatsObsOverlayToggle_Checked"
-                                              Unchecked="StatsObsOverlayToggle_Unchecked"/>
-                                <CheckBox x:Name="StatsObsSessionStatsToggle"
-                                          Content="SHOW SESSION STATS"
-                                          Style="{StaticResource MapCheckBox}"
-                                          FontSize="10"
-                                          VerticalAlignment="Center"
-                                          Margin="4,0,0,0"
-                                          ToolTip="Show or hide the session W/L, K/D, kills, and deaths in the OBS overlay."
-                                          Checked="StatsObsSessionStatsToggle_Checked"
-                                          Unchecked="StatsObsSessionStatsToggle_Unchecked"/>
-                                <TextBlock x:Name="StatsObsOverlayUrlLabel"
-                                           Text=""
-                                           FontFamily="Consolas"
-                                           FontSize="10"
-                                           Foreground="{DynamicResource MutedBrush}"
-                                           VerticalAlignment="Center"
-                                           Margin="12,0,0,0"/>
                             </StackPanel>
                         </Border>
 
-                        <!-- ── Row 3: Team summary bar (hidden until team game detected) ── -->
+                        <!-- ── Row 3: Matchmaking population ──────────────────────────── -->
+                        <Expander Grid.Row="3"
+                                  IsExpanded="True"
+                                  Background="{DynamicResource SurfaceBrush}"
+                                  BorderBrush="{DynamicResource BorderBrush}"
+                                  BorderThickness="0,0,0,1">
+                            <Expander.Header>
+                                <DockPanel Margin="14,7" LastChildFill="True">
+                                    <Button DockPanel.Dock="Right"
+                                            Content="↻ REFRESH"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Padding="8,3"
+                                            FontSize="10"
+                                            Click="StatsPopulationRefresh_Click"/>
+                                    <StackPanel>
+                                        <TextBlock Text="MATCHMAKING POPULATION"
+                                                   FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource AccentBrush}"/>
+                                        <TextBlock x:Name="StatsPopulationStatusLabel"
+                                                   Text="Start a matchmaking search once to authorize live hopper data."
+                                                   FontFamily="Consolas" FontSize="9"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   Margin="0,3,0,0"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Expander.Header>
+                            <StackPanel Margin="14,0,14,9">
+                                <ListView x:Name="StatsPopulationList"
+                                          ItemsSource="{Binding}"
+                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                    <ListView.View>
+                                        <GridView>
+                                            <GridViewColumn Width="330" DisplayMemberBinding="{Binding DisplayName}">
+                                                <GridViewColumn.Header><GridViewColumnHeader Content="QUEUE" Tag="DisplayName" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="80" DisplayMemberBinding="{Binding Mode}">
+                                                <GridViewColumn.Header><GridViewColumnHeader Content="MODE" Tag="Mode" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="80" DisplayMemberBinding="{Binding Size}">
+                                                <GridViewColumn.Header><GridViewColumnHeader Content="SIZE" Tag="Size" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="100" DisplayMemberBinding="{Binding PopulationDisplay}">
+                                                <GridViewColumn.Header><GridViewColumnHeader Content="SEARCHING" Tag="Population" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="100" DisplayMemberBinding="{Binding WaitDisplay}">
+                                                <GridViewColumn.Header><GridViewColumnHeader Content="AVG WAIT" Tag="WaitSeconds" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                            </GridViewColumn>
+                                            <GridViewColumn Width="100" DisplayMemberBinding="{Binding Activity}">
+                                                <GridViewColumn.Header><GridViewColumnHeader Content="ACTIVITY" Tag="Activity" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                            </GridViewColumn>
+                                        </GridView>
+                                    </ListView.View>
+                                </ListView>
+                                <TextBlock Text="Population and wait are shared across each hopper. Specific game and mode selections may take longer."
+                                           FontFamily="Consolas" FontSize="9"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- ── Row 4: Team summary bar (hidden until team game detected) ── -->
                         <Border x:Name="StatsTeamSummaryBar"
-                                Grid.Row="3"
+                                Grid.Row="4"
                                 Background="{DynamicResource BgBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,0,0,1"
@@ -1598,8 +1775,8 @@
                             </Grid>
                         </Border>
 
-                        <!-- ── Row 4: Current lobby + last game ────────────────────────── -->
-                        <Grid Grid.Row="4">
+                        <!-- ── Row 5: Current lobby + last game ────────────────────────── -->
+                        <Grid Grid.Row="5">
                             <Grid.RowDefinitions>
                                 <RowDefinition x:Name="StatsCurrentLobbyHeaderRow" Height="Auto"/>
                                 <RowDefinition x:Name="StatsCurrentLobbyListRow" Height="260" MinHeight="170"/>
@@ -1620,6 +1797,11 @@
                                                FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
                                                Foreground="{DynamicResource MutedBrush}"
                                                Margin="12,0,0,0"/>
+                                    <TextBlock x:Name="StatsMatchmakingWaitLabel"
+                                               Text=""
+                                               FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="#FFB020"
+                                               Margin="18,0,0,0"/>
                                 </StackPanel>
                             </Border>
 
@@ -1839,8 +2021,8 @@
                             </ListView>
                         </Grid>
 
-                        <!-- ── Row 5: Status bar ──────────────────────────────────────── -->
-                        <Border Grid.Row="5" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                        <!-- ── Row 6: Status bar ──────────────────────────────────────── -->
+                        <Border Grid.Row="6" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,1,0,0" Padding="14,6">
                             <TextBlock x:Name="StatsStatusLabel"
                                        FontFamily="Consolas" FontSize="11"
@@ -1852,17 +2034,17 @@
                 </TabItem>
 
                 <!-- ═══ TAB 4: THEATER ═══ -->
-                <TabItem Header="🎬  THEATER" Style="{StaticResource DarkTabItem}">
+                <TabItem x:Name="TheaterSection" Header="🎬  THEATER" Style="{StaticResource DarkTabItem}">
                     <local:Theater x:Name="TheaterTab"/>
                 </TabItem>
 
                 <!-- ═══ TAB 5: PLAYLISTS ═══ -->
-                <TabItem Header="🗂  PLAYLISTS" Style="{StaticResource DarkTabItem}">
+                <TabItem x:Name="PlaylistsSection" Header="🗂  PLAYLISTS" Style="{StaticResource DarkTabItem}">
                     <local:Playlists x:Name="PlaylistsTab"/>
                 </TabItem>
 
                 <!-- ═══ TAB 6: ABOUT ═══ -->
-                <TabItem Header="ℹ  ABOUT" Style="{StaticResource DarkTabItem}">
+                <TabItem x:Name="AboutSection" Header="ℹ  ABOUT" Style="{StaticResource DarkTabItem}">
                     <Grid Margin="24">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -2102,7 +2284,7 @@
                 </TabItem>
 
                 <!-- ═══ TAB 7: LOG ═══ -->
-                <TabItem Header="📋  LOG" Style="{StaticResource DarkTabItem}">
+                <TabItem x:Name="LogSection" Header="📋  LOG" Style="{StaticResource DarkTabItem}">
                     <Grid Margin="20">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*"/>
@@ -2114,17 +2296,20 @@
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="2">
-                            <ScrollViewer x:Name="LogScroller"
-                                          VerticalScrollBarVisibility="Auto"
-                                          Style="{StaticResource FlatScrollViewer}"
-                                          Padding="14,10">
-                                <TextBlock x:Name="TxtLog"
-                                           FontFamily="Consolas"
-                                           FontSize="12"
-                                           Foreground="{DynamicResource TextBrush}"
-                                           TextWrapping="Wrap"
-                                           LineHeight="20"/>
-                            </ScrollViewer>
+                            <TextBox x:Name="TxtLog"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Foreground="{DynamicResource TextBrush}"
+                                     FontFamily="Consolas"
+                                     FontSize="12"
+                                     Padding="14,10"
+                                     IsReadOnly="True"
+                                     IsReadOnlyCaretVisible="True"
+                                     AcceptsReturn="True"
+                                     AcceptsTab="True"
+                                     TextWrapping="NoWrap"
+                                     HorizontalScrollBarVisibility="Auto"
+                                     VerticalScrollBarVisibility="Auto"/>
                         </Border>
 
                         <StackPanel Grid.Row="1"
@@ -2141,6 +2326,11 @@
                                     Style="{StaticResource OrangeButton}"
                                     Margin="0,0,10,0"
                                     Click="BtnExportLogs_Click"/>
+                            <Button x:Name="BtnCopyLog"
+                                    Content="COPY LOG"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Margin="0,0,10,0"
+                                    Click="BtnCopyLog_Click"/>
                             <Button x:Name="BtnRemoveToolboxTraces"
                                     Content="REMOVE TOOLBOX TRACES"
                                     Style="{StaticResource RedButton}"

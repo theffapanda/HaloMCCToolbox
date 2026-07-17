@@ -41,6 +41,7 @@ public partial class Theater : UserControl
         "HaloMCCToolbox", "downpatch-workspaces.json");
 
     private const string HaloMccAppId = "976730";
+    private const int MccTheaterFileLimit = 12;
     private const string MccBaseDepotId = "976731";
     private const string Halo3MultiplayerDepotId = "976739";
     private static readonly DateTime CurrentBuildNoDownpatchCutoff =
@@ -876,7 +877,7 @@ public partial class Theater : UserControl
     private void CommitRename(TheaterClip clip, string text)
     {
         if (!clip.IsRenaming) return; // guard against double-commit
-        clip.CustomName = string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        clip.CustomName = NormalizeCustomName(text);
         clip.IsRenaming = false;
 
         var key = CustomNamesKey(clip);
@@ -886,6 +887,17 @@ public partial class Theater : UserControl
             _customNames[key] = clip.CustomName;
 
         SaveCustomNames();
+    }
+
+    private static string? NormalizeCustomName(string text)
+    {
+        var name = text.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return null;
+
+        if (name.EndsWith(".mov", StringComparison.OrdinalIgnoreCase))
+            name = Path.GetFileNameWithoutExtension(name);
+
+        return string.IsNullOrWhiteSpace(name) ? null : name.Trim();
     }
 
     // ── Restore ────────────────────────────────────────────────────────────────
@@ -931,17 +943,48 @@ public partial class Theater : UserControl
     {
         if (clips.Count == 0) return;
 
+        var distinctTargets = clips
+            .Where(c => File.Exists(c.BackupPath))
+            .Select(c => Path.GetFullPath(c.SourcePath))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        if (distinctTargets > MccTheaterFileLimit)
+        {
+            UpdateStatus($"MCC can only have {MccTheaterFileLimit} theater films active at once. Select fewer clips.");
+            return;
+        }
+
+        int rotationsNeeded = GetRequiredTheaterRotations(clips);
+        string rotationNotice = rotationsNeeded > 0
+            ? $"\n\nThe theater limit is {MccTheaterFileLimit}. The {rotationsNeeded} oldest active film(s) will be removed from MCC after confirming they are backed up."
+            : "";
+
         var result = MessageBox.Show(
-            $"Restore {description} to their original MCC theater folders?\n\nExisting source files will be overwritten.",
+            $"Restore {description} to their original MCC theater folders?\n\nExisting source files will be overwritten.{rotationNotice}",
             "Confirm Restore",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
         if (result != MessageBoxResult.Yes) return;
 
-        int count = ExecuteRestore(clips);
+        var restore = ExecuteRestore(clips);
         foreach (var c in clips) c.IsSelected = false;
-        UpdateStatus($"Restored {count} clip(s) to source folders.");
+        UpdateStatus(restore.Failed == 0
+            ? $"Restored {restore.Restored} clip(s); rotated out {restore.RotatedOut} oldest active film(s)."
+            : $"Restored {restore.Restored} clip(s); rotated out {restore.RotatedOut}; {restore.Failed} failed.");
         UpdateSelectAllButton();
+    }
+
+    private static int GetRequiredTheaterRotations(IEnumerable<TheaterClip> clips)
+    {
+        var activePaths = EnumerateActiveTheaterFiles()
+            .Select(f => Path.GetFullPath(f.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        int newFiles = clips
+            .Where(c => File.Exists(c.BackupPath))
+            .Select(c => Path.GetFullPath(c.SourcePath))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count(path => !activePaths.Contains(path));
+        return Math.Max(0, activePaths.Count + newFiles - MccTheaterFileLimit);
     }
 
     /// <summary>
@@ -949,22 +992,76 @@ public partial class Theater : UserControl
     /// FileSystemWatcher.Created fires for each copy; OnFileCreated deduplicates on
     /// (GameKey, FileName) so no infinite backup loop occurs.
     /// </summary>
-    private static int ExecuteRestore(IEnumerable<TheaterClip> clips)
+    private static TheaterRestoreResult ExecuteRestore(IEnumerable<TheaterClip> clips)
     {
-        int count = 0;
-        foreach (var clip in clips)
+        var requested = clips
+            .Where(c => File.Exists(c.BackupPath))
+            .GroupBy(c => Path.GetFullPath(c.SourcePath), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+        var protectedPaths = requested
+            .Select(c => Path.GetFullPath(c.SourcePath))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        int rotationsNeeded = GetRequiredTheaterRotations(requested);
+        int rotatedOut = 0;
+        foreach (var active in EnumerateActiveTheaterFiles()
+                     .Where(f => !protectedPaths.Contains(Path.GetFullPath(f.Path)))
+                     .OrderBy(f => f.RecordedAt))
         {
-            if (!File.Exists(clip.BackupPath)) continue;
+            if (rotatedOut >= rotationsNeeded) break;
+            try
+            {
+                var backupFolder = Path.Combine(BackupRoot, active.GameKey);
+                Directory.CreateDirectory(backupFolder);
+                var backupPath = Path.Combine(backupFolder, Path.GetFileName(active.Path));
+                if (!File.Exists(backupPath))
+                    File.Copy(active.Path, backupPath, overwrite: false);
+                File.Delete(active.Path);
+                rotatedOut++;
+            }
+            catch { /* try the next oldest safely backed-up film */ }
+        }
+
+        if (rotatedOut < rotationsNeeded)
+            return new TheaterRestoreResult(0, rotatedOut, requested.Count);
+
+        int restored = 0;
+        int failed = 0;
+        foreach (var clip in requested)
+        {
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(clip.SourcePath)!);
                 File.Copy(clip.BackupPath, clip.SourcePath, overwrite: true);
                 clip.SourcePresent = true;
-                count++;
+                restored++;
             }
-            catch { /* skip errored file */ }
+            catch { failed++; }
         }
-        return count;
+        return new TheaterRestoreResult(restored, rotatedOut, failed);
+    }
+
+    private static IEnumerable<ActiveTheaterFile> EnumerateActiveTheaterFiles()
+    {
+        foreach (var gameKey in GameKeys)
+        {
+            var folder = Path.Combine(TheaterRoot, gameKey, "Movie");
+            if (!Directory.Exists(folder)) continue;
+
+            IEnumerable<string> files;
+            try { files = Directory.EnumerateFiles(folder, "*.mov").ToArray(); }
+            catch { continue; }
+
+            foreach (var path in files)
+            {
+                FileInfo info;
+                try { info = new FileInfo(path); }
+                catch { continue; }
+                var filmDate = ReadSavedFilmDate(path, info.LastWriteTime);
+                yield return new ActiveTheaterFile(gameKey, path, filmDate.RecordedAt);
+            }
+        }
     }
 
     // ── Row context menu ───────────────────────────────────────────────────────
@@ -974,7 +1071,9 @@ public partial class Theater : UserControl
         if (sender is MenuItem mi && mi.Tag is TheaterClip clip)
         {
             var dir = Path.GetDirectoryName(clip.SourcePath) ?? "";
-            if (Directory.Exists(dir))
+            if (File.Exists(clip.SourcePath))
+                OpenExplorerSelectingFile(clip.SourcePath);
+            else if (Directory.Exists(dir))
                 Process.Start("explorer.exe", dir);
             else
                 UpdateStatus($"Source folder not found: {dir}");
@@ -987,9 +1086,15 @@ public partial class Theater : UserControl
         {
             var dir = Path.GetDirectoryName(clip.BackupPath) ?? "";
             Directory.CreateDirectory(dir);
-            Process.Start("explorer.exe", dir);
+            if (File.Exists(clip.BackupPath))
+                OpenExplorerSelectingFile(clip.BackupPath);
+            else
+                Process.Start("explorer.exe", dir);
         }
     }
+
+    private static void OpenExplorerSelectingFile(string path)
+        => Process.Start("explorer.exe", $"/select,\"{path}\"");
 
     private void MniCopyPath_Click(object sender, RoutedEventArgs e)
     {
@@ -1059,6 +1164,117 @@ public partial class Theater : UserControl
     }
 
     // ── Filter & sort ──────────────────────────────────────────────────────────
+
+    private void BtnCopySelected_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = _clips.Where(c => c.IsSelected).ToList();
+        if (selected.Count == 0)
+        {
+            UpdateStatus("No clips selected - click rows to select them.");
+            UpdateSelectAllButton();
+            return;
+        }
+
+        var dlg = new OpenFolderDialog
+        {
+            Title = "Copy selected theater clips to...",
+            Multiselect = false,
+        };
+
+        if (dlg.ShowDialog(Window.GetWindow(this)) != true)
+            return;
+
+        var (copied, failed) = CopyClipsToFolder(selected, dlg.FolderName);
+        UpdateStatus(failed == 0
+            ? $"Copied {copied} clip(s) to {dlg.FolderName}"
+            : $"Copied {copied} clip(s); {failed} failed.");
+    }
+
+    private static (int Copied, int Failed) CopyClipsToFolder(IEnumerable<TheaterClip> clips, string folder)
+    {
+        Directory.CreateDirectory(folder);
+
+        int copied = 0;
+        int failed = 0;
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var clip in clips)
+        {
+            var source = File.Exists(clip.BackupPath)
+                ? clip.BackupPath
+                : File.Exists(clip.SourcePath)
+                    ? clip.SourcePath
+                    : "";
+
+            if (string.IsNullOrEmpty(source))
+            {
+                failed++;
+                continue;
+            }
+
+            try
+            {
+                var destination = MakeUniqueExportPath(folder, BuildExportFileName(clip), usedNames);
+                File.Copy(source, destination, overwrite: false);
+                File.SetCreationTimeUtc(destination, File.GetCreationTimeUtc(source));
+                File.SetLastWriteTimeUtc(destination, File.GetLastWriteTimeUtc(source));
+                copied++;
+            }
+            catch
+            {
+                failed++;
+            }
+        }
+
+        return (copied, failed);
+    }
+
+    private static string BuildExportFileName(TheaterClip clip)
+    {
+        var baseName = !string.IsNullOrWhiteSpace(clip.CustomName)
+            ? clip.CustomName
+            : Path.GetFileNameWithoutExtension(clip.FileName);
+
+        baseName = SanitizeFileName(baseName);
+        if (string.IsNullOrWhiteSpace(baseName))
+            baseName = Path.GetFileNameWithoutExtension(clip.FileName);
+
+        return $"{baseName}.mov";
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = name
+            .Select(ch => invalid.Contains(ch) ? '_' : ch)
+            .ToArray();
+        return new string(chars).Trim().TrimEnd('.');
+    }
+
+    private static string MakeUniqueExportPath(string folder, string fileName, HashSet<string> usedNames)
+    {
+        var safeName = SanitizeFileName(Path.GetFileNameWithoutExtension(fileName));
+        if (string.IsNullOrWhiteSpace(safeName))
+            safeName = "theater_clip";
+
+        var extension = Path.GetExtension(fileName);
+        if (string.IsNullOrWhiteSpace(extension))
+            extension = ".mov";
+
+        var candidateName = $"{safeName}{extension}";
+        var candidatePath = Path.Combine(folder, candidateName);
+        int suffix = 2;
+
+        while (usedNames.Contains(candidateName) || File.Exists(candidatePath))
+        {
+            candidateName = $"{safeName}_{suffix}{extension}";
+            candidatePath = Path.Combine(folder, candidateName);
+            suffix++;
+        }
+
+        usedNames.Add(candidateName);
+        return candidatePath;
+    }
 
     private bool FilterClip(object obj)
     {
@@ -2223,8 +2439,11 @@ public partial class Theater : UserControl
         if (BtnSelectAll is null) return;
 
         var visibleClips = GetVisibleClips();
+        var hasSelection = _clips.Any(c => c.IsSelected);
         if (BtnDeleteSelected is not null)
-            BtnDeleteSelected.IsEnabled = _clips.Any(c => c.IsSelected);
+            BtnDeleteSelected.IsEnabled = hasSelection;
+        if (BtnCopySelected is not null)
+            BtnCopySelected.IsEnabled = hasSelection;
 
         if (visibleClips.Count == 0)
         {
@@ -2241,6 +2460,10 @@ public partial class Theater : UserControl
 }
 
 internal readonly record struct SavedFilmDate(DateTime RecordedAt, string Source);
+
+internal readonly record struct ActiveTheaterFile(string GameKey, string Path, DateTime RecordedAt);
+
+internal readonly record struct TheaterRestoreResult(int Restored, int RotatedOut, int Failed);
 
 internal readonly record struct SavedFilmHeader(
     SavedFilmDate Date,
