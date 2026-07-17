@@ -9,7 +9,7 @@ namespace HaloToolbox;
 internal sealed class ObsOverlayServer : IDisposable
 {
     private const int Port = 19998;
-    private const string OverlayVersion = "isolated-game-overlay-v6";
+    private const string OverlayVersion = "isolated-game-overlay-v9";
     private readonly object _sync = new();
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -161,12 +161,21 @@ internal sealed class ObsOverlayServer : IDisposable
     body.obs-mode .overlay { position: fixed; left: 0; top: 0; }
     .inner { display: flex; align-items: flex-start; gap: 24px; padding: 10px; background: transparent; }
     .network { width: 392px; flex: 0 0 392px; }
+    .network.hidden { display: none; }
+    .matchmaking { width: 300px; flex: 0 0 300px; padding-top: 1px; }
+    .matchmaking.hidden { display: none; }
+    .wait-value { color: var(--cyan); font-size: 25px; font-weight: 700; margin-top: 7px; text-shadow: var(--shadow); }
+    .wait-value.warn { color: #ffb020; }
+    .wait-value.long { color: var(--red); }
+    .wait-detail { color: var(--muted); font-size: 12px; margin-top: 5px; text-shadow: var(--shadow); }
     .session { width: 300px; flex: 0 0 300px; padding-top: 1px; }
     .row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
     .label { color: var(--muted); font-size: 12px; font-weight: 700; text-shadow: var(--shadow); }
     .section-title { color: var(--cyan); font-size: 13px; font-weight: 700; text-shadow: var(--shadow); }
     .server { color: var(--muted); font-size: 13px; text-align: right; text-shadow: var(--shadow); }
     .ping { color: var(--green); font-size: 26px; font-weight: 700; line-height: 1.25; text-shadow: var(--shadow); }
+    .quality { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
+    .jitter { color: var(--green); font-size: 12px; font-weight: 700; text-align: right; text-shadow: var(--shadow); }
     .loss { color: var(--text); font-size: 21px; font-weight: 700; text-shadow: var(--shadow); }
     .traffic { margin-top: 8px; color: var(--text); font-size: 13px; font-weight: 700; text-shadow: var(--shadow); }
     .traffic .up { color: var(--green); }
@@ -195,14 +204,17 @@ internal sealed class ObsOverlayServer : IDisposable
 <body>
   <main class="overlay">
     <div class="inner">
-      <div class="network">
+      <div id="network" class="network">
         <div class="row">
           <div class="section-title">NETWORK</div>
           <div id="server" class="server">SERVER: --</div>
         </div>
         <div class="row">
           <div id="ping" class="ping">Ping: -- ms</div>
-          <div id="loss" class="loss">Loss: --%</div>
+          <div class="quality">
+            <div id="loss" class="loss">Loss: --%</div>
+            <div id="jitter" class="jitter">Jitter: -- ms</div>
+          </div>
         </div>
         <div class="row traffic">
           <div><span class="up">UP</span> <span id="up">--</span></div>
@@ -219,6 +231,15 @@ internal sealed class ObsOverlayServer : IDisposable
           <polyline id="graphLine" points="" fill="none" stroke="#39ff14" stroke-width="2.4" stroke-linejoin="round" />
         </svg>
       </div>
+
+      <section id="matchmaking" class="matchmaking hidden">
+        <div class="row">
+          <div class="section-title">MATCHMAKING</div>
+          <div class="label">ESTIMATE</div>
+        </div>
+        <div id="waitValue" class="wait-value">EST. WAIT --</div>
+        <div id="waitDetail" class="wait-detail"></div>
+      </section>
 
       <section id="session" class="session">
         <div class="row">
@@ -294,8 +315,12 @@ internal sealed class ObsOverlayServer : IDisposable
         applyPlacement(data);
         const hasPing = data.rttMs !== null && data.rttMs !== undefined;
         const hasNetwork = hasPing || data.uploadKilobytesPerSecond !== null || data.downloadKilobytesPerSecond !== null;
+        $("network").classList.toggle("hidden", !data.showNetworkStats);
         setBlankable("server", hasNetwork && data.serverLabel !== "SERVER: --" ? data.serverLabel : "");
         setBlankable("ping", hasPing ? `Ping: ${data.rttMs} ms` : "");
+        const hasJitter = data.jitterMs !== null && data.jitterMs !== undefined;
+        setBlankable("jitter", hasJitter ? `Jitter: ${data.jitterMs.toFixed(1)} ms` : "");
+        $("jitter").style.color = !hasJitter ? "" : data.jitterMs < 10 ? "var(--green)" : data.jitterMs < 20 ? "var(--cyan)" : "var(--red)";
         setBlankable("loss", hasNetwork ? `Loss: ${(data.packetLossPercent ?? 0).toFixed(0)}%` : "");
         setBlankable("up", data.uploadKilobytesPerSecond !== null && data.uploadKilobytesPerSecond !== undefined ? formatKb(data.uploadKilobytesPerSecond) : "");
         setBlankable("down", data.downloadKilobytesPerSecond !== null && data.downloadKilobytesPerSecond !== undefined ? formatKb(data.downloadKilobytesPerSecond) : "");
@@ -304,6 +329,27 @@ internal sealed class ObsOverlayServer : IDisposable
         const points = graphPoints(data.rttHistoryMs);
         $("graphLine").setAttribute("points", points);
         $("graphGlow").setAttribute("points", points);
+
+        const showWait = data.showMatchmakingWait &&
+          data.matchmakingWaitSeconds !== null && data.matchmakingWaitSeconds !== undefined &&
+          (!data.matchmakingExpiresAtUtc || Date.now() < Date.parse(data.matchmakingExpiresAtUtc));
+        $("matchmaking").classList.toggle("hidden", !showWait);
+        if (showWait) {
+          const estimate = Math.max(0, Number(data.matchmakingWaitSeconds));
+          const elapsed = data.matchmakingStartedAtUtc
+            ? Math.max(0, Math.floor((Date.now() - Date.parse(data.matchmakingStartedAtUtc)) / 1000))
+            : 0;
+          const formatDuration = seconds => seconds < 60 ? `${seconds} SEC` : seconds < 120 ? `~1 MIN` : `~${Math.ceil(seconds / 60)} MIN`;
+          set("waitValue", `EST. WAIT ${formatDuration(estimate)}`);
+          $("waitValue").classList.toggle("warn", estimate >= 30 && estimate < 90);
+          $("waitValue").classList.toggle("long", estimate >= 90);
+          const hasPopulation = data.matchmakingPopulation !== null && data.matchmakingPopulation !== undefined;
+          const playlistName = data.matchmakingPlaylistName || "this playlist";
+          const searchScope = data.matchmakingSearchScope || "all gametypes";
+          set("waitDetail", hasPopulation
+            ? `${data.matchmakingPopulation} player${data.matchmakingPopulation === 1 ? "" : "s"} searching ${playlistName} across ${searchScope} - your wait time may vary`
+            : `elapsed ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`);
+        }
 
         $("session").classList.toggle("hidden", !data.showSessionStats);
         const games = data.gamesPlayed ?? 0;
@@ -328,8 +374,17 @@ internal sealed class ObsOverlayServer : IDisposable
 
 internal sealed record ObsOverlaySnapshot(
     bool ShowSessionStats,
+    bool ShowNetworkStats,
+    bool ShowMatchmakingWait,
+    int? MatchmakingWaitSeconds,
+    int? MatchmakingPopulation,
+    string MatchmakingPlaylistName,
+    string MatchmakingSearchScope,
+    DateTimeOffset? MatchmakingStartedAtUtc,
+    DateTimeOffset? MatchmakingExpiresAtUtc,
     string ServerLabel,
     int? RttMs,
+    double? JitterMs,
     double PacketLossPercent,
     IReadOnlyList<int?> RttHistoryMs,
     double? UploadKilobytesPerSecond,
@@ -349,8 +404,17 @@ internal sealed record ObsOverlaySnapshot(
 {
     public static ObsOverlaySnapshot Empty { get; } = new(
         ShowSessionStats: true,
+        ShowNetworkStats: true,
+        ShowMatchmakingWait: false,
+        MatchmakingWaitSeconds: null,
+        MatchmakingPopulation: null,
+        MatchmakingPlaylistName: "",
+        MatchmakingSearchScope: "all gametypes",
+        MatchmakingStartedAtUtc: null,
+        MatchmakingExpiresAtUtc: null,
         ServerLabel: "SERVER: --",
         RttMs: null,
+        JitterMs: null,
         PacketLossPercent: 0,
         RttHistoryMs: Array.Empty<int?>(),
         UploadKilobytesPerSecond: null,

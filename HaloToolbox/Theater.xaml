@@ -264,6 +264,13 @@
                         Style="{StaticResource FlatBtn}"
                         Click="BtnSelectAll_Click"
                         Margin="6,0,0,0"/>
+                <Button DockPanel.Dock="Right"
+                        x:Name="BtnCopySelected"
+                        Content="COPY SELECTED TO..."
+                        Style="{StaticResource FlatBtn}"
+                        Click="BtnCopySelected_Click"
+                        Margin="6,0,0,0"
+                        ToolTip="Copy selected theater backups to another folder using friendly names"/>
                 <ComboBox DockPanel.Dock="Right"
                           x:Name="CboSort"
                           Style="{StaticResource DarkCombo}"

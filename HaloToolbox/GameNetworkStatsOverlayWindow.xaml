@@ -26,10 +26,14 @@
                           DefaultBackgroundColor="Transparent"/>
 
             <Border x:Name="DragSurface"
-                    Background="Transparent"
+                    Background="#01000000"
                     Panel.ZIndex="5"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    Cursor="SizeAll"
                     Visibility="Collapsed"
-                    MouseLeftButtonDown="Window_MouseLeftButtonDown"/>
+                    MouseLeftButtonDown="Window_MouseLeftButtonDown"
+                    PreviewMouseLeftButtonDown="Window_MouseLeftButtonDown"/>
 
             <primitives:Thumb x:Name="ResizeThumb"
                               Width="42"

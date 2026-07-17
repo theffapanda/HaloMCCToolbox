@@ -18,6 +18,10 @@ internal static class RejoinFixPaths
     public static string LastSquadStateFile => Path.Combine(RootDirectory, "last-squad-state.json");
     public static string LastGameServerFile => Path.Combine(RootDirectory, "last-game-server.json");
     public static string LastMatchmakingPingsFile => Path.Combine(RootDirectory, "last-matchmaking-pings.json");
+    public static string LastSmartMatchTicketFile => Path.Combine(RootDirectory, "last-smartmatch-ticket.json");
+    public static string LastMatchTicketSessionDocumentFile => Path.Combine(RootDirectory, "last-match-ticket-session-document.json");
+    public static string LastMatchmakingSessionDocumentFile => Path.Combine(RootDirectory, "last-matchmaking-session-document.json");
+    public static string BanSpartanTokenFile => Path.Combine(RootDirectory, "ban-spartan-token.dat");
     public static string ProxyRootCertificateFile => Path.Combine(RootDirectory, "proxy-root.pfx");
     public static string RecentLogFile => Path.Combine(RootDirectory, "rejoin-fix.log");
 
@@ -35,6 +39,9 @@ internal static class RejoinFixPaths
             LastSquadStateFile,
             LastGameServerFile,
             LastMatchmakingPingsFile,
+            LastSmartMatchTicketFile,
+            LastMatchTicketSessionDocumentFile,
+            LastMatchmakingSessionDocumentFile,
         };
 
         return preferred.Where(File.Exists).ToArray();

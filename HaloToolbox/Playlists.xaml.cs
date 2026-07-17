@@ -218,6 +218,45 @@ public partial class Playlists : UserControl
             LoadPlaylists();
     }
 
+    public IReadOnlyList<MatchmakingHopperDefinition> GetMatchmakingHoppers()
+    {
+        if (_allPlaylists.Count == 0)
+            LoadPlaylists();
+
+        return _allPlaylists
+            .Where(x => !string.IsNullOrWhiteSpace(x.HopperName))
+            .GroupBy(x => x.HopperName, StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var playlist = group.First();
+                string displayName = GetPopulationDisplayName(group.Key, group.ToArray());
+                return new MatchmakingHopperDefinition(
+                    group.Key,
+                    displayName,
+                    playlist.ModeLabel,
+                    playlist.SizeLabel);
+            })
+            .OrderBy(x => x.Mode, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Size, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string GetPopulationDisplayName(string hopperName, IReadOnlyList<PlaylistViewSummary> playlists) =>
+        hopperName switch
+        {
+            "Cascade2PTeamMix" => "1v1",
+            "Cascade4PTeamMix" => "Social 2s",
+            "Cascade8PTeamMix" => "Social 4s",
+            "Cascade16PTeamMix" => "Big Team Battle",
+            "Cascade12PTeamMix" => "Invasion",
+            "Cascade4PFFAMix" => "Firefight 4s",
+            "Cascade8PFFAMix" => "Rumble Pit / FFA",
+            "Cascade8PTeamRanked" => "Halo 3 Ranked Team Slayer",
+            "Cascade4PTeamRanked" => "Ranked 2v2 (H3 Hardcore / HCE Hardcore)",
+            _ => playlists[0].SelectionName
+        };
+
     private void BtnLiveComposer_Click(object sender, RoutedEventArgs e) => SetSubview(PlaylistSubview.LiveComposer);
     private void BtnRotationSchedule_Click(object sender, RoutedEventArgs e) => SetSubview(PlaylistSubview.RotationSchedule);
     private void BtnSocial_Click(object sender, RoutedEventArgs e) => SetMode(PlaylistMode.Social);
@@ -1302,6 +1341,12 @@ internal sealed class PlaylistViewSummary
 
     public override string ToString() => SelectionName;
 }
+
+public sealed record MatchmakingHopperDefinition(
+    string HopperName,
+    string DisplayName,
+    string Mode,
+    string Size);
 
 internal sealed class PlaylistViewGroup
 {

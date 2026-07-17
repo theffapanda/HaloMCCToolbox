@@ -120,9 +120,18 @@ public sealed class NetworkStatsMonitor : IDisposable
             int received = _samples.Count(x => x.RttMs.HasValue);
             long? latestRtt = sample.RttMs;
             double packetLoss = sent == 0 ? 0 : ((sent - received) * 100.0) / sent;
+            var successfulRtts = _samples
+                .Where(x => x.RttMs.HasValue)
+                .Select(x => x.RttMs!.Value)
+                .ToArray();
+            double? jitterMs = successfulRtts.Length < 2
+                ? null
+                : successfulRtts
+                    .Zip(successfulRtts.Skip(1), (previous, current) => Math.Abs(current - previous))
+                    .Average();
             var history = _graphSamples.Select(x => x.RttMs).ToArray();
 
-            snapshot = new NetworkStatsSnapshot(TargetIp, latestRtt, packetLoss, sent, received, history);
+            snapshot = new NetworkStatsSnapshot(TargetIp, latestRtt, jitterMs, packetLoss, sent, received, history);
         }
 
         StatsUpdated?.Invoke(this, snapshot);
@@ -152,6 +161,7 @@ public sealed class NetworkStatsMonitor : IDisposable
 public sealed record NetworkStatsSnapshot(
     string TargetIp,
     long? RttMs,
+    double? JitterMs,
     double PacketLossPercent,
     int SentCount,
     int ReceivedCount,

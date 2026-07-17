@@ -11,6 +11,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Net;
@@ -101,7 +102,7 @@ namespace HaloToolbox
         private StatsSessionStats _statsSession = new();
         private List<XElement> _statsLastPlayers = new();
         private string _statsLastFileSig = "";
-        private bool _statsAutoPullLobby = false;
+        private bool _statsAutoPullLobby = true;
         private string _statsSpartanToken = "";
         private bool _statsHwTokenExpired = false;
         private bool _statsCurrentLobbyScanRunning = false;
@@ -130,6 +131,10 @@ namespace HaloToolbox
         // ── Stats Tab — UI collection ────────────────────────────────────────
         private readonly ObservableCollection<StatsPlayerRow> _statsCurrentLobbyRows = new();
         private readonly ObservableCollection<StatsPlayerRow> _statsLobbyRows = new();
+        private readonly ObservableCollection<MatchmakingPopulationRow> _statsPopulationRows = new();
+        private readonly SemaphoreSlim _statsPopulationRefreshLock = new(1, 1);
+        private string _statsPopulationSortProperty = nameof(MatchmakingPopulationRow.Population);
+        private ListSortDirection _statsPopulationSortDirection = ListSortDirection.Descending;
         private readonly List<string> _sessionLogLines = new();
         private readonly ProxyService _rejoinProxy = new();
         private readonly NetworkStatsMonitor _networkStatsMonitor = new();
@@ -137,6 +142,12 @@ namespace HaloToolbox
         private readonly ObsOverlayServer _obsOverlayServer = new();
         private GameNetworkStatsOverlayWindow? _gameNetworkStatsOverlay;
         private bool _networkStatsOverlayEnabled = true;
+        private bool _matchmakingWaitOverlayEnabled = true;
+        private SmartMatchWaitEstimate? _smartMatchWaitEstimate;
+        private int? _smartMatchHopperPopulation;
+        private string _smartMatchHopperDisplayName = "";
+        private readonly System.Windows.Threading.DispatcherTimer _matchmakingPopulationTimer;
+        private DateTimeOffset _lastFullPopulationRefreshUtc = DateTimeOffset.MinValue;
         private bool _networkStatsOverlayMoveEnabled;
         private bool _obsBrowserOverlayEnabled;
         private bool _obsBrowserOverlaySessionStatsEnabled = true;
@@ -156,10 +167,14 @@ namespace HaloToolbox
         private bool _steamFirewallAutoEnabled;
         private bool _steamFirewallAutoPaused;
         private bool _steamFirewallAutoHeldForActiveMatch;
+        private bool _steamFirewallAutoSuspendedForCrashRestore;
         private bool _rejoinFirewallCheckChanging;
         private bool _steamFirewallRulesPrepared;
         private bool _rejoinCampaignFirewallApplying;
         private bool _rejoinCampaignFirewallEnabled;
+        private bool _closeFirewallCleanupStarted;
+        private TabItem? _lastMainTab;
+        private bool _restoringMainTabSelection;
         private static readonly SemaphoreSlim SteamFirewallCommandLock = new(1, 1);
         private DateTime _steamFirewallAutoResumeAfterUtc = DateTime.MinValue;
         private const int SteamFirewallAutoSearchHoldSeconds = 180;
@@ -295,9 +310,19 @@ namespace HaloToolbox
         public MainWindow()
         {
             InitializeComponent();
+            _matchmakingPopulationTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(10)
+            };
+            _matchmakingPopulationTimer.Tick += MatchmakingPopulationTimer_Tick;
             RestoreMainWindowPlacement();
+            LoadSectionVisibility();
+            _lastMainTab = MainTabs.SelectedItem as TabItem;
+            MainTabs.SelectionChanged += MainTabs_SelectionChanged;
             _networkStatsOverlayEnabled = App.LoadGameNetworkStatsOverlayEnabled();
             ChkNetworkStatsOverlay.IsChecked = _networkStatsOverlayEnabled;
+            _matchmakingWaitOverlayEnabled = App.LoadMatchmakingWaitOverlayEnabled();
+            ChkMatchmakingWaitOverlay.IsChecked = _matchmakingWaitOverlayEnabled;
             TxtMccPath.Text = App.LoadMccInstallationPath();
             PlaylistsTab.SetMccInstallationPath(TxtMccPath.Text);
             TxtMccPath.TextChanged += TxtMccPath_TextChanged;
@@ -326,6 +351,11 @@ namespace HaloToolbox
 
             // Initialize the Stats tab (lobby monitor)
             StatsInitialize();
+            StatsPopulationList.ItemsSource = _statsPopulationRows;
+            _ = StatsRefreshMatchmakingPopulationAsync();
+            _statsAutoPullLobby = App.LoadStatsAutoLobbyEnabled();
+            StatsAutoToggle.IsChecked = _statsAutoPullLobby;
+            StatsAutoToggle.Content = _statsAutoPullLobby ? "AUTO: ON" : "AUTO: OFF";
             _obsBrowserOverlayEnabled = App.LoadObsBrowserOverlayEnabled();
             _obsBrowserOverlaySessionStatsEnabled = App.LoadObsBrowserOverlaySessionStatsEnabled();
             StatsObsOverlayToggle.IsChecked = _obsBrowserOverlayEnabled;
@@ -343,6 +373,11 @@ namespace HaloToolbox
             _rejoinProxy.OnMatchSessionSaved += (_, _) =>
                 Dispatcher.InvokeAsync(() =>
                 {
+                    _smartMatchWaitEstimate = null;
+                    _smartMatchHopperPopulation = null;
+                    _matchmakingPopulationTimer.Stop();
+                    StatsMatchmakingWaitLabel.Text = "";
+                    PublishObsOverlaySnapshot();
                     AppendLog("[REJOIN]", "Captured matchmaking session and saved it to Toolbox appdata.", "#00C8FF");
                     UpdateRejoinFixUi();
                     HoldSteamFirewallPausedForActiveMatch("match session captured");
@@ -356,6 +391,8 @@ namespace HaloToolbox
                     if (_rejoinProxy.CurrentSquadMemberCount > 0)
                         HoldSteamFirewallPausedForActiveMatch("squad session active");
                 });
+            _rejoinProxy.OnCrashRestorePendingChanged += (_, pending) =>
+                Dispatcher.InvokeAsync(() => HandleCrashRestoreFirewallStateChangedAsync(pending));
             _rejoinProxy.OnGameServerChanged += (_, serverInfo) =>
                 Dispatcher.InvokeAsync(() => HandleTrustedGameServerChanged(serverInfo));
             _rejoinProxy.OnMatchmakingPlayerPingsObserved += (_, pings) =>
@@ -382,8 +419,46 @@ namespace HaloToolbox
                         _ = StatsFetchCurrentLobbyStats();
                 });
             };
+            _rejoinProxy.OnSmartMatchWaitEstimateChanged += (_, estimate) =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    _smartMatchWaitEstimate = estimate;
+                    _smartMatchHopperPopulation = null;
+                    _smartMatchHopperDisplayName = PlaylistsTab.GetMatchmakingHoppers()
+                        .FirstOrDefault(x => x.HopperName.Equals(
+                            estimate.HopperName,
+                            StringComparison.OrdinalIgnoreCase))?.DisplayName
+                        ?? estimate.HopperName;
+                    _matchmakingPopulationTimer.Start();
+                    StatsMatchmakingWaitLabel.Text = estimate.WaitSeconds < 60
+                        ? $"EST. WAIT ~{estimate.WaitSeconds} SEC"
+                        : $"EST. WAIT ~{Math.Ceiling(estimate.WaitSeconds / 60.0):0} MIN · MAY TAKE A WHILE";
+                    if (_matchmakingWaitOverlayEnabled && _rejoinProxy.IsRunning)
+                    {
+                        EnsureGameNetworkStatsOverlay();
+                        _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
+                        _gameNetworkStatsOverlay?.SetMoveMode(_networkStatsOverlayMoveEnabled);
+                    }
+                    PublishObsOverlaySnapshot();
+                    AppendLog("[MATCH]", $"SmartMatch estimated wait: ~{estimate.WaitSeconds} seconds.", "#00C8FF");
+                    _ = StatsRefreshMatchmakingPopulationAsync();
+                });
+            _rejoinProxy.OnSmartMatchWaitCancelled += (_, _) =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    _smartMatchWaitEstimate = null;
+                    _smartMatchHopperPopulation = null;
+                    _smartMatchHopperDisplayName = "";
+                    _matchmakingPopulationTimer.Stop();
+                    StatsMatchmakingWaitLabel.Text = "";
+                    PublishObsOverlaySnapshot();
+                    AppendLog("[MATCH]", "Matchmaking ticket cancelled; wait estimate cleared.", "#C8D8E8");
+                });
             _rejoinProxy.OnRequestCaptured += (_, entry) =>
-                Dispatcher.InvokeAsync(() => HandleSteamFirewallAutoSignal(entry));
+                Dispatcher.InvokeAsync(() =>
+                {
+                    HandleSteamFirewallAutoSignal(entry);
+                });
             _networkStatsMonitor.StatsUpdated += (_, snapshot) =>
                 Dispatcher.InvokeAsync(() => UpdateNetworkStatsOverlay(snapshot));
             _gameServerConnectionMonitor.ActiveServerChanged += (_, serverInfo) =>
@@ -394,13 +469,15 @@ namespace HaloToolbox
                 Dispatcher.InvokeAsync(() => AppendLog("[NET]", status, "#4A5A6A"));
             Closed += (_, _) =>
             {
+                H3ModsTab.Dispose();
                 StopRejoinCrashWatcher();
                 _gameServerConnectionMonitor.Dispose();
                 _networkStatsMonitor.Dispose();
                 _obsOverlayServer.Dispose();
                 _rejoinProxy.Dispose();
+                _matchmakingPopulationTimer.Stop();
             };
-            Closing += (_, _) => SaveMainWindowPlacement();
+            Closing += MainWindow_Closing;
             StateChanged += (_, _) => UpdateMaximizeButton();
             UpdateRejoinFixUi();
             _rejoinCrashWatchTimer = new System.Windows.Threading.DispatcherTimer
@@ -418,6 +495,7 @@ namespace HaloToolbox
             _steamFirewallAutoTimer.Tick += async (_, _) => await SteamFirewallAutoTimer_TickAsync();
             InitializeSteamFirewallFeatureState();
             _mainWindowInitialized = true;
+            Dispatcher.InvokeAsync(SynchronizeStartupFirewallStateAsync);
             Dispatcher.InvokeAsync(StartPendingRejoinFixAfterElevationAsync);
 
         }
@@ -461,10 +539,183 @@ namespace HaloToolbox
         private void CloseBtn_Click(object sender, RoutedEventArgs e) =>
             Close();
 
+        private async void MainWindow_Closing(object? sender, CancelEventArgs e)
+        {
+            SaveMainWindowPlacement();
+
+            if (_closeFirewallCleanupStarted)
+                return;
+
+            bool shouldCleanFirewall = _rejoinProxy.IsRunning
+                || _steamFirewallAutoEnabled
+                || _rejoinCampaignFirewallEnabled
+                || _steamFirewallUiState is SteamFirewallState.Enabled or SteamFirewallState.Partial;
+
+            if (!shouldCleanFirewall)
+                return;
+
+            e.Cancel = true;
+            _closeFirewallCleanupStarted = true;
+            SetStatus("Closing: disabling Toolbox firewall rules...", "#FF6A00");
+            AppendLog("[FIREWALL]", "Closing Toolbox; disabling MCC P2P firewall rules first.", "#FF6A00");
+
+            try
+            {
+                DisableSteamFirewallAutoMode(logStatus: false);
+                await DisableRejoinFirewallRulesAsync(logStatus: false);
+                AppendLog("[FIREWALL]", "MCC P2P firewall rules disabled for shutdown.", "#39FF14");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[ERROR]", $"Shutdown firewall cleanup failed: {ex.Message}", "#FF2D55");
+            }
+            finally
+            {
+                Close();
+            }
+        }
+
         private void ThemeToggleBtn_Click(object sender, RoutedEventArgs e)
         {
             App.ToggleTheme();
             ThemeToggleBtn.Content = App.IsDarkTheme ? "☾" : "☀";
+        }
+
+        private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            // SelectionChanged events from controls inside a tab bubble through the TabControl.
+            if (e.OriginalSource != MainTabs || _restoringMainTabSelection)
+                return;
+
+            // Use the tab reported by this event rather than MainTabs.SelectedItem,
+            // which can still point at the previous tab during a selection transition.
+            if (e.AddedItems.Count != 1 || e.AddedItems[0] is not TabItem selectedTab)
+                return;
+
+            if (!ReferenceEquals(selectedTab, H3ModsSection) || IsRunningAsAdministrator())
+            {
+                _lastMainTab = selectedTab;
+                return;
+            }
+
+            // Do not leave the admin-only control active while the UAC decision is pending.
+            _restoringMainTabSelection = true;
+            MainTabs.SelectedItem = _lastMainTab ?? ToolsSection;
+            _restoringMainTabSelection = false;
+
+            var result = MessageBox.Show(
+                "H3 Mods requires the Toolbox to run as Administrator.\n\nRelaunch as Administrator now?",
+                "H3 Mods -- Halo MCC Toolbox",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information);
+
+            if (result != MessageBoxResult.Yes)
+                return;
+
+            try
+            {
+                RelaunchAsAdministrator();
+                Close();
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                AppendLog("[INFO]", "H3 Mods relaunch cancelled at administrator prompt.", "#4A5A6A");
+                SetStatus("H3 Mods requires Administrator.", "#4A5A6A");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Could not relaunch the Toolbox as Administrator.\n\n{ex.Message}",
+                    "H3 Mods -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                AppendLog("[ERROR]", $"Could not relaunch as Administrator: {ex.Message}", "#FF2D55");
+            }
+        }
+
+        private void SectionSettingsBtn_Click(object sender, RoutedEventArgs e)
+        {
+            SectionSettingsPopup.IsOpen = !SectionSettingsPopup.IsOpen;
+        }
+
+        private void LoadSectionVisibility()
+        {
+            SetSectionVisibility(H3ModsSection, ShowH3ModsSection, "H3Mods", App.LoadMainSectionVisible("H3Mods"));
+            SetSectionVisibility(ReportSection, ShowReportSection, "Report", App.LoadMainSectionVisible("Report"));
+            SetSectionVisibility(StatsSection, ShowStatsSection, "Stats", App.LoadMainSectionVisible("Stats"));
+            SetSectionVisibility(TheaterSection, ShowTheaterSection, "Theater", App.LoadMainSectionVisible("Theater"));
+            SetSectionVisibility(PlaylistsSection, ShowPlaylistsSection, "Playlists", App.LoadMainSectionVisible("Playlists"));
+            SetSectionVisibility(AboutSection, ShowAboutSection, "About", App.LoadMainSectionVisible("About"));
+            SetSectionVisibility(LogSection, ShowLogSection, "Log", App.LoadMainSectionVisible("Log"));
+            UpdateToggleAllSectionsButton();
+        }
+
+        private void SectionVisibility_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not CheckBox checkBox || checkBox.Tag is not string sectionName)
+                return;
+
+            bool visible = checkBox.IsChecked == true;
+            TabItem? section = sectionName switch
+            {
+                "H3Mods" => H3ModsSection,
+                "Report" => ReportSection,
+                "Stats" => StatsSection,
+                "Theater" => TheaterSection,
+                "Playlists" => PlaylistsSection,
+                "About" => AboutSection,
+                "Log" => LogSection,
+                _ => null
+            };
+
+            if (section is null)
+                return;
+
+            section.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            if (!visible && section.IsSelected)
+                ToolsSection.IsSelected = true;
+            App.SaveMainSectionVisible(sectionName, visible);
+            UpdateToggleAllSectionsButton();
+        }
+
+        private void ToggleAllSections_Click(object sender, RoutedEventArgs e)
+        {
+            bool allVisible = AreAllOptionalSectionsVisible();
+            bool makeVisible = !allVisible;
+
+            SetSectionVisibility(H3ModsSection, ShowH3ModsSection, "H3Mods", makeVisible, save: true);
+            SetSectionVisibility(ReportSection, ShowReportSection, "Report", makeVisible, save: true);
+            SetSectionVisibility(StatsSection, ShowStatsSection, "Stats", makeVisible, save: true);
+            SetSectionVisibility(TheaterSection, ShowTheaterSection, "Theater", makeVisible, save: true);
+            SetSectionVisibility(PlaylistsSection, ShowPlaylistsSection, "Playlists", makeVisible, save: true);
+            SetSectionVisibility(AboutSection, ShowAboutSection, "About", makeVisible, save: true);
+            SetSectionVisibility(LogSection, ShowLogSection, "Log", makeVisible, save: true);
+
+            if (!makeVisible)
+                ToolsSection.IsSelected = true;
+            UpdateToggleAllSectionsButton();
+        }
+
+        private bool AreAllOptionalSectionsVisible() =>
+            ShowH3ModsSection.IsChecked == true &&
+            ShowReportSection.IsChecked == true &&
+            ShowStatsSection.IsChecked == true &&
+            ShowTheaterSection.IsChecked == true &&
+            ShowPlaylistsSection.IsChecked == true &&
+            ShowAboutSection.IsChecked == true &&
+            ShowLogSection.IsChecked == true;
+
+        private void UpdateToggleAllSectionsButton()
+        {
+            ToggleAllSectionsBtn.Content = AreAllOptionalSectionsVisible() ? "HIDE ALL" : "SHOW ALL";
+        }
+
+        private static void SetSectionVisibility(TabItem section, CheckBox checkBox, string sectionName, bool visible, bool save = false)
+        {
+            section.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            checkBox.IsChecked = visible;
+            if (save)
+                App.SaveMainSectionVisible(sectionName, visible);
         }
 
         private void ToggleMaximizeRestore()
@@ -571,12 +822,9 @@ namespace HaloToolbox
             {
                 var ts = DateTime.Now.ToString("HH:mm:ss");
                 var line = $"[{ts}] {tag} {message}";
-                var color = Brush(colorHex);
                 _sessionLogLines.Add(line);
-                TxtLog.Inlines.Add(new Run($"[{ts}] ") { Foreground = Brush("#4A5A6A") });
-                TxtLog.Inlines.Add(new Run($"{tag} ") { Foreground = color, FontWeight = FontWeights.Bold });
-                TxtLog.Inlines.Add(new Run(message + "\n") { Foreground = Brush("#C8D8E8") });
-                LogScroller.ScrollToEnd();
+                TxtLog.AppendText(line + Environment.NewLine);
+                TxtLog.ScrollToEnd();
             });
         }
 
@@ -604,7 +852,7 @@ namespace HaloToolbox
 
             _gameServerConnectionMonitor.Start();
 
-            if (!_networkStatsOverlayEnabled && !_obsBrowserOverlayEnabled)
+            if (!_networkStatsOverlayEnabled && !_matchmakingWaitOverlayEnabled && !_obsBrowserOverlayEnabled)
             {
                 _networkStatsMonitor.Stop();
                 CloseGameNetworkStatsOverlay();
@@ -613,7 +861,7 @@ namespace HaloToolbox
                 return;
             }
 
-            if (_networkStatsOverlayEnabled)
+            if (_networkStatsOverlayEnabled || _matchmakingWaitOverlayEnabled)
             {
                 EnsureGameNetworkStatsOverlay();
                 _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
@@ -697,10 +945,10 @@ namespace HaloToolbox
 
         private void ClearNetworkStatsOverlayDisplay()
         {
-            if ((!_networkStatsOverlayEnabled && !_obsBrowserOverlayEnabled) || !_rejoinProxy.IsRunning)
+            if ((!_networkStatsOverlayEnabled && !_matchmakingWaitOverlayEnabled && !_obsBrowserOverlayEnabled) || !_rejoinProxy.IsRunning)
                 return;
 
-            if (_networkStatsOverlayEnabled)
+            if (_networkStatsOverlayEnabled || _matchmakingWaitOverlayEnabled)
             {
                 EnsureGameNetworkStatsOverlay();
                 _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
@@ -822,15 +1070,23 @@ namespace HaloToolbox
             overlay.Close();
         }
 
-        private void ChkNetworkStatsOverlay_Checked(object sender, RoutedEventArgs e)
+        private async void ChkNetworkStatsOverlay_Checked(object sender, RoutedEventArgs e)
         {
             _networkStatsOverlayEnabled = true;
             if (!_mainWindowInitialized)
                 return;
 
             App.SaveGameNetworkStatsOverlayEnabled(true);
+            if (!await EnsureCompanionServicesRunningAsync("Game Network Stats Overlay"))
+            {
+                _networkStatsOverlayEnabled = false;
+                App.SaveGameNetworkStatsOverlayEnabled(false);
+                ChkNetworkStatsOverlay.IsChecked = false;
+                return;
+            }
             StartNetworkStatsOverlay(GetNetworkStatsTargetIp(), GetNetworkStatsTargetServerInfo());
             AppendLog("[NET]", "Game network stats overlay enabled.", "#00C8FF");
+            UpdateRejoinFixUi();
         }
 
         private void ChkNetworkStatsOverlay_Unchecked(object sender, RoutedEventArgs e)
@@ -840,12 +1096,52 @@ namespace HaloToolbox
                 return;
 
             App.SaveGameNetworkStatsOverlayEnabled(false);
+            BtnNetworkStatsOverlayMove.Visibility = Visibility.Collapsed;
+            _networkStatsOverlayMoveEnabled = false;
             _gameServerConnectionMonitor.Stop();
             _networkStatsMonitor.Stop();
-            CloseGameNetworkStatsOverlay();
-            if (!_obsBrowserOverlayEnabled)
+            if (!_matchmakingWaitOverlayEnabled)
+                CloseGameNetworkStatsOverlay();
+            else
+                PublishObsOverlaySnapshot();
+            if (!_matchmakingWaitOverlayEnabled && !_obsBrowserOverlayEnabled)
                 _obsOverlayServer.Stop();
             AppendLog("[NET]", "Game network stats overlay disabled.", "#C8D8E8");
+        }
+
+        private async void ChkMatchmakingWaitOverlay_Checked(object sender, RoutedEventArgs e)
+        {
+            _matchmakingWaitOverlayEnabled = true;
+            if (!_mainWindowInitialized) return;
+            App.SaveMatchmakingWaitOverlayEnabled(true);
+            if (!await EnsureCompanionServicesRunningAsync("Matchmaking Wait Overlay"))
+            {
+                _matchmakingWaitOverlayEnabled = false;
+                App.SaveMatchmakingWaitOverlayEnabled(false);
+                ChkMatchmakingWaitOverlay.IsChecked = false;
+                return;
+            }
+            if (_rejoinProxy.IsRunning)
+            {
+                EnsureGameNetworkStatsOverlay();
+                _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
+            }
+            PublishObsOverlaySnapshot();
+            AppendLog("[MATCH]", "Matchmaking wait estimate overlay enabled.", "#00C8FF");
+            UpdateRejoinFixUi();
+        }
+
+        private void ChkMatchmakingWaitOverlay_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _matchmakingWaitOverlayEnabled = false;
+            if (!_mainWindowInitialized) return;
+            App.SaveMatchmakingWaitOverlayEnabled(false);
+            if (!_networkStatsOverlayEnabled)
+                CloseGameNetworkStatsOverlay();
+            PublishObsOverlaySnapshot();
+            if (!_networkStatsOverlayEnabled && !_obsBrowserOverlayEnabled)
+                _obsOverlayServer.Stop();
+            AppendLog("[MATCH]", "Matchmaking wait estimate overlay disabled.", "#C8D8E8");
         }
 
         private void ChkNetworkStatsOverlayMove_Checked(object sender, RoutedEventArgs e)
@@ -871,11 +1167,38 @@ namespace HaloToolbox
             AppendLog("[NET]", "Overlay drag mode disabled; overlay is click-through.", "#C8D8E8");
         }
 
+        private void BtnNetworkStatsOverlayMove_Click(object sender, RoutedEventArgs e)
+        {
+            _networkStatsOverlayMoveEnabled = !_networkStatsOverlayMoveEnabled;
+            _gameNetworkStatsOverlay?.SetMoveMode(_networkStatsOverlayMoveEnabled);
+            BtnNetworkStatsOverlayMove.Content = _networkStatsOverlayMoveEnabled
+                ? "FINISH"
+                : "REPOSITION";
+            AppendLog(
+                "[NET]",
+                _networkStatsOverlayMoveEnabled
+                    ? "Overlay drag mode enabled. Drag the overlay, then finish repositioning."
+                    : "Overlay drag mode disabled; overlay is click-through.",
+                _networkStatsOverlayMoveEnabled ? "#00C8FF" : "#C8D8E8");
+        }
+
         private void BtnClearLog_Click(object sender, RoutedEventArgs e)
         {
-            TxtLog.Inlines.Clear();
+            TxtLog.Clear();
             _sessionLogLines.Clear();
             AppendLog("[INFO]", "Log cleared.", "#4A5A6A");
+        }
+
+        private void BtnCopyLog_Click(object sender, RoutedEventArgs e)
+        {
+            if (_sessionLogLines.Count == 0)
+            {
+                SetStatus("No log lines to copy.", "#FF6A00");
+                return;
+            }
+
+            Clipboard.SetText(string.Join(Environment.NewLine, _sessionLogLines));
+            SetStatus($"Copied {_sessionLogLines.Count} log line(s) to clipboard.", "#39FF14");
         }
 
         private async void BtnFirewallCheck_Click(object sender, RoutedEventArgs e)
@@ -886,7 +1209,7 @@ namespace HaloToolbox
 
             try
             {
-                string? expectedProgram = null;
+                string expectedProgram = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
 
                 foreach (var group in GetFirewallCheckRuleGroups())
                 {
@@ -900,13 +1223,12 @@ namespace HaloToolbox
                             continue;
                         }
 
-                        expectedProgram ??= ExtractNetshField(result.Output, "Program");
                         LogFirewallRuleStatus(ruleName, result.Output, logProgram: false);
+                        LogFirewallRuleDefinitionProblems(ruleName, result.Output, expectedProgram);
                     }
                 }
 
-                if (!string.IsNullOrWhiteSpace(expectedProgram))
-                    AppendLog("[FIREWALL]", $"Program: {expectedProgram}", "#4A5A6A");
+                AppendLog("[FIREWALL]", $"Expected Program: {expectedProgram}", "#4A5A6A");
 
                 SetStatus("Firewall Check complete.", "#39FF14");
                 AppendLog("[FIREWALL]", "Firewall Check complete.", "#39FF14");
@@ -969,6 +1291,55 @@ namespace HaloToolbox
             AppendLog("[FIREWALL]", $"{shortName.PadRight(17)}  Port {port.PadRight(5)}  {enabledText}  {actionText}", color);
             if (logProgram)
                 AppendLog("[FIREWALL]", $"Program: {program}", "#4A5A6A");
+        }
+
+        private void LogFirewallRuleDefinitionProblems(string ruleName, string netshOutput, string expectedProgram)
+        {
+            var problems = GetFirewallRuleDefinitionProblems(ruleName, netshOutput, expectedProgram);
+            foreach (string problem in problems)
+                AppendLog("[FIREWALL]", $"{GetFirewallRuleShortName(ruleName).PadRight(17)}  REPAIR NEEDED - {problem}", "#FF6A00");
+        }
+
+        private static List<string> GetFirewallRuleDefinitionProblems(string ruleName, string netshOutput, string expectedProgram)
+        {
+            var problems = new List<string>();
+            string expectedDirection = ruleName.EndsWith("Inbound", StringComparison.OrdinalIgnoreCase) ? "In" : "Out";
+            string expectedProtocol = ruleName.Contains(" UDP ", StringComparison.OrdinalIgnoreCase) ? "UDP" : "TCP";
+            string expectedPortLabel = expectedDirection.Equals("In", StringComparison.OrdinalIgnoreCase) ? "LocalPort" : "RemotePort";
+            string? expectedPort = ExtractExpectedPortFromRuleName(ruleName);
+
+            AddFieldProblem(problems, netshOutput, "Action", "Block");
+            AddFieldProblem(problems, netshOutput, "Direction", expectedDirection);
+            AddFieldProblem(problems, netshOutput, "Protocol", expectedProtocol);
+            AddFieldProblem(problems, netshOutput, "Program", expectedProgram);
+            if (!string.IsNullOrWhiteSpace(expectedPort))
+                AddFieldProblem(problems, netshOutput, expectedPortLabel, expectedPort);
+
+            return problems;
+        }
+
+        private static string? ExtractExpectedPortFromRuleName(string ruleName)
+        {
+            foreach (int port in SteamFirewallPorts)
+            {
+                if (ruleName.Contains($" {port} ", StringComparison.OrdinalIgnoreCase))
+                    return port.ToString();
+            }
+
+            return null;
+        }
+
+        private static void AddFieldProblem(List<string> problems, string netshOutput, string field, string expected)
+        {
+            string? actual = ExtractNetshField(netshOutput, field);
+            if (string.IsNullOrWhiteSpace(actual))
+            {
+                problems.Add($"{field} is unreadable");
+                return;
+            }
+
+            if (!actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                problems.Add($"{field} expected {expected}, found {actual}");
         }
 
         private static string GetFirewallRuleShortName(string ruleName)
@@ -1884,6 +2255,33 @@ echo All tasks complete.
                 return;
             }
 
+            var liveProcessIds = new HashSet<int>(processes.Select(process => process.Id));
+            List<int> vanishedProcessIds = new();
+
+            lock (_rejoinCrashWatchLock)
+            {
+                foreach (int watchedPid in _rejoinWatchedMccProcesses.Keys.ToList())
+                {
+                    if (liveProcessIds.Contains(watchedPid))
+                        continue;
+
+                    vanishedProcessIds.Add(watchedPid);
+                    if (_rejoinWatchedMccProcesses.Remove(watchedPid, out var vanishedProcess))
+                    {
+                        try { vanishedProcess.Exited -= MccProcess_Exited; } catch { }
+                        try { vanishedProcess.Dispose(); } catch { }
+                    }
+                }
+            }
+
+            foreach (int vanishedPid in vanishedProcessIds)
+            {
+                RejoinFixDiagnostics.Warn(
+                    "restore",
+                    $"MCC process vanished before the Exited event fired pid={vanishedPid}; treating as unexpected exit.");
+                Dispatcher.InvokeAsync(() => ArmRejoinCrashRestoreFromMccExit(vanishedPid, null));
+            }
+
             foreach (var process in processes)
             {
                 bool keepProcess = false;
@@ -2015,26 +2413,30 @@ echo All tasks complete.
                 ? $" ({squadMemberCount} member{(squadMemberCount == 1 ? "" : "s")})"
                 : "";
 
-            BtnRejoinFix.Content = isRunning ? "DISABLE" : "ENABLE";
+            BtnRejoinFix.Content = isRunning ? "STOP SERVICES" : "START SERVICES";
+            ChkRejoinRecovery.IsChecked = isRunning;
+            BtnNetworkStatsOverlayMove.Visibility = _networkStatsOverlayEnabled && isRunning
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
             if (isRunning && _rejoinWinHttpManualNeeded)
             {
-                TxtRejoinFixStatus.Text = $"ACTIVE{gamertagSuffix} - proxy listening; MCC capture may still need admin proxy approval";
+                TxtRejoinFixStatus.Text = $"● ACTIVE{gamertagSuffix} - MCC capture may still need admin proxy approval";
                 TxtRejoinFixStatus.Foreground = Brush("#FF6A00");
             }
             else if (isRunning)
             {
-                TxtRejoinFixStatus.Text = $"ACTIVE{gamertagSuffix} - capturing in background and saving rejoin state to Toolbox appdata";
+                TxtRejoinFixStatus.Text = $"● ACTIVE{gamertagSuffix} - MCC companion features are available";
                 TxtRejoinFixStatus.Foreground = Brush("#39FF14");
             }
             else if (hasSavedState)
             {
-                TxtRejoinFixStatus.Text = $"OFF{gamertagSuffix} - saved rejoin capture files are present for diagnostics export";
+                TxtRejoinFixStatus.Text = $"○ STOPPED{gamertagSuffix} - saved capture files are available for diagnostics";
                 TxtRejoinFixStatus.Foreground = Brush("#C8D8E8");
             }
             else
             {
-                TxtRejoinFixStatus.Text = $"OFF{gamertagSuffix}";
+                TxtRejoinFixStatus.Text = $"○ STOPPED{gamertagSuffix}";
                 TxtRejoinFixStatus.Foreground = Brush("#4A5A6A");
             }
 
@@ -2099,7 +2501,6 @@ echo All tasks complete.
                 : "Start Rejoin Fix before enabling firewall fixes.";
             ChkRejoinFixFirewall.ToolTip = disabledReason;
             ChkRejoinFixFirewallMatchmaking.ToolTip = disabledReason;
-
             if (isRejoinFixRunning)
                 return;
 
@@ -2122,6 +2523,13 @@ echo All tasks complete.
             {
                 TxtRejoinFirewallStatus.Text = overrideText;
                 TxtRejoinFirewallStatus.Foreground = Brush(overrideColor ?? "#C8D8E8");
+                return;
+            }
+
+            if (_steamFirewallAutoSuspendedForCrashRestore)
+            {
+                TxtRejoinFirewallStatus.Text = "FIREWALL: REJOIN RESTORE - ports are open for crash rejoin";
+                TxtRejoinFirewallStatus.Foreground = Brush("#00C8FF");
                 return;
             }
 
@@ -2219,7 +2627,7 @@ echo All tasks complete.
             {
                 SteamFirewallCard.Visibility = Visibility.Visible;
                 ChkSteamFirewallAuto.IsEnabled = true;
-                UpdateSteamFirewallUi(LoadSteamFirewallUiState());
+                UpdateSteamFirewallUi(SteamFirewallState.Unknown);
                 return;
             }
 
@@ -2235,6 +2643,34 @@ echo All tasks complete.
             BtnSteamFirewallFix.IsEnabled = false;
             TxtSteamFirewallStatus.Text = "DISABLED - MCC P2P Firewall Fix is unavailable in this build";
             TxtSteamFirewallStatus.Foreground = Brush("#4A5A6A");
+        }
+
+        private async Task SynchronizeStartupFirewallStateAsync()
+        {
+            try
+            {
+                var actualState = await GetSteamFirewallStateAsync();
+                _steamFirewallRulesPrepared = actualState is SteamFirewallState.Disabled or SteamFirewallState.Enabled or SteamFirewallState.Partial;
+                SetSteamFirewallRuntimeState(actualState);
+
+                if (actualState is not (SteamFirewallState.Enabled or SteamFirewallState.Partial))
+                    return;
+
+                AppendLog("[FIREWALL]", "Found leftover or mixed MCC P2P firewall rules from a previous run; disabling them for a clean start.", "#FF6A00");
+                await DisableRejoinFirewallRulesAsync(logStatus: false);
+                _steamFirewallRulesPrepared = true;
+                AppendLog("[FIREWALL]", "Startup firewall cleanup complete. Rules are installed and disabled.", "#39FF14");
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                AppendLog("[FIREWALL]", "Startup firewall cleanup was cancelled at the administrator prompt; run Firewall Check if MCC connectivity looks wrong.", "#FF6A00");
+                SetSteamFirewallRuntimeState(SteamFirewallState.Unknown);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[ERROR]", $"Startup firewall state check failed: {ex.Message}", "#FF2D55");
+                SetSteamFirewallRuntimeState(SteamFirewallState.Unknown);
+            }
         }
 
         private void UpdateSteamFirewallUi(SteamFirewallState state)
@@ -2493,9 +2929,17 @@ echo All tasks complete.
             catch (Exception ex)
             {
                 AppendLog("[ERROR]", $"Could not enable Firewall Fix (Matchmaking): {ex.Message}", "#FF2D55");
+                _steamFirewallAutoEnabled = false;
+                _steamFirewallAutoPaused = false;
+                _steamFirewallAutoHeldForActiveMatch = false;
+                _steamFirewallAutoSuspendedForCrashRestore = false;
+                _steamFirewallAutoTimer.Stop();
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                UpdateRejoinFirewallStatus("FIREWALL: MATCHMAKING FAILED - port block was not applied", "#FF2D55");
+                SetStatus("Firewall Fix (Matchmaking) failed.", "#FF2D55");
             }
 
-            if (ensureObserverRunning)
+            if (ensureObserverRunning && _steamFirewallAutoEnabled)
                 await EnsureRejoinObserverRunningAsync();
         }
 
@@ -2504,6 +2948,7 @@ echo All tasks complete.
             _steamFirewallAutoEnabled = false;
             _steamFirewallAutoPaused = false;
             _steamFirewallAutoHeldForActiveMatch = false;
+            _steamFirewallAutoSuspendedForCrashRestore = false;
             _steamFirewallAutoTimer.Stop();
             UpdateRejoinFirewallStatus();
             if (!logStatus)
@@ -2586,10 +3031,19 @@ echo All tasks complete.
             if (!_steamFirewallAutoEnabled)
                 return;
 
+            if (_steamFirewallAutoSuspendedForCrashRestore)
+                return;
+
             if (_steamFirewallAutoPaused && IsSteamFirewallAutoResumeSignal(entry))
             {
+                ScheduleSteamFirewallAutoResume(SteamFirewallAutoMatchFoundHoldSeconds, "lobby connection confirmed");
+                return;
+            }
+
+            if (_steamFirewallAutoPaused && IsSteamFirewallAutoDisableSignal(entry))
+            {
                 if (!_steamFirewallAutoHeldForActiveMatch)
-                    ScheduleSteamFirewallAutoResume(SteamFirewallAutoMatchFoundHoldSeconds, "lobby connection confirmed");
+                    ScheduleSteamFirewallAutoResume(SteamFirewallAutoSearchHoldSeconds, "matchmaking traffic still active");
                 return;
             }
 
@@ -2600,6 +3054,80 @@ echo All tasks complete.
                 return;
 
             _ = PauseSteamFirewallForMatchmakingAsync(entry);
+        }
+
+        private async Task HandleCrashRestoreFirewallStateChangedAsync(bool pending)
+        {
+            if (pending)
+            {
+                await SuspendSteamFirewallForCrashRestoreAsync();
+                return;
+            }
+
+            await ResumeSteamFirewallAfterCrashRestoreAsync();
+        }
+
+        private async Task SuspendSteamFirewallForCrashRestoreAsync()
+        {
+            if (_steamFirewallAutoSuspendedForCrashRestore)
+                return;
+
+            bool firewallMayBlockRestore = _steamFirewallAutoEnabled ||
+                _steamFirewallUiState is SteamFirewallState.Enabled or SteamFirewallState.Partial ||
+                ChkRejoinFixFirewall.IsChecked == true ||
+                ChkRejoinFixFirewallMatchmaking.IsChecked == true;
+
+            if (!firewallMayBlockRestore)
+                return;
+
+            if (!await _steamFirewallAutoLock.WaitAsync(0))
+                return;
+
+            try
+            {
+                _steamFirewallAutoSuspendedForCrashRestore = true;
+                _steamFirewallAutoPaused = _steamFirewallAutoEnabled;
+                _steamFirewallAutoHeldForActiveMatch = true;
+                _steamFirewallAutoResumeAfterUtc = DateTime.MaxValue;
+
+                string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
+                UpdateRejoinFirewallStatus("FIREWALL: REJOIN RESTORE - opening ports for crash rejoin", "#00C8FF");
+                AppendLog("[FIREWALL]", "Crash restore armed; opening MCC P2P firewall rules until rejoin finishes or times out.", "#00C8FF");
+
+                await SetSteamFirewallEnabledAsync(false, mccExePath);
+                SaveSteamFirewallUiState(false);
+                SetSteamFirewallRuntimeState(SteamFirewallState.Disabled);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[ERROR]", $"Could not open firewall for crash restore: {ex.Message}", "#FF2D55");
+                SetStatus("Crash restore firewall open failed.", "#FF6A00");
+            }
+            finally
+            {
+                _steamFirewallAutoLock.Release();
+            }
+        }
+
+        private async Task ResumeSteamFirewallAfterCrashRestoreAsync()
+        {
+            if (!_steamFirewallAutoSuspendedForCrashRestore)
+                return;
+
+            _steamFirewallAutoSuspendedForCrashRestore = false;
+            _steamFirewallAutoHeldForActiveMatch = false;
+
+            if (!_steamFirewallAutoEnabled || ChkRejoinFixFirewallMatchmaking.IsChecked != true)
+            {
+                _steamFirewallAutoPaused = false;
+                UpdateRejoinFirewallStatus();
+                return;
+            }
+
+            _steamFirewallAutoPaused = true;
+            _steamFirewallAutoResumeAfterUtc = DateTime.UtcNow;
+            AppendLog("[FIREWALL]", "Crash restore ended; resuming MCC P2P firewall auto protection.", "#00C8FF");
+            await ResumeSteamFirewallAfterMatchmakingAsync();
         }
 
         private async Task EnsureRejoinObserverRunningAsync()
@@ -2693,9 +3221,6 @@ echo All tasks complete.
             if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused)
                 return;
 
-            if (_steamFirewallAutoHeldForActiveMatch)
-                return;
-
             _steamFirewallAutoResumeAfterUtc = DateTime.UtcNow.AddSeconds(holdSeconds);
             TxtSteamFirewallStatus.Text = $"AUTO - re-enabling soon ({reason})";
             TxtSteamFirewallStatus.Foreground = Brush("#00C8FF");
@@ -2708,11 +3233,11 @@ echo All tasks complete.
                 return;
 
             _steamFirewallAutoHeldForActiveMatch = true;
-            _steamFirewallAutoResumeAfterUtc = DateTime.MaxValue;
-            TxtSteamFirewallStatus.Text = $"AUTO - paused for active match ({reason})";
+            _steamFirewallAutoResumeAfterUtc = DateTime.UtcNow.AddSeconds(SteamFirewallAutoMatchFoundHoldSeconds);
+            TxtSteamFirewallStatus.Text = $"AUTO - re-enabling soon ({reason})";
             TxtSteamFirewallStatus.Foreground = Brush("#00C8FF");
-            UpdateRejoinFirewallStatus($"FIREWALL: MATCHMAKING PAUSED - ports are open for active match ({reason})", "#00C8FF");
-            AppendLog("[FIREWALL]", $"Keeping MCC port block disabled for active match: {reason}.", "#00C8FF");
+            UpdateRejoinFirewallStatus($"FIREWALL: MATCHMAKING PENDING - re-enabling soon ({reason})", "#00C8FF");
+            AppendLog("[FIREWALL]", $"Detected active match signal; re-enabling MCC port block soon: {reason}.", "#00C8FF");
         }
 
         private async Task SteamFirewallAutoTimer_TickAsync()
@@ -2806,7 +3331,7 @@ echo All tasks complete.
             }
             finally
             {
-                UpdateSteamFirewallUi(LoadSteamFirewallUiState());
+                await RefreshSteamFirewallUiAsync();
             }
         }
 
@@ -3023,33 +3548,6 @@ function Test-NetshRuleExists([string]$name) {{
     return $result.Text -match 'Rule Name:\s+'
 }}
 
-function Assert-NetshRuleState(
-    [string]$name,
-    [string]$expectedEnabled,
-    [string]$expectedProgram) {{
-    $result = Invoke-Netsh @('advfirewall', 'firewall', 'show', 'rule', ""name=$name"", 'verbose')
-    if ($result.ExitCode -ne 0 -or $result.Text -notmatch 'Rule Name:\s+') {{
-        throw ""NETSH_VERIFY_FAILED: missing rule $name. $($result.Text)""
-    }}
-
-    $enabledMatch = [regex]::Match($result.Text, 'Enabled:\s+(Yes|No)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    if (-not $enabledMatch.Success) {{
-        throw ""NETSH_VERIFY_FAILED: could not read enabled state for $name. $($result.Text)""
-    }}
-
-    if (-not [string]::Equals($enabledMatch.Groups[1].Value, $expectedEnabled, [System.StringComparison]::OrdinalIgnoreCase)) {{
-        throw ""NETSH_VERIFY_FAILED: wrong enabled state for $name (expected $expectedEnabled, found $($enabledMatch.Groups[1].Value))""
-    }}
-
-    $programMatch = [regex]::Match($result.Text, 'Program:\s+(.+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    if ($programMatch.Success) {{
-        $actualProgram = $programMatch.Groups[1].Value.Trim()
-        if (-not [string]::Equals($actualProgram, $expectedProgram, [System.StringComparison]::OrdinalIgnoreCase)) {{
-            throw ""NETSH_VERIFY_FAILED: wrong program for $name (expected $expectedProgram, found $actualProgram)""
-        }}
-    }}
-}}
-
 function Ensure-Rule(
     [string]$name,
     [string]$direction,
@@ -3058,7 +3556,6 @@ function Ensure-Rule(
     [int]$port,
     [bool]$ruleEnabled) {{
     $netshEnabledValue = if ($ruleEnabled) {{ 'yes' }} else {{ 'no' }}
-    $expectedEnabledText = if ($ruleEnabled) {{ 'Yes' }} else {{ 'No' }}
     $netshDirection = if ($direction -eq 'Inbound') {{ 'dir=in' }} else {{ 'dir=out' }}
     $netshPortArgument = if ($portSide -eq 'Local') {{ ""localport=$port"" }} else {{ ""remoteport=$port"" }}
 
@@ -3086,8 +3583,6 @@ function Ensure-Rule(
             'profile=any',
             ""enable=$netshEnabledValue"") | Out-Null
     }}
-
-    Assert-NetshRuleState $name $expectedEnabledText $mccExePath
 }}
 
 $ruleEnabled = [string]::Equals('{targetEnabled}', 'yes', [System.StringComparison]::OrdinalIgnoreCase)
@@ -3125,7 +3620,6 @@ exit 0";
             try
             {
                 await RunPowerShellAsync(script, elevated: !IsRunningAsAdministrator(), timeoutMs: 30000);
-                await VerifySteamFirewallRulesAsync(enabled, mccExePath, activePorts, cleanupPorts);
             }
             finally
             {
@@ -3186,6 +3680,28 @@ function Read-NetshRule([string]$name) {{
     Invoke-Netsh @('advfirewall', 'firewall', 'show', 'rule', ""name=$name"", 'verbose')
 }}
 
+function Read-Field([string]$text, [string]$label, [string]$pattern) {{
+    $match = [regex]::Match($text, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $match.Success) {{
+        $problems.Add(""could not read $label"")
+        return $null
+    }}
+
+    return $match.Groups[1].Value.Trim()
+}}
+
+function Assert-Field([string]$ruleName, [string]$text, [string]$label, [string]$pattern, [string]$expected) {{
+    $actual = Read-Field $text $label $pattern
+    if ($null -eq $actual) {{
+        $problems.Add(""could not read $label for $ruleName"")
+        return
+    }}
+
+    if (-not [string]::Equals($actual, $expected, [System.StringComparison]::OrdinalIgnoreCase)) {{
+        $problems.Add(""wrong $label for $ruleName (expected $expected, found $actual)"")
+    }}
+}}
+
 foreach ($name in $activeNames) {{
     $result = Read-NetshRule $name
     if ($result.ExitCode -ne 0 -or $result.Text -notmatch 'Rule Name:\s+') {{
@@ -3193,20 +3709,21 @@ foreach ($name in $activeNames) {{
         continue
     }}
 
-    $enabledMatch = [regex]::Match($result.Text, 'Enabled:\s+(Yes|No)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    if (-not $enabledMatch.Success) {{
-        $problems.Add(""could not read enabled state for $name"")
-    }} elseif (-not [string]::Equals($enabledMatch.Groups[1].Value, $expectedEnabled, [System.StringComparison]::OrdinalIgnoreCase)) {{
-        $problems.Add(""wrong enabled state for $name (expected $expectedEnabled, found $($enabledMatch.Groups[1].Value))"")
+    $expectedDirection = if ($name -match 'Inbound$') {{ 'In' }} else {{ 'Out' }}
+    $expectedProtocol = if ($name -match ' UDP ') {{ 'UDP' }} else {{ 'TCP' }}
+    $expectedPortSide = if ($expectedDirection -eq 'In') {{ 'LocalPort' }} else {{ 'RemotePort' }}
+    $portMatch = [regex]::Match($name, ' Port (\d+) ', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $portMatch.Success) {{
+        $problems.Add(""could not infer expected port for $name"")
+        continue
     }}
 
-    $programMatch = [regex]::Match($result.Text, 'Program:\s+(.+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    if ($programMatch.Success) {{
-        $actualProgram = $programMatch.Groups[1].Value.Trim()
-        if (-not [string]::Equals($actualProgram, $mccExePath, [System.StringComparison]::OrdinalIgnoreCase)) {{
-            $problems.Add(""wrong program for $name (expected $mccExePath, found $actualProgram)"")
-        }}
-    }}
+    Assert-Field $name $result.Text 'enabled state' 'Enabled:\s+(Yes|No)' $expectedEnabled
+    Assert-Field $name $result.Text 'action' 'Action:\s+(\S+)' 'Block'
+    Assert-Field $name $result.Text 'direction' 'Direction:\s+(\S+)' $expectedDirection
+    Assert-Field $name $result.Text 'protocol' 'Protocol:\s+(\S+)' $expectedProtocol
+    Assert-Field $name $result.Text 'program' 'Program:\s+(.+)' $mccExePath
+    Assert-Field $name $result.Text $expectedPortSide ""$($expectedPortSide):\s+(\S+)"" $portMatch.Groups[1].Value
 }}
 
 foreach ($name in $cleanupNames) {{
@@ -3418,6 +3935,49 @@ try {{
             }
         }
 
+        private async Task<bool> EnsureCompanionServicesRunningAsync(string requestedFeature)
+        {
+            if (_rejoinProxy.IsRunning)
+                return true;
+
+            try
+            {
+                if (!IsRunningAsAdministrator())
+                {
+                    MessageBox.Show(
+                        $"{requestedFeature} needs Advanced Features. The Toolbox will relaunch as Administrator and start them automatically.\n\nIf MCC is currently open, restart MCC afterward so traffic capture can take effect.",
+                        "Advanced Features -- Halo MCC Toolbox",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+
+                    App.SavePendingRejoinFixAutoStart(true);
+                    RelaunchAsAdministrator();
+                    Close();
+                    return true;
+                }
+
+                await StartRejoinFixAsync();
+                return _rejoinProxy.IsRunning;
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                HandleAdministratorRelaunchCancelled();
+                return false;
+            }
+            catch (Exception ex)
+            {
+                RejoinFixDiagnostics.Error("proxy", $"Automatic service activation for {requestedFeature} failed: {ex.Message}");
+                AppendLog("[ERROR]", $"Advanced Features failed: {ex.Message}", "#FF2D55");
+                SetStatus("Advanced Features failed to start.", "#FF2D55");
+                MessageBox.Show(
+                    $"Advanced Features could not start:\n\n{ex.Message}",
+                    "Advanced Features -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return false;
+            }
+        }
+
         private async Task StartPendingRejoinFixAfterElevationAsync()
         {
             if (!App.ConsumePendingRejoinFixAutoStart())
@@ -3472,7 +4032,9 @@ try {{
                     _rejoinCampaignFirewallEnabled = false;
                     SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
                     SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
-                    AppendLog("[REJOIN]", "Rejoin Fix proxy stopped.", "#C8D8E8");
+                    ChkNetworkStatsOverlay.IsChecked = false;
+                    ChkMatchmakingWaitOverlay.IsChecked = false;
+                    AppendLog("[REJOIN]", "Advanced Features stopped.", "#C8D8E8");
                     SetStatus("Rejoin Fix stopped.", "#C8D8E8");
                 }
                 else
@@ -3480,8 +4042,8 @@ try {{
                     if (!IsRunningAsAdministrator())
                     {
                         MessageBox.Show(
-                            "Rejoin Fix needs the Toolbox to run as Administrator so it can change system proxy and firewall settings.\n\nIf MCC is currently open, you'll need to restart for the Fix to function.\n\nThe Toolbox will relaunch as Administrator now.",
-                            "Rejoin Fix -- Halo MCC Toolbox",
+                            "Advanced Features need the Toolbox to run as Administrator so live MCC features can use the system proxy and firewall settings.\n\nIf MCC is currently open, restart it afterward so traffic capture can take effect.\n\nThe Toolbox will relaunch as Administrator now.",
+                            "Advanced Features -- Halo MCC Toolbox",
                             MessageBoxButton.OK,
                             MessageBoxImage.Information);
 
@@ -3519,8 +4081,8 @@ try {{
         private void HandleAdministratorRelaunchCancelled()
         {
             App.SavePendingRejoinFixAutoStart(false);
-            AppendLog("[INFO]", "Rejoin Fix cancelled at administrator prompt.", "#4A5A6A");
-            SetStatus("Rejoin Fix requires Administrator.", "#4A5A6A");
+            AppendLog("[INFO]", "Advanced Features cancelled at administrator prompt.", "#4A5A6A");
+            SetStatus("Advanced Features require Administrator.", "#4A5A6A");
         }
 
         // ------------------------------------------
@@ -4490,12 +5052,14 @@ try {{
         {
             lock (_statsLock) { _statsAutoPullLobby = true; }
             StatsAutoToggle.Content = "AUTO: ON";
+            App.SaveStatsAutoLobbyEnabled(true);
         }
 
         private void StatsAutoToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             lock (_statsLock) { _statsAutoPullLobby = false; }
             StatsAutoToggle.Content = "AUTO: OFF";
+            App.SaveStatsAutoLobbyEnabled(false);
         }
 
         private void StatsObsOverlayToggle_Checked(object sender, RoutedEventArgs e)
@@ -4579,6 +5143,325 @@ try {{
             win.Show();
         }
 
+        private void BtnStatsBanChecker_Click(object sender, RoutedEventArgs e)
+        {
+            var window = new BanCheckerWindow(StatsCheckBanTargetsAsync) { Owner = this };
+            window.ShowDialog();
+        }
+
+        private async Task<IReadOnlyList<BanCheckDisplayResult>> StatsCheckBanTargetsAsync(IReadOnlyList<string> targets)
+        {
+            if (!_rejoinProxy.TryGetLatestBanSpartanToken(out var token, out var capturedAtUtc, out _))
+            {
+                StatsSetStatus("Start Rejoin Fix, then let MCC make a ban summary request before using Ban Checker.");
+                throw new InvalidOperationException("No fresh MCC banprocessor token is available yet.\n\nStart Rejoin Fix, let MCC make a /hmcc/bansummary request, then try Ban Checker again.");
+            }
+
+            StatsSetStatus($"Resolving {targets.Count} Ban Checker target(s)...");
+            var resolved = await Task.WhenAll(targets.Select(async target =>
+            {
+                string xuid = await StatsResolveEnteredTargetToXuidAsync(target, token);
+                return (Target: target, Xuid: xuid);
+            }));
+
+            var output = resolved.Where(item => string.IsNullOrWhiteSpace(item.Xuid))
+                .Select(item => new BanCheckDisplayResult
+                {
+                    Target = item.Target,
+                    Result = "NOT FOUND",
+                    Details = "Could not resolve XUID; check the spelling."
+                }).ToList();
+
+            var found = resolved.Where(item => !string.IsNullOrWhiteSpace(item.Xuid)).ToList();
+            if (found.Count > 0)
+            {
+                var checks = await StatsFetchBanSummariesAsync(found.Select(item => item.Xuid).ToList(), token);
+                for (int i = 0; i < found.Count; i++)
+                {
+                    var check = checks[i];
+                    output.Add(new BanCheckDisplayResult
+                    {
+                        Target = found[i].Target,
+                        Result = check.HasActiveBans ? "BANNED" : "CLEAR",
+                        Details = $"XUID {found[i].Xuid} — {check.Message.Replace(Environment.NewLine, " ")}"
+                    });
+                }
+            }
+
+            StatsSetStatus($"Ban Checker checked {targets.Count} player(s) using token captured {capturedAtUtc.LocalDateTime:g}.");
+            return targets.Select(target => output.First(result => result.Target.Equals(target, StringComparison.OrdinalIgnoreCase))).ToList();
+        }
+
+        private async Task<string> StatsResolveEnteredTargetToXuidAsync(string target, string token)
+        {
+            string normalized = StatsNormalizeXuid(target);
+            if (StatsLooksLikeXuid(normalized))
+                return normalized;
+
+            string cached = StatsResolveEnteredTargetToCachedXuid(target);
+            if (!string.IsNullOrWhiteSpace(cached))
+                return cached;
+
+            StatsSetStatus($"Resolving XUID for {target}...");
+            string resolved = await StatsFetchXuidForGamertagAsync(target, token);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                StatsRememberGamertagForXuid(resolved, target);
+                return resolved;
+            }
+
+            return "";
+        }
+
+        private string StatsResolveEnteredTargetToCachedXuid(string target)
+        {
+            lock (_statsLock)
+            {
+                foreach (var (xuid, gamertag) in _statsGamertagsByXuid)
+                {
+                    if (gamertag.Equals(target, StringComparison.OrdinalIgnoreCase))
+                        return StatsNormalizeXuid(xuid);
+                }
+
+                foreach (var row in _statsCurrentLobbySnapshotRows.Concat(_statsLastCompletedLobbyRows))
+                {
+                    if (row.Gamertag.Equals(target, StringComparison.OrdinalIgnoreCase))
+                        return StatsNormalizeXuid(row.Xuid);
+                }
+
+                foreach (var player in _statsLastPlayers)
+                {
+                    string gamertag = player.Attribute("mGamertagText")?.Value ?? "";
+                    if (gamertag.Equals(target, StringComparison.OrdinalIgnoreCase))
+                        return StatsNormalizeXuid(player.Attribute("mXboxUserId")?.Value ?? "");
+                }
+            }
+
+            return "";
+        }
+
+        private static async Task<string> StatsFetchXuidForGamertagAsync(string gamertag, string token)
+        {
+            string escaped = Uri.EscapeDataString(gamertag);
+            string mccXuid = await StatsFetchXuidFromMccServiceRecordAsync(escaped, token);
+            if (StatsLooksLikeXuid(mccXuid))
+                return mccXuid;
+
+            string[] urls =
+            {
+                $"https://api.geysermc.org/v2/xbox/xuid/{escaped}",
+                $"https://playerdb.co/api/player/xbox/{escaped}",
+            };
+
+            foreach (string url in urls)
+            {
+                string xuid = await StatsTryFetchXuidFromUrlAsync(url);
+                if (StatsLooksLikeXuid(xuid))
+                    return xuid;
+            }
+
+            return "";
+        }
+
+        private static async Task<string> StatsFetchXuidFromMccServiceRecordAsync(string escapedGamertag, string token)
+        {
+            try
+            {
+                string url = $"https://mccapi.svc.halowaypoint.com/hmcc/users/gt({escapedGamertag})/service-record";
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.TryAddWithoutValidation("x-343-authorization-spartan", token);
+                req.Headers.TryAddWithoutValidation("Accept", "application/json");
+                req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0");
+
+                using var res = await StatsHttp.SendAsync(req);
+                string body = await res.Content.ReadAsStringAsync();
+                if (!res.IsSuccessStatusCode || string.IsNullOrWhiteSpace(body))
+                    return "";
+
+                return StatsExtractXuidFromLookupResponse(body);
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static async Task<string> StatsTryFetchXuidFromUrlAsync(string url)
+        {
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.TryAddWithoutValidation("Accept", "application/json,text/plain,text/html,*/*");
+                req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0");
+                req.Headers.TryAddWithoutValidation("Referer", "https://cxkes.me/xbox/xuid");
+
+                using var res = await StatsHttp.SendAsync(req);
+                string body = await res.Content.ReadAsStringAsync();
+                if (!res.IsSuccessStatusCode || string.IsNullOrWhiteSpace(body))
+                    return "";
+
+                return StatsExtractXuidFromLookupResponse(body);
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string StatsExtractXuidFromLookupResponse(string body)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                string fromJson = StatsFindXuidInJson(doc.RootElement);
+                if (!string.IsNullOrWhiteSpace(fromJson))
+                    return fromJson;
+            }
+            catch { }
+
+            var match = System.Text.RegularExpressions.Regex.Match(body, @"\b(253327\d{10})\b");
+            return match.Success ? match.Groups[1].Value : "";
+        }
+
+        private static string StatsFindXuidInJson(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        if (property.Name.Contains("xuid", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string candidate = property.Value.ValueKind == JsonValueKind.String
+                                ? property.Value.GetString() ?? ""
+                                : property.Value.GetRawText();
+                            candidate = StatsNormalizeXuid(candidate);
+                            if (StatsLooksLikeXuid(candidate))
+                                return candidate;
+                        }
+
+                        string nested = StatsFindXuidInJson(property.Value);
+                        if (!string.IsNullOrWhiteSpace(nested))
+                            return nested;
+                    }
+                    break;
+
+                case JsonValueKind.Array:
+                    foreach (var item in element.EnumerateArray())
+                    {
+                        string nested = StatsFindXuidInJson(item);
+                        if (!string.IsNullOrWhiteSpace(nested))
+                            return nested;
+                    }
+                    break;
+
+                case JsonValueKind.String:
+                    string value = StatsNormalizeXuid(element.GetString() ?? "");
+                    if (StatsLooksLikeXuid(value))
+                        return value;
+                    break;
+            }
+
+            return "";
+        }
+
+        private async Task<(bool HasActiveBans, string Message, string Status)> StatsFetchBanSummaryAsync(string xuid, string token)
+        {
+            string url =
+                $"https://banprocessor.svc.halowaypoint.com/hmcc/bansummary" +
+                $"?targets=xuid({xuid}),Authenticated(Device)";
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("X-343-Authorization-Spartan", token);
+            req.Headers.TryAddWithoutValidation("Accept", "application/json");
+            req.Headers.TryAddWithoutValidation("User-Agent", "cpprestsdk/2.9.0");
+
+            using var res = await StatsHttp.SendAsync(req);
+            string body = await res.Content.ReadAsStringAsync();
+
+            if (res.StatusCode == HttpStatusCode.BadRequest)
+                return (false, "HTTP 400: request shape is wrong.", "Ban Checker: bad request shape.");
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _rejoinProxy.ClearBanSpartanToken(token);
+                return (false, "HTTP 401: token expired, wrong, or not an MCC in-game token.", "Ban Checker: token rejected.");
+            }
+            if (res.StatusCode == HttpStatusCode.NotFound)
+                return (false, "HTTP 404: wrong endpoint path.", "Ban Checker: endpoint not found.");
+            if (!res.IsSuccessStatusCode)
+                return (false, $"HTTP {(int)res.StatusCode} {res.ReasonPhrase}\n\n{body}", $"Ban Checker: HTTP {(int)res.StatusCode}.");
+
+            return StatsParseBanSummaryResponse(xuid, body);
+        }
+
+        private async Task<IReadOnlyList<(bool HasActiveBans, string Message, string Status)>> StatsFetchBanSummariesAsync(
+            IReadOnlyList<string> xuids,
+            string token)
+        {
+            string targets = string.Join(",", xuids.Select(xuid => $"xuid({xuid})"));
+            string url = $"https://banprocessor.svc.halowaypoint.com/hmcc/bansummary?targets={targets},Authenticated(Device)";
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("X-343-Authorization-Spartan", token);
+            req.Headers.TryAddWithoutValidation("Accept", "application/json");
+            req.Headers.TryAddWithoutValidation("User-Agent", "cpprestsdk/2.9.0");
+
+            using var res = await StatsHttp.SendAsync(req);
+            string body = await res.Content.ReadAsStringAsync();
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
+                _rejoinProxy.ClearBanSpartanToken(token);
+            if (!res.IsSuccessStatusCode)
+                throw new HttpRequestException($"Ban Checker returned HTTP {(int)res.StatusCode} {res.ReasonPhrase}.\n\n{body}");
+
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("Results", out var results) || results.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("The Ban Checker response did not contain a Results array.");
+
+            var responseItems = results.EnumerateArray().ToList();
+            return xuids.Select((xuid, index) => index < responseItems.Count
+                    ? StatsParseBanSummaryResponse(xuid, $"{{\"Results\":[{responseItems[index].GetRawText()}]}}")
+                    : (false, "The service returned no result for this player.", "Ban Checker: no result."))
+                .ToList();
+        }
+
+        private static (bool HasActiveBans, string Message, string Status) StatsParseBanSummaryResponse(string xuid, string body)
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("Results", out var results) ||
+                results.ValueKind != JsonValueKind.Array ||
+                results.GetArrayLength() == 0)
+            {
+                return (false, "HTTP 200, but no Results were returned.", "Ban Checker: no results.");
+            }
+
+            var target = results.EnumerateArray().First();
+            int resultCode = target.TryGetProperty("ResultCode", out var codeEl) && codeEl.TryGetInt32(out var code)
+                ? code
+                : -1;
+
+            if (!target.TryGetProperty("Result", out var result) ||
+                !result.TryGetProperty("BansInEffect", out var bans) ||
+                bans.ValueKind != JsonValueKind.Array ||
+                bans.GetArrayLength() == 0)
+            {
+                return (false, $"Not banned.\n\nNo active bans for xuid({xuid}).\nResultCode: {resultCode}", "Ban Checker: not banned.");
+            }
+
+            var banLines = bans.EnumerateArray().Select((ban, index) =>
+            {
+                int typeValue = ban.TryGetProperty("Type", out var typeEl) && typeEl.TryGetInt32(out var parsedType) ? parsedType : -1;
+                int scopeValue = ban.TryGetProperty("Scope", out var scopeEl) && scopeEl.TryGetInt32(out var parsedScope) ? parsedScope : -1;
+                string until = "unknown";
+                if (ban.TryGetProperty("EnforceUntilUtc", out var untilObj) &&
+                    untilObj.TryGetProperty("ISO8601Date", out var dateEl))
+                    until = dateEl.GetString() ?? until;
+
+                return $"{index + 1}. Type {typeValue}, Scope {scopeValue}, Until {until}";
+            });
+
+            return (true, $"BANNED.\n\nActive bans:\n{string.Join(Environment.NewLine, banLines)}\n\nResultCode: {resultCode}", "Ban Checker: active ban found.");
+        }
+
         private void StatsHyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
         {
             Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
@@ -4631,20 +5514,23 @@ try {{
 
         private void StatsRefreshObsOverlayUi()
         {
-            StatsObsOverlayToggle.Content = _obsBrowserOverlayEnabled
-                ? "OBS OVERLAY: ON"
-                : "OBS OVERLAY: OFF";
+            StatsObsOverlayToggle.Content = "OBS BROWSER OVERLAY";
             StatsObsOverlayUrlLabel.Text = _obsBrowserOverlayEnabled
                 ? _obsOverlayServer.Url
                 : "";
-            StatsObsSessionStatsToggle.IsEnabled = _obsBrowserOverlayEnabled;
+            StatsObsOverlayUrlLabel.Visibility = _obsBrowserOverlayEnabled
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            // Session-stat visibility applies to every overlay and is intentionally
+            // independent of whether the OBS browser-source link is enabled.
+            StatsObsSessionStatsToggle.IsEnabled = true;
         }
 
         private void PublishObsOverlaySnapshot()
         {
             var snapshot = BuildObsOverlaySnapshot();
 
-            if (_networkStatsOverlayEnabled && _gameNetworkStatsOverlay is not null)
+            if ((_networkStatsOverlayEnabled || _matchmakingWaitOverlayEnabled) && _gameNetworkStatsOverlay is not null)
                 _gameNetworkStatsOverlay.UpdateSessionStats(snapshot);
 
             if (_obsOverlayServer.IsRunning)
@@ -4678,8 +5564,23 @@ try {{
 
             return new ObsOverlaySnapshot(
                 ShowSessionStats: _obsBrowserOverlaySessionStatsEnabled,
+                ShowNetworkStats: _networkStatsOverlayEnabled,
+                ShowMatchmakingWait: _matchmakingWaitOverlayEnabled && _smartMatchWaitEstimate is not null,
+                MatchmakingWaitSeconds: _smartMatchWaitEstimate?.WaitSeconds,
+                MatchmakingPopulation: _smartMatchHopperPopulation,
+                MatchmakingPlaylistName: _smartMatchHopperDisplayName,
+                MatchmakingSearchScope: _smartMatchWaitEstimate?.HopperName.Contains(
+                    "Ranked",
+                    StringComparison.OrdinalIgnoreCase) == true
+                        ? "all ranks"
+                        : "all gametypes",
+                MatchmakingStartedAtUtc: _smartMatchWaitEstimate?.CapturedAtUtc,
+                MatchmakingExpiresAtUtc: _smartMatchWaitEstimate is null
+                    ? null
+                    : _smartMatchWaitEstimate.CapturedAtUtc.AddSeconds(_smartMatchWaitEstimate.GiveUpSeconds + 10),
                 ServerLabel: serverLabel,
                 RttMs: _lastNetworkStatsSnapshot?.RttMs is long rtt ? (int?)Math.Clamp(rtt, int.MinValue, int.MaxValue) : null,
+                JitterMs: _lastNetworkStatsSnapshot?.JitterMs,
                 PacketLossPercent: _lastNetworkStatsSnapshot?.PacketLossPercent ?? 0,
                 RttHistoryMs: rttHistory,
                 UploadKilobytesPerSecond: _lastNetworkTrafficSnapshot?.UploadKilobytesPerSecond,
@@ -4701,6 +5602,118 @@ try {{
         // ══════════════════════════════════════════════════════════════════════
         // Stats Tab — Core logic
         // ══════════════════════════════════════════════════════════════════════
+
+        private void StatsPopulationRefresh_Click(object sender, RoutedEventArgs e) =>
+            _ = StatsRefreshMatchmakingPopulationAsync();
+
+        private async void MatchmakingPopulationTimer_Tick(object? sender, EventArgs e)
+        {
+            var estimate = _smartMatchWaitEstimate;
+            if (estimate is null || !_rejoinProxy.IsRunning ||
+                DateTimeOffset.UtcNow >= estimate.CapturedAtUtc.AddSeconds(estimate.GiveUpSeconds + 10))
+            {
+                _matchmakingPopulationTimer.Stop();
+                _smartMatchHopperPopulation = null;
+                PublishObsOverlaySnapshot();
+                return;
+            }
+
+            if (DateTimeOffset.UtcNow - _lastFullPopulationRefreshUtc >= TimeSpan.FromSeconds(60))
+            {
+                await StatsRefreshMatchmakingPopulationAsync();
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(estimate.HopperName))
+                return;
+
+            var result = await _rejoinProxy.GetHopperStatisticsAsync(estimate.HopperName);
+            if (ReferenceEquals(estimate, _smartMatchWaitEstimate) && string.IsNullOrWhiteSpace(result.Error))
+            {
+                _smartMatchHopperPopulation = result.Population;
+                PublishObsOverlaySnapshot();
+            }
+        }
+
+        private void StatsPopulationHeader_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not GridViewColumnHeader header || header.Tag is not string property)
+                return;
+
+            _statsPopulationSortDirection = property.Equals(_statsPopulationSortProperty, StringComparison.Ordinal)
+                ? (_statsPopulationSortDirection == ListSortDirection.Ascending
+                    ? ListSortDirection.Descending
+                    : ListSortDirection.Ascending)
+                : ListSortDirection.Ascending;
+            _statsPopulationSortProperty = property;
+
+            var view = CollectionViewSource.GetDefaultView(_statsPopulationRows);
+            view.SortDescriptions.Clear();
+            view.SortDescriptions.Add(new SortDescription(property, _statsPopulationSortDirection));
+        }
+
+        private async Task StatsRefreshMatchmakingPopulationAsync()
+        {
+            if (!await _statsPopulationRefreshLock.WaitAsync(0))
+                return;
+
+            try
+            {
+                _lastFullPopulationRefreshUtc = DateTimeOffset.UtcNow;
+                var hoppers = PlaylistsTab.GetMatchmakingHoppers();
+                if (hoppers.Count == 0)
+                {
+                    StatsPopulationStatusLabel.Text = "No hopper names were found in MCC's playlist XML.";
+                    return;
+                }
+
+                StatsPopulationStatusLabel.Text = $"Refreshing {hoppers.Count} hoppers…";
+                using var queryGate = new SemaphoreSlim(4, 4);
+                var tasks = hoppers.Select(async hopper =>
+                {
+                    await queryGate.WaitAsync();
+                    try
+                    {
+                        return new
+                        {
+                            Hopper = hopper,
+                            Result = await _rejoinProxy.GetHopperStatisticsAsync(hopper.HopperName)
+                        };
+                    }
+                    finally
+                    {
+                        queryGate.Release();
+                    }
+                });
+                var results = await Task.WhenAll(tasks);
+
+                _statsPopulationRows.Clear();
+                foreach (var item in results
+                    .Select(x => new MatchmakingPopulationRow(x.Hopper, x.Result))
+                    .OrderByDescending(x => x.Population ?? -1)
+                    .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
+                {
+                    _statsPopulationRows.Add(item);
+                }
+
+                _smartMatchHopperPopulation = _smartMatchWaitEstimate is null
+                    ? null
+                    : results.FirstOrDefault(x => x.Hopper.HopperName.Equals(
+                        _smartMatchWaitEstimate.HopperName,
+                        StringComparison.OrdinalIgnoreCase))?.Result.Population;
+                PublishObsOverlaySnapshot();
+
+                int successful = results.Count(x => string.IsNullOrWhiteSpace(x.Result.Error));
+                StatsPopulationStatusLabel.Text = successful > 0
+                    ? $"Live hopper statistics · {successful}/{results.Length} available · updated {DateTime.Now:h:mm:ss tt}"
+                    : results.Select(x => x.Result.Error).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))
+                        ?? "Hopper statistics are unavailable.";
+            }
+            finally
+            {
+                _statsPopulationRefreshLock.Release();
+            }
+        }
 
         private void StatsApplyGamertag()
         {
@@ -4840,11 +5853,11 @@ try {{
                 {
                     string gt = StatsResolveGamertag(p, gamertagsByXuid);
                     string squadKey = StatsGetSquadKey(p);
-
+                    string xuid = StatsNormalizeXuid(p.Xuid);
                     return new StatsPlayerRow
                     {
                         Gamertag = gt,
-                        Xuid = StatsNormalizeXuid(p.Xuid),
+                        Xuid = xuid,
                         Team = "",
                         KD = kdSnap.GetValueOrDefault(gt, "—"),
                         Totals = totSnap.GetValueOrDefault(gt, ""),
@@ -5102,7 +6115,8 @@ try {{
             if (StatsLooksLikeXuid(trimmedGamertag))
                 return;
 
-            _statsGamertagsByXuid[normalizedXuid] = trimmedGamertag;
+            lock (_statsLock)
+                _statsGamertagsByXuid[normalizedXuid] = trimmedGamertag;
         }
 
         private static string StatsResolveGamertag(
@@ -5319,8 +6333,9 @@ try {{
                 _statsLastPlayers = players;
                 foreach (var player in players)
                 {
+                    string playerXuid = StatsNormalizeXuid(player.Attribute("mXboxUserId")?.Value ?? "");
                     StatsRememberGamertagForXuid(
-                        player.Attribute("mXboxUserId")?.Value ?? "",
+                        playerXuid,
                         player.Attribute("mGamertagText")?.Value ?? "");
                 }
                 _statsLastCompletedLobbyRows = StatsMatchLobbyRowsToPlayers(_statsCurrentLobbySnapshotRows, players)
@@ -5464,7 +6479,6 @@ try {{
                     totals = $"{kills:N0}K / {deaths:N0}D";
                 }
                 string gamesStr = gamesPlayed > 0 ? gamesPlayed.ToString("N0") : "";
-
                 lock (_statsLock)
                 {
                     _statsKd[gt]     = kdVal;
@@ -5916,6 +6930,43 @@ try {{
     }
 
     // ------------------------------------------
+    public sealed class MatchmakingPopulationRow
+    {
+        public MatchmakingPopulationRow(MatchmakingHopperDefinition hopper, HopperPopulationResult result)
+        {
+            HopperName = hopper.HopperName;
+            DisplayName = hopper.DisplayName;
+            Mode = hopper.Mode;
+            Size = hopper.Size;
+            Population = result.Population;
+            WaitSeconds = result.WaitSeconds;
+            Error = result.Error;
+        }
+
+        public string HopperName { get; }
+        public string DisplayName { get; }
+        public string Mode { get; }
+        public string Size { get; }
+        public int? Population { get; }
+        public int? WaitSeconds { get; }
+        public string Error { get; }
+        public string PopulationDisplay => Population?.ToString() ?? "—";
+        public string WaitDisplay => WaitSeconds switch
+        {
+            null => "—",
+            < 60 => $"~{WaitSeconds} sec",
+            _ => $"~{Math.Ceiling(WaitSeconds.Value / 60.0):0} min"
+        };
+        public string Activity => Population switch
+        {
+            null => string.IsNullOrWhiteSpace(Error) ? "UNKNOWN" : "UNAVAILABLE",
+            0 => "QUIET",
+            < 5 => "LOW",
+            < 20 => "MEDIUM",
+            _ => "HIGH"
+        };
+    }
+
     // Stats Tab — Player row (lobby ListView)
     // ------------------------------------------
     public class StatsPlayerRow : INotifyPropertyChanged

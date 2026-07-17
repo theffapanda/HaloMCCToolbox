@@ -16,6 +16,29 @@ namespace HaloToolbox
         public static string DefaultMccPath => DefaultMccInstallationPath;
         public readonly record struct WindowPlacement(double Left, double Top, double Width, double Height, bool IsMaximized);
 
+        public static bool LoadMainSectionVisible(string sectionName)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return (key?.GetValue($"MainSection.{sectionName}") as string) != "Hidden";
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        public static void SaveMainSectionVisible(string sectionName, bool visible)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue($"MainSection.{sectionName}", visible ? "Visible" : "Hidden");
+            }
+            catch { }
+        }
+
         public static bool LoadGameNetworkStatsOverlayEnabled()
         {
             try
@@ -35,6 +58,26 @@ namespace HaloToolbox
             {
                 using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
                 key.SetValue("GameNetworkStatsOverlay", enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        public static bool LoadMatchmakingWaitOverlayEnabled()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return (key?.GetValue("MatchmakingWaitOverlay") as string) != "Disabled";
+            }
+            catch { return true; }
+        }
+
+        public static void SaveMatchmakingWaitOverlayEnabled(bool enabled)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("MatchmakingWaitOverlay", enabled ? "Enabled" : "Disabled");
             }
             catch { }
         }
@@ -81,6 +124,29 @@ namespace HaloToolbox
             {
                 using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
                 key.SetValue("ObsBrowserOverlaySessionStats", enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        public static bool LoadStatsAutoLobbyEnabled()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return (key?.GetValue("StatsAutoLobby") as string) != "Disabled";
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        public static void SaveStatsAutoLobbyEnabled(bool enabled)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("StatsAutoLobby", enabled ? "Enabled" : "Disabled");
             }
             catch { }
         }
