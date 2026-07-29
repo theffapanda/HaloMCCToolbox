@@ -82,6 +82,26 @@ namespace HaloToolbox
             catch { }
         }
 
+        public static string LoadRejoinFirewallMode()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return key?.GetValue("RejoinFirewallMode") as string ?? "Disabled";
+            }
+            catch { return "Disabled"; }
+        }
+
+        public static void SaveRejoinFirewallMode(string mode)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("RejoinFirewallMode", mode);
+            }
+            catch { }
+        }
+
         public static bool LoadObsBrowserOverlayEnabled()
         {
             try
@@ -104,6 +124,49 @@ namespace HaloToolbox
             }
             catch { }
         }
+
+        private static bool LoadFeatureObsOnlyOverlayEnabled(string valueName)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                var value = key?.GetValue(valueName) as string;
+                if (value is not null)
+                    return value == "Enabled";
+
+                // Preserve the previous global choice the first time this build runs.
+                return (key?.GetValue("ObsOnlyOverlay") as string) == "Enabled";
+            }
+            catch { return false; }
+        }
+
+        private static void SaveFeatureObsOnlyOverlayEnabled(string valueName, bool enabled)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue(valueName, enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        public static bool LoadNetworkStatsObsOnlyEnabled() =>
+            LoadFeatureObsOnlyOverlayEnabled("NetworkStatsObsOnly");
+
+        public static void SaveNetworkStatsObsOnlyEnabled(bool enabled) =>
+            SaveFeatureObsOnlyOverlayEnabled("NetworkStatsObsOnly", enabled);
+
+        public static bool LoadMatchmakingWaitObsOnlyEnabled() =>
+            LoadFeatureObsOnlyOverlayEnabled("MatchmakingWaitObsOnly");
+
+        public static void SaveMatchmakingWaitObsOnlyEnabled(bool enabled) =>
+            SaveFeatureObsOnlyOverlayEnabled("MatchmakingWaitObsOnly", enabled);
+
+        public static bool LoadSessionStatsObsOnlyEnabled() =>
+            LoadFeatureObsOnlyOverlayEnabled("SessionStatsObsOnly");
+
+        public static void SaveSessionStatsObsOnlyEnabled(bool enabled) =>
+            SaveFeatureObsOnlyOverlayEnabled("SessionStatsObsOnly", enabled);
 
         public static bool LoadObsBrowserOverlaySessionStatsEnabled()
         {

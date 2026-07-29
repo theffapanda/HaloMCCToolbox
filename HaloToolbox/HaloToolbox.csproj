@@ -24,11 +24,15 @@
     <Content Include="Data\playlist-rotations.csv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="Native\ReachBloomHook.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Resources\halo_toolbox_whiteicon.ico" />
     <Resource Include="Resources\halo_toolbox_icon.png" />
+    <Resource Include="Resources\Medals\*.png" />
   </ItemGroup>
 
   <PropertyGroup>

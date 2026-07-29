@@ -1,0 +1,238 @@
+ResourceId::261|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|Swapchain Image 261
+ResourceId::998|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Depth Target 998
+ResourceId::29874|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 29874
+ResourceId::29886|1600x1600|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Depth Target 29886
+ResourceId::29904|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Depth Target 29904
+ResourceId::29920|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Depth Target 29920
+ResourceId::29980|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260B0>|2D Render Target 29980
+ResourceId::30004|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30004
+ResourceId::30016|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260B0>|2D Render Target 30016
+ResourceId::30028|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30028
+ResourceId::30040|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 30040
+ResourceId::30076|1281x720|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30076
+ResourceId::30124|640x360|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 30124
+ResourceId::30148|288x180|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30148
+ResourceId::30160|72x45|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 30160
+ResourceId::30172|18x11|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30172
+ResourceId::30246|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 30246
+ResourceId::30261|288x180|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30261
+ResourceId::30273|72x45|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 30273
+ResourceId::30285|18x11|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30285
+ResourceId::30372|1281x720|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 30372
+ResourceId::30439|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30439
+ResourceId::30478|1281x720|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 30478
+ResourceId::30490|640x360|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Render Target 30490
+ResourceId::30586|2561x1440|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Render Target 30586
+ResourceId::35785|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 35785
+ResourceId::44512|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44512
+ResourceId::44516|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 44516
+ResourceId::44522|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44522
+ResourceId::44524|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 44524
+ResourceId::44526|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44526
+ResourceId::44530|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 44530
+ResourceId::44532|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44532
+ResourceId::44538|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 44538
+ResourceId::44544|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44544
+ResourceId::44564|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 44564
+ResourceId::44582|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44582
+ResourceId::44584|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 44584
+ResourceId::44586|16x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44586
+ResourceId::44591|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 44591
+ResourceId::44593|92x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44593
+ResourceId::44595|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44595
+ResourceId::44597|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44597
+ResourceId::44599|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44599
+ResourceId::44612|4x4|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44612
+ResourceId::44614|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44614
+ResourceId::44616|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44616
+ResourceId::44618|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44618
+ResourceId::44620|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44620
+ResourceId::44624|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44624
+ResourceId::44626|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44626
+ResourceId::44636|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44636
+ResourceId::44639|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44639
+ResourceId::44642|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44642
+ResourceId::44645|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44645
+ResourceId::44648|1600x1200|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44648
+ResourceId::44650|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44650
+ResourceId::44653|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44653
+ResourceId::44656|1024x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44656
+ResourceId::44659|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44659
+ResourceId::44662|1024x1536|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44662
+ResourceId::44664|1536x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44664
+ResourceId::44666|1024x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44666
+ResourceId::44671|4096x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44671
+ResourceId::44676|256x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44676
+ResourceId::44681|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44681
+ResourceId::44686|256x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44686
+ResourceId::44727|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44727
+ResourceId::44751|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44751
+ResourceId::44753|256x8|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44753
+ResourceId::44772|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44772
+ResourceId::44777|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44777
+ResourceId::44791|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44791
+ResourceId::44794|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44794
+ResourceId::44808|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44808
+ResourceId::44810|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44810
+ResourceId::44812|256x16|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44812
+ResourceId::44814|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44814
+ResourceId::44817|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44817
+ResourceId::44878|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44878
+ResourceId::44880|128x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44880
+ResourceId::44883|128x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44883
+ResourceId::44897|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44897
+ResourceId::44939|384x384|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44939
+ResourceId::44941|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 44941
+ResourceId::44948|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 44948
+ResourceId::44988|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 44988
+ResourceId::45100|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 45100
+ResourceId::45345|2048x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 45345
+ResourceId::45379|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 45379
+ResourceId::45453|128x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 45453
+ResourceId::45520|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 45520
+ResourceId::45525|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 45525
+ResourceId::45625|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 45625
+ResourceId::45639|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 45639
+ResourceId::45833|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 45833
+ResourceId::45835|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 45835
+ResourceId::45851|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 45851
+ResourceId::45853|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 45853
+ResourceId::45987|512x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 45987
+ResourceId::46259|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 46259
+ResourceId::46405|16x32|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 46405
+ResourceId::46533|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 46533
+ResourceId::46535|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 46535
+ResourceId::46538|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 46538
+ResourceId::46541|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 46541
+ResourceId::46561|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 46561
+ResourceId::46704|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 46704
+ResourceId::46707|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 46707
+ResourceId::46734|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 46734
+ResourceId::46746|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 46746
+ResourceId::46748|128x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 46748
+ResourceId::46750|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 46750
+ResourceId::46755|320x48|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 46755
+ResourceId::46968|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 46968
+ResourceId::46971|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 46971
+ResourceId::47386|512x2048|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 47386
+ResourceId::47389|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 47389
+ResourceId::47392|512x2048|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 47392
+ResourceId::47395|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 47395
+ResourceId::47397|256x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 47397
+ResourceId::47400|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 47400
+ResourceId::47408|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 47408
+ResourceId::47423|512x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 47423
+ResourceId::47438|256x48|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 47438
+ResourceId::47453|256x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 47453
+ResourceId::47459|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 47459
+ResourceId::47719|256x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 47719
+ResourceId::48175|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 48175
+ResourceId::48203|384x384|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 48203
+ResourceId::48205|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 48205
+ResourceId::48208|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 48208
+ResourceId::48214|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 48214
+ResourceId::48445|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 48445
+ResourceId::48448|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 48448
+ResourceId::48541|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 48541
+ResourceId::48544|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 48544
+ResourceId::48547|384x384|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 48547
+ResourceId::48549|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 48549
+ResourceId::49099|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 49099
+ResourceId::49102|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 49102
+ResourceId::49107|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 49107
+ResourceId::49111|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 49111
+ResourceId::49119|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 49119
+ResourceId::49124|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 49124
+ResourceId::49147|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 49147
+ResourceId::49150|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 49150
+ResourceId::49153|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 49153
+ResourceId::49156|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 49156
+ResourceId::51747|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 51747
+ResourceId::51843|256x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 51843
+ResourceId::54140|256x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54140
+ResourceId::54143|512x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54143
+ResourceId::54146|327x69|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54146
+ResourceId::54148|3072x72|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54148
+ResourceId::54205|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54205
+ResourceId::54208|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54208
+ResourceId::54216|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54216
+ResourceId::54219|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54219
+ResourceId::54222|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54222
+ResourceId::54230|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54230
+ResourceId::54233|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54233
+ResourceId::54236|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54236
+ResourceId::54244|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54244
+ResourceId::54246|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54246
+ResourceId::54248|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54248
+ResourceId::54343|256x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54343
+ResourceId::54385|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54385
+ResourceId::54388|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54388
+ResourceId::54390|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54390
+ResourceId::54403|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54403
+ResourceId::54406|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54406
+ResourceId::54409|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54409
+ResourceId::54417|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54417
+ResourceId::54419|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54419
+ResourceId::54421|128x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54421
+ResourceId::54529|64x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 54529
+ResourceId::54532|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 54532
+ResourceId::55437|18x10|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55437
+ResourceId::55441|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55441
+ResourceId::55445|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55445
+ResourceId::55570|512x172|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55570
+ResourceId::55572|768x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55572
+ResourceId::55574|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55574
+ResourceId::55594|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55594
+ResourceId::55597|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55597
+ResourceId::55605|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55605
+ResourceId::55608|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55608
+ResourceId::55611|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55611
+ResourceId::55619|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55619
+ResourceId::55622|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55622
+ResourceId::55625|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55625
+ResourceId::55628|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55628
+ResourceId::55641|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55641
+ResourceId::55644|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55644
+ResourceId::55647|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55647
+ResourceId::55650|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55650
+ResourceId::55657|512x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55657
+ResourceId::55660|512x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55660
+ResourceId::55663|512x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55663
+ResourceId::55666|1024x1024|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55666
+ResourceId::55669|2048x2048|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55669
+ResourceId::55672|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55672
+ResourceId::55675|2048x2048|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55675
+ResourceId::55687|128x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55687
+ResourceId::55696|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55696
+ResourceId::55702|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55702
+ResourceId::55709|256x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55709
+ResourceId::55716|256x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55716
+ResourceId::55718|256x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55718
+ResourceId::55751|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55751
+ResourceId::55754|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55754
+ResourceId::55757|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55757
+ResourceId::55760|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55760
+ResourceId::55767|1024x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55767
+ResourceId::55770|1024x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55770
+ResourceId::55773|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 55773
+ResourceId::55775|1024x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55775
+ResourceId::55837|256x256|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55837
+ResourceId::55840|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55840
+ResourceId::55843|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55843
+ResourceId::55891|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55891
+ResourceId::55894|2048x2048|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55894
+ResourceId::55897|2048x2048|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55897
+ResourceId::55903|2048x2048|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55903
+ResourceId::55906|2048x2048|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55906
+ResourceId::55909|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55909
+ResourceId::55932|64x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55932
+ResourceId::55934|64x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55934
+ResourceId::55992|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 55992
+ResourceId::55995|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 55995
+ResourceId::55997|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 55997
+ResourceId::55999|512x512|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 55999
+ResourceId::56002|128x128|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D TextureArray 56002
+ResourceId::56004|64x64|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D Texture 56004
+ResourceId::56015|1792x1792|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 56015
+ResourceId::56017|1792x1792|<Swig Object of type 'ResourceFormat *' at 0x00000215FB9260F0>|2D TextureArray 56017
+ResourceId::57056|1x1|<Swig Object of type 'ResourceFormat *' at 0x00000215FB920E30>|2D Texture 57056

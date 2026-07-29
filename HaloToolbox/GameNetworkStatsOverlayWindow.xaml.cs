@@ -17,16 +17,23 @@ public partial class GameNetworkStatsOverlayWindow : Window
     private const int WsExTransparent = 0x00000020;
     private const int WsExToolWindow = 0x00000080;
     private const int WsExNoActivate = 0x08000000;
+    private const int WmNcLButtonDown = 0x00A1;
+    private const int HtCaption = 2;
+    private const int HtBottomRight = 17;
 
     private readonly DispatcherTimer _positionTimer;
     private int? _preferredProcessId;
     private Point? _manualOffset;
     private Size? _manualSize;
+    private bool _manualPlacementIsRelative;
     private bool _moveMode;
     private bool _isUserEditingPlacement;
     private bool _browserInitialized;
     private string _overlaySource = "";
     private Rect? _lastRelativePlacement;
+    private int _missedGameWindowScans;
+    private readonly string _component;
+    private readonly string _positionFile;
 
     private static readonly string OverlayWebViewUserDataFolder = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -34,18 +41,26 @@ public partial class GameNetworkStatsOverlayWindow : Window
         "OverlayWebView2",
         Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
 
-    private static readonly string OverlayPositionFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "HaloMCCToolbox",
-        "network-overlay-position.txt");
-
-    public GameNetworkStatsOverlayWindow()
+    public GameNetworkStatsOverlayWindow(string component = "all")
     {
+        _component = component;
+        _positionFile = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HaloMCCToolbox",
+            $"{component}-overlay-position.txt");
         InitializeComponent();
+        (Width, Height, MinWidth, MinHeight) = component switch
+        {
+            "network" => (430, 132, 360, 112),
+            "wait" => (360, 112, 300, 96),
+            "session" => (920, 230, 620, 215),
+            _ => (1280, 170, 520, 132)
+        };
         var placement = LoadManualPlacement();
         _manualOffset = placement.Offset;
         _manualSize = placement.Size;
-        if (_manualSize.HasValue)
+        _manualPlacementIsRelative = placement.IsRelative;
+        if (_manualSize.HasValue && !_manualPlacementIsRelative)
         {
             Width = Math.Max(MinWidth, _manualSize.Value.Width);
             Height = Math.Max(MinHeight, _manualSize.Value.Height);
@@ -124,7 +139,7 @@ public partial class GameNetworkStatsOverlayWindow : Window
         DragSurface.IsHitTestVisible = enabled;
         DragSurface.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         Cursor = enabled ? Cursors.SizeAll : Cursors.Arrow;
-        ResizeMode = enabled ? ResizeMode.CanResizeWithGrip : ResizeMode.NoResize;
+        ResizeMode = enabled ? ResizeMode.CanResize : ResizeMode.NoResize;
         ResizeThumb.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         OverlayRoot.Background = enabled ? Brush("#66081018") : Brushes.Transparent;
         OverlayRoot.BorderBrush = enabled ? Brush("#CC00C8FF") : Brushes.Transparent;
@@ -191,11 +206,19 @@ public partial class GameNetworkStatsOverlayWindow : Window
         var hwnd = FindMccWindow(_preferredProcessId);
         if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect))
         {
-            Visibility = Visibility.Collapsed;
+            // MCC can briefly fail window enumeration while changing menus,
+            // focus, or presentation state. Preserve the last valid overlay
+            // placement so a single missed scan cannot make it flash.
+            _missedGameWindowScans++;
+            if (_missedGameWindowScans >= 8 && Visibility != Visibility.Collapsed)
+                Visibility = Visibility.Collapsed;
             return;
         }
 
+        _missedGameWindowScans = 0;
+
         var dipRect = ToDipRect(rect);
+        ApplyRelativeManualSize(dipRect);
         var size = CoerceOverlaySizeToGameRect(dipRect);
         double width = size.Width;
         double height = size.Height;
@@ -204,74 +227,80 @@ public partial class GameNetworkStatsOverlayWindow : Window
 
         if (_manualOffset.HasValue)
         {
-            Left = Math.Clamp(dipRect.Left + _manualOffset.Value.X, dipRect.Left, maxLeft);
-            Top = Math.Clamp(dipRect.Top + _manualOffset.Value.Y, dipRect.Top, maxTop);
+            double offsetX = _manualPlacementIsRelative
+                ? _manualOffset.Value.X * dipRect.Width
+                : _manualOffset.Value.X;
+            double offsetY = _manualPlacementIsRelative
+                ? _manualOffset.Value.Y * dipRect.Height
+                : _manualOffset.Value.Y;
+            SetPositionIfChanged(
+                Math.Clamp(dipRect.Left + offsetX, dipRect.Left, maxLeft),
+                Math.Clamp(dipRect.Top + offsetY, dipRect.Top, maxTop));
         }
         else
         {
             const double margin = 22;
             const double hudOffsetY = 122;
 
-            Left = Math.Clamp(dipRect.Right - width - margin, dipRect.Left, maxLeft);
-            Top = Math.Clamp(Math.Min(
-                dipRect.Bottom - height - margin,
-                dipRect.Top + hudOffsetY), dipRect.Top, maxTop);
+            SetPositionIfChanged(
+                Math.Clamp(dipRect.Right - width - margin, dipRect.Left, maxLeft),
+                Math.Clamp(Math.Min(
+                    dipRect.Bottom - height - margin,
+                    dipRect.Top + hudOffsetY), dipRect.Top, maxTop));
         }
 
-        Visibility = Visibility.Visible;
+        // Reassigning Visible on every polling tick can alter z-order between
+        // the three topmost WebView2 component windows, making overlapping
+        // transparent surfaces flash. Only transition when state changes.
+        if (Visibility != Visibility.Visible)
+            Visibility = Visibility.Visible;
         PublishRelativePlacement(dipRect, width, height);
     }
 
-    private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void SetPositionIfChanged(double left, double top)
+    {
+        if (double.IsNaN(Left) || Math.Abs(Left - left) >= 0.25)
+            Left = left;
+        if (double.IsNaN(Top) || Math.Abs(Top - top) >= 0.25)
+            Top = top;
+    }
+
+    private void DragSurface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (!_moveMode || e.LeftButton != MouseButtonState.Pressed)
             return;
 
+        BeginPlacementEdit();
         try
         {
-            BeginPlacementEdit();
-            DragMove();
+            ReleaseCapture();
+            SendMessage(new WindowInteropHelper(this).Handle, WmNcLButtonDown, HtCaption, 0);
             SaveCurrentManualPlacement();
-        }
-        catch
-        {
-            // DragMove can throw if Windows cancels the mouse capture.
         }
         finally
         {
             EndPlacementEdit();
+            e.Handled = true;
         }
     }
 
-    private void ResizeThumb_DragStarted(object sender, System.Windows.Controls.Primitives.DragStartedEventArgs e)
+    private void ResizeThumb_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        BeginPlacementEdit();
-    }
-
-    private void ResizeThumb_DragDelta(object sender, System.Windows.Controls.Primitives.DragDeltaEventArgs e)
-    {
-        if (!_moveMode)
+        if (!_moveMode || e.LeftButton != MouseButtonState.Pressed)
             return;
 
-        double maxWidth = double.PositiveInfinity;
-        double maxHeight = double.PositiveInfinity;
-
-        var hwnd = FindMccWindow(_preferredProcessId);
-        if (hwnd != IntPtr.Zero && GetWindowRect(hwnd, out var rect))
+        BeginPlacementEdit();
+        try
         {
-            var dipRect = ToDipRect(rect);
-            maxWidth = Math.Max(MinWidth, dipRect.Width);
-            maxHeight = Math.Max(MinHeight, dipRect.Height);
+            ReleaseCapture();
+            SendMessage(new WindowInteropHelper(this).Handle, WmNcLButtonDown, HtBottomRight, 0);
+            SaveCurrentManualPlacement();
         }
-
-        Width = Math.Clamp(Width + e.HorizontalChange, MinWidth, maxWidth);
-        Height = Math.Clamp(Height + e.VerticalChange, MinHeight, maxHeight);
-    }
-
-    private void ResizeThumb_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
-    {
-        SaveCurrentManualPlacement();
-        EndPlacementEdit();
+        finally
+        {
+            EndPlacementEdit();
+            e.Handled = true;
+        }
     }
 
     private void BeginPlacementEdit()
@@ -303,14 +332,23 @@ public partial class GameNetworkStatsOverlayWindow : Window
         double maxTop = Math.Max(dipRect.Top, dipRect.Bottom - height);
         double x = Math.Clamp(Left, dipRect.Left, maxLeft) - dipRect.Left;
         double y = Math.Clamp(Top, dipRect.Top, maxTop) - dipRect.Top;
-        _manualOffset = new Point(x, y);
-        _manualSize = new Size(width, height);
+        _manualOffset = new Point(x / dipRect.Width, y / dipRect.Height);
+        _manualSize = new Size(width / dipRect.Width, height / dipRect.Height);
+        _manualPlacementIsRelative = true;
         PublishRelativePlacement(dipRect, width, height);
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(OverlayPositionFile)!);
-            File.WriteAllText(OverlayPositionFile, $"{x:0.###},{y:0.###},{width:0.###},{height:0.###}");
+            Directory.CreateDirectory(Path.GetDirectoryName(_positionFile)!);
+            File.WriteAllText(
+                _positionFile,
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "relative,{0:0.######},{1:0.######},{2:0.######},{3:0.######}",
+                    _manualOffset.Value.X,
+                    _manualOffset.Value.Y,
+                    _manualSize.Value.Width,
+                    _manualSize.Value.Height));
         }
         catch
         {
@@ -360,19 +398,46 @@ public partial class GameNetworkStatsOverlayWindow : Window
         return new Size(coercedWidth, coercedHeight);
     }
 
-    private static OverlayPlacement LoadManualPlacement()
+    private void ApplyRelativeManualSize(Rect gameRect)
+    {
+        if (!_manualPlacementIsRelative || !_manualSize.HasValue)
+            return;
+
+        Width = Math.Max(MinWidth, _manualSize.Value.Width * gameRect.Width);
+        Height = Math.Max(MinHeight, _manualSize.Value.Height * gameRect.Height);
+    }
+
+    private OverlayPlacement LoadManualPlacement()
     {
         try
         {
-            if (!File.Exists(OverlayPositionFile))
-                return new OverlayPlacement(null, null);
+            if (!File.Exists(_positionFile))
+                return new OverlayPlacement(null, null, IsRelative: false);
 
-            var parts = File.ReadAllText(OverlayPositionFile).Split(',');
+            var parts = File.ReadAllText(_positionFile).Split(',');
+            if (parts.Length >= 5 &&
+                string.Equals(parts[0], "relative", StringComparison.OrdinalIgnoreCase) &&
+                double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double relativeX) &&
+                double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double relativeY) &&
+                double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out double relativeWidth) &&
+                double.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out double relativeHeight))
+            {
+                return new OverlayPlacement(
+                    new Point(relativeX, relativeY),
+                    new Size(relativeWidth, relativeHeight),
+                    IsRelative: true);
+            }
+
+            // Older Session Stats builds stored absolute desktop pixels. Those values
+            // become invalid after a resolution, DPI, or MCC window-mode change.
+            if (string.Equals(_component, "session", StringComparison.OrdinalIgnoreCase))
+                return new OverlayPlacement(null, null, IsRelative: false);
+
             if (parts.Length == 2 &&
                 double.TryParse(parts[0], out double x) &&
                 double.TryParse(parts[1], out double y))
             {
-                return new OverlayPlacement(new Point(x, y), null);
+                return new OverlayPlacement(new Point(x, y), null, IsRelative: false);
             }
 
             if (parts.Length >= 4 &&
@@ -381,7 +446,7 @@ public partial class GameNetworkStatsOverlayWindow : Window
                 double.TryParse(parts[2], out double width) &&
                 double.TryParse(parts[3], out double height))
             {
-                return new OverlayPlacement(new Point(x, y), new Size(width, height));
+                return new OverlayPlacement(new Point(x, y), new Size(width, height), IsRelative: false);
             }
         }
         catch
@@ -389,7 +454,7 @@ public partial class GameNetworkStatsOverlayWindow : Window
             // Ignore malformed or inaccessible placement files.
         }
 
-        return new OverlayPlacement(null, null);
+        return new OverlayPlacement(null, null, IsRelative: false);
     }
 
     private Rect ToDipRect(WindowRect rect)
@@ -405,6 +470,20 @@ public partial class GameNetworkStatsOverlayWindow : Window
     {
         if (preferredProcessId.HasValue)
         {
+            try
+            {
+                var preferred = Process.GetProcessById(preferredProcessId.Value);
+                if (preferred.MainWindowHandle != IntPtr.Zero &&
+                    IsWindowVisible(preferred.MainWindowHandle))
+                {
+                    return preferred.MainWindowHandle;
+                }
+            }
+            catch
+            {
+                // Fall through to top-level window enumeration.
+            }
+
             var hwnd = FindWindowForProcessId(preferredProcessId.Value);
             if (hwnd != IntPtr.Zero)
                 return hwnd;
@@ -436,15 +515,24 @@ public partial class GameNetworkStatsOverlayWindow : Window
     private static IntPtr FindWindowForProcessId(int processId)
     {
         IntPtr found = IntPtr.Zero;
+        long largestArea = 0;
 
         EnumWindows((hwnd, _) =>
         {
             GetWindowThreadProcessId(hwnd, out int windowProcessId);
-            if (windowProcessId != processId || !IsWindowVisible(hwnd))
+            if (windowProcessId != processId || !IsWindowVisible(hwnd) ||
+                !GetWindowRect(hwnd, out var rect))
                 return true;
 
-            found = hwnd;
-            return false;
+            long width = Math.Max(0, rect.Right - rect.Left);
+            long height = Math.Max(0, rect.Bottom - rect.Top);
+            long area = width * height;
+            if (area > largestArea)
+            {
+                largestArea = area;
+                found = hwnd;
+            }
+            return true;
         }, IntPtr.Zero);
 
         return found;
@@ -471,9 +559,15 @@ public partial class GameNetworkStatsOverlayWindow : Window
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
 
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, int message, int wParam, int lParam);
+
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    private sealed record OverlayPlacement(Point? Offset, Size? Size);
+    private sealed record OverlayPlacement(Point? Offset, Size? Size, bool IsRelative);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct WindowRect
@@ -483,4 +577,5 @@ public partial class GameNetworkStatsOverlayWindow : Window
         public int Right;
         public int Bottom;
     }
+
 }

@@ -1,0 +1,112 @@
+RESOURCE ResourceId::30016 2561x1440
+8801|ResourceUsage.ColorTarget
+8808|ResourceUsage.ColorTarget
+8815|ResourceUsage.ColorTarget
+RESOURCE ResourceId::30028 2561x1440
+8801|ResourceUsage.ColorTarget
+8808|ResourceUsage.ColorTarget
+8815|ResourceUsage.ColorTarget
+RESOURCE ResourceId::30076 1281x720
+8839|ResourceUsage.ColorTarget
+8856|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30124 640x360
+8856|ResourceUsage.ColorTarget
+8869|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30148 288x180
+8869|ResourceUsage.ColorTarget
+8882|ResourceUsage.PS_Resource
+8988|ResourceUsage.PS_Resource
+9001|ResourceUsage.ColorTarget
+9016|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30160 72x45
+8882|ResourceUsage.ColorTarget
+8892|ResourceUsage.PS_Resource
+8947|ResourceUsage.PS_Resource
+8960|ResourceUsage.ColorTarget
+8975|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30172 18x11
+8892|ResourceUsage.ColorTarget
+8905|ResourceUsage.PS_Resource
+8919|ResourceUsage.PS_Resource
+8934|ResourceUsage.ColorTarget
+8947|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30246 1x1
+8905|ResourceUsage.ColorTarget
+8906|ResourceUsage.CopySrc
+RESOURCE ResourceId::30261 288x180
+8988|ResourceUsage.ColorTarget
+9001|ResourceUsage.PS_Resource
+9016|ResourceUsage.ColorTarget
+9036|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30273 72x45
+8947|ResourceUsage.ColorTarget
+8960|ResourceUsage.PS_Resource
+8975|ResourceUsage.ColorTarget
+8988|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30285 18x11
+8919|ResourceUsage.ColorTarget
+8934|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30439 256x256
+8007|ResourceUsage.VS_Resource
+8022|ResourceUsage.VS_Resource
+8025|ResourceUsage.VS_Resource
+8028|ResourceUsage.VS_Resource
+8056|ResourceUsage.VS_Resource
+8074|ResourceUsage.VS_Resource
+8086|ResourceUsage.VS_Resource
+8101|ResourceUsage.VS_Resource
+8104|ResourceUsage.VS_Resource
+8107|ResourceUsage.VS_Resource
+8131|ResourceUsage.VS_Resource
+8142|ResourceUsage.VS_Resource
+8157|ResourceUsage.VS_Resource
+8177|ResourceUsage.VS_Resource
+8180|ResourceUsage.VS_Resource
+8192|ResourceUsage.VS_Resource
+8212|ResourceUsage.VS_Resource
+8232|ResourceUsage.VS_Resource
+8235|ResourceUsage.VS_Resource
+8238|ResourceUsage.VS_Resource
+8252|ResourceUsage.VS_Resource
+8280|ResourceUsage.VS_Resource
+8297|ResourceUsage.VS_Resource
+8306|ResourceUsage.VS_Resource
+8315|ResourceUsage.VS_Resource
+8324|ResourceUsage.VS_Resource
+8333|ResourceUsage.VS_Resource
+8342|ResourceUsage.VS_Resource
+8351|ResourceUsage.VS_Resource
+8360|ResourceUsage.VS_Resource
+8369|ResourceUsage.VS_Resource
+8378|ResourceUsage.VS_Resource
+8387|ResourceUsage.VS_Resource
+8396|ResourceUsage.VS_Resource
+8405|ResourceUsage.VS_Resource
+8414|ResourceUsage.VS_Resource
+8423|ResourceUsage.VS_Resource
+8432|ResourceUsage.VS_Resource
+8441|ResourceUsage.VS_Resource
+8450|ResourceUsage.VS_Resource
+8459|ResourceUsage.VS_Resource
+8468|ResourceUsage.VS_Resource
+8477|ResourceUsage.VS_Resource
+8486|ResourceUsage.VS_Resource
+8495|ResourceUsage.VS_Resource
+8504|ResourceUsage.VS_Resource
+8513|ResourceUsage.VS_Resource
+8522|ResourceUsage.VS_Resource
+8531|ResourceUsage.VS_Resource
+8577|ResourceUsage.VS_Resource
+8594|ResourceUsage.VS_Resource
+8619|ResourceUsage.VS_Resource
+8646|ResourceUsage.VS_Resource
+8670|ResourceUsage.VS_Resource
+8689|ResourceUsage.VS_Resource
+8708|ResourceUsage.VS_Resource
+8724|ResourceUsage.VS_Resource
+8742|ResourceUsage.VS_Resource
+8758|ResourceUsage.VS_Resource
+8778|ResourceUsage.VS_Resource
+RESOURCE ResourceId::30586 2561x1440
+9036|ResourceUsage.ColorTarget
+9054|ResourceUsage.PS_Resource

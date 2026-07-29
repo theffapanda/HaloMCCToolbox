@@ -1,0 +1,17 @@
+RESOURCE ResourceId::30076 1281x720
+8839|ResourceUsage.ColorTarget
+8856|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30124 640x360
+8856|ResourceUsage.ColorTarget
+8869|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30372 1281x720
+57|ResourceUsage.Clear
+RESOURCE ResourceId::30478 1281x720
+3226|ResourceUsage.ColorTarget
+3239|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30490 640x360
+3239|ResourceUsage.ColorTarget
+3254|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30586 2561x1440
+9036|ResourceUsage.ColorTarget
+9054|ResourceUsage.PS_Resource

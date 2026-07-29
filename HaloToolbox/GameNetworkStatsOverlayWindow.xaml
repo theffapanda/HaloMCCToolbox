@@ -3,18 +3,17 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
-        Width="760"
-        Height="132"
+        Width="1280"
+        Height="170"
         MinWidth="520"
-        MinHeight="112"
+        MinHeight="132"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
         ResizeMode="NoResize"
         ShowActivated="False"
         ShowInTaskbar="False"
-        Topmost="True"
-        MouseLeftButtonDown="Window_MouseLeftButtonDown">
+        Topmost="True">
     <Border x:Name="OverlayRoot"
             Background="Transparent"
             BorderBrush="Transparent"
@@ -32,8 +31,7 @@
                     VerticalAlignment="Stretch"
                     Cursor="SizeAll"
                     Visibility="Collapsed"
-                    MouseLeftButtonDown="Window_MouseLeftButtonDown"
-                    PreviewMouseLeftButtonDown="Window_MouseLeftButtonDown"/>
+                    PreviewMouseLeftButtonDown="DragSurface_MouseLeftButtonDown"/>
 
             <primitives:Thumb x:Name="ResizeThumb"
                               Width="42"
@@ -43,9 +41,7 @@
                               VerticalAlignment="Bottom"
                               Cursor="SizeNWSE"
                               Visibility="Collapsed"
-                              DragStarted="ResizeThumb_DragStarted"
-                              DragDelta="ResizeThumb_DragDelta"
-                              DragCompleted="ResizeThumb_DragCompleted">
+                              PreviewMouseLeftButtonDown="ResizeThumb_MouseLeftButtonDown">
                 <primitives:Thumb.Template>
                     <ControlTemplate TargetType="{x:Type primitives:Thumb}">
                         <Grid Background="#01000000">

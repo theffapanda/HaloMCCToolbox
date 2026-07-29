@@ -1,5 +1,8 @@
 using System.Globalization;
+using System.IO;
 using System.Net;
+using System.Net.Sockets;
+using System.Resources;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -9,7 +12,9 @@ namespace HaloToolbox;
 internal sealed class ObsOverlayServer : IDisposable
 {
     private const int Port = 19998;
-    private const string OverlayVersion = "isolated-game-overlay-v9";
+    private const string OverlayVersion = "component-placement-v19";
+    private static readonly ResourceManager AppResources =
+        new("HaloMCCToolbox.g", typeof(ObsOverlayServer).Assembly);
     private readonly object _sync = new();
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -17,32 +22,43 @@ internal sealed class ObsOverlayServer : IDisposable
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    private HttpListener? _listener;
+    private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _listenTask;
     private ObsOverlaySnapshot _snapshot = ObsOverlaySnapshot.Empty;
 
     public string Url => $"http://127.0.0.1:{Port}/overlay/?mode=obs&v={OverlayVersion}";
     public string GameOverlayUrl => $"http://127.0.0.1:{Port}/overlay/?mode=game&v={OverlayVersion}";
-    public bool IsRunning => _listener?.IsListening == true;
+    public string ComponentUrl(string component, string mode = "game") =>
+        $"http://127.0.0.1:{Port}/overlay/?mode={mode}&component={component}&v={OverlayVersion}";
+    public bool IsRunning => _listener is not null && _cts is { IsCancellationRequested: false };
 
     public void Start()
     {
         if (IsRunning)
             return;
 
-        _cts = new CancellationTokenSource();
-        _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
-        _listener.Start();
-        _listenTask = Task.Run(() => ListenLoopAsync(_cts.Token));
+        var cts = new CancellationTokenSource();
+        var listener = new TcpListener(IPAddress.Loopback, Port);
+        try
+        {
+            listener.Start();
+            _cts = cts;
+            _listener = listener;
+            _listenTask = Task.Run(() => ListenLoopAsync(listener, cts.Token));
+        }
+        catch
+        {
+            listener.Stop();
+            cts.Dispose();
+            throw;
+        }
     }
 
     public void Stop()
     {
         try { _cts?.Cancel(); } catch { }
         try { _listener?.Stop(); } catch { }
-        try { _listener?.Close(); } catch { }
         _listener = null;
         _cts?.Dispose();
         _cts = null;
@@ -59,74 +75,192 @@ internal sealed class ObsOverlayServer : IDisposable
 
     public void Dispose() => Stop();
 
-    private async Task ListenLoopAsync(CancellationToken token)
+    private async Task ListenLoopAsync(TcpListener listener, CancellationToken token)
     {
-        while (!token.IsCancellationRequested && _listener is { IsListening: true } listener)
+        while (!token.IsCancellationRequested)
         {
-            HttpListenerContext context;
+            TcpClient client;
             try
             {
-                context = await listener.GetContextAsync();
+                client = await listener.AcceptTcpClientAsync(token);
             }
-            catch
+            catch (OperationCanceledException)
             {
-                if (token.IsCancellationRequested)
-                    return;
+                return;
+            }
+            catch (SocketException) when (token.IsCancellationRequested)
+            {
+                return;
+            }
+            catch when (!token.IsCancellationRequested)
+            {
                 continue;
             }
 
-            _ = Task.Run(() => HandleRequestAsync(context), token);
+            _ = HandleRequestAsync(client, token);
         }
     }
 
-    private async Task HandleRequestAsync(HttpListenerContext context)
+    private async Task HandleRequestAsync(TcpClient client, CancellationToken token)
     {
-        try
+        using (client)
         {
-            string path = context.Request.Url?.AbsolutePath.TrimEnd('/') ?? "";
-            if (path.Length == 0 || path.Equals("/overlay", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                await WriteTextAsync(context, GetOverlayHtml(), "text/html; charset=utf-8");
-                return;
-            }
+                client.NoDelay = true;
+                await using NetworkStream stream = client.GetStream();
+                using var reader = new StreamReader(
+                    stream,
+                    Encoding.ASCII,
+                    detectEncodingFromByteOrderMarks: false,
+                    bufferSize: 4096,
+                    leaveOpen: true);
 
-            if (path.Equals("/state.json", StringComparison.OrdinalIgnoreCase))
-            {
-                ObsOverlaySnapshot snapshot;
-                lock (_sync)
+                string? requestLine = await reader.ReadLineAsync(token);
+                if (string.IsNullOrWhiteSpace(requestLine))
+                    return;
+
+                for (int i = 0; i < 100; i++)
                 {
-                    snapshot = _snapshot;
+                    string? header = await reader.ReadLineAsync(token);
+                    if (string.IsNullOrEmpty(header))
+                        break;
                 }
 
-                await WriteTextAsync(
-                    context,
-                    JsonSerializer.Serialize(snapshot, _jsonOptions),
-                    "application/json; charset=utf-8");
-                return;
-            }
+                string[] requestParts = requestLine.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+                if (requestParts.Length < 2)
+                {
+                    await WriteResponseAsync(stream, 400, "Bad Request", "text/plain; charset=utf-8", Encoding.UTF8.GetBytes("Bad request"), false, token);
+                    return;
+                }
 
-            context.Response.StatusCode = 404;
-            await WriteTextAsync(context, "Not found", "text/plain; charset=utf-8");
-        }
-        catch
-        {
-            try { context.Response.StatusCode = 500; } catch { }
-        }
-        finally
-        {
-            try { context.Response.Close(); } catch { }
+                bool headOnly = requestParts[0].Equals("HEAD", StringComparison.OrdinalIgnoreCase);
+                if (!headOnly && !requestParts[0].Equals("GET", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteResponseAsync(stream, 405, "Method Not Allowed", "text/plain; charset=utf-8", Encoding.UTF8.GetBytes("Method not allowed"), false, token, headOnly);
+                    return;
+                }
+
+                Uri requestUri = Uri.TryCreate(requestParts[1], UriKind.Absolute, out var absoluteUri)
+                    ? absoluteUri
+                    : new Uri(new Uri($"http://127.0.0.1:{Port}"), requestParts[1]);
+                string path = requestUri.AbsolutePath.TrimEnd('/');
+
+                if (path.Length == 0 || path.Equals("/overlay", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteTextAsync(stream, GetOverlayHtml(), "text/html; charset=utf-8", token, headOnly);
+                    return;
+                }
+
+                if (path.Equals("/state.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    ObsOverlaySnapshot snapshot;
+                    lock (_sync)
+                    {
+                        snapshot = _snapshot;
+                    }
+
+                    await WriteTextAsync(
+                        stream,
+                        JsonSerializer.Serialize(snapshot, _jsonOptions),
+                        "application/json; charset=utf-8",
+                        token,
+                        headOnly);
+                    return;
+                }
+
+                if (path.Equals("/health.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteTextAsync(
+                        stream,
+                        $"{{\"status\":\"ok\",\"version\":\"{OverlayVersion}\"}}",
+                        "application/json; charset=utf-8",
+                        token,
+                        headOnly);
+                    return;
+                }
+
+                if (path.StartsWith("/medals/", StringComparison.OrdinalIgnoreCase))
+                {
+                    string fileName = Path.GetFileName(path);
+                    var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        "double-kill.png", "triple-kill.png", "overkill.png",
+                        "killtacular.png", "killtrocity.png", "killimanjaro.png",
+                        "killtastrophe.png", "killpocalypse.png", "killionaire.png"
+                    };
+                    if (allowed.Contains(fileName))
+                    {
+                        if (AppResources.GetObject(
+                                $"resources/medals/{fileName}",
+                                CultureInfo.InvariantCulture) is Stream resource)
+                        {
+                            using (resource)
+                            {
+                                await using var memory = new MemoryStream();
+                                await resource.CopyToAsync(memory, token);
+                                await WriteResponseAsync(stream, 200, "OK", "image/png", memory.ToArray(), true, token, headOnly);
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                await WriteResponseAsync(stream, 404, "Not Found", "text/plain; charset=utf-8", Encoding.UTF8.GetBytes("Not found"), false, token, headOnly);
+            }
+            catch (Exception ex)
+            {
+                // OBS and WebView browser sources poll continuously. A client
+                // disappearing between polls must not stop the listener.
+                System.Diagnostics.Trace.WriteLine($"OBS overlay request failed: {ex}");
+            }
         }
     }
 
-    private static async Task WriteTextAsync(HttpListenerContext context, string text, string contentType)
+    private static Task WriteTextAsync(
+        NetworkStream stream,
+        string text,
+        string contentType,
+        CancellationToken token,
+        bool headOnly = false)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(text);
-        context.Response.ContentType = contentType;
-        context.Response.ContentLength64 = bytes.Length;
-        context.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
-        context.Response.Headers["Pragma"] = "no-cache";
-        context.Response.Headers["Expires"] = "0";
-        await context.Response.OutputStream.WriteAsync(bytes);
+        return WriteResponseAsync(
+            stream,
+            200,
+            "OK",
+            contentType,
+            Encoding.UTF8.GetBytes(text),
+            cacheForDay: false,
+            token,
+            headOnly);
+    }
+
+    private static async Task WriteResponseAsync(
+        NetworkStream stream,
+        int statusCode,
+        string statusText,
+        string contentType,
+        byte[] body,
+        bool cacheForDay,
+        CancellationToken token,
+        bool headOnly = false)
+    {
+        string cacheHeaders = cacheForDay
+            ? "Cache-Control: public, max-age=86400\r\n"
+            : "Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\nPragma: no-cache\r\nExpires: 0\r\n";
+        string headers =
+            $"HTTP/1.1 {statusCode} {statusText}\r\n" +
+            $"Content-Type: {contentType}\r\n" +
+            $"Content-Length: {body.Length.ToString(CultureInfo.InvariantCulture)}\r\n" +
+            cacheHeaders +
+            "Access-Control-Allow-Origin: *\r\n" +
+            "X-Content-Type-Options: nosniff\r\n" +
+            "Connection: close\r\n\r\n";
+        byte[] headerBytes = Encoding.ASCII.GetBytes(headers);
+        await stream.WriteAsync(headerBytes, token);
+        if (!headOnly && body.Length > 0)
+            await stream.WriteAsync(body, token);
+        await stream.FlushAsync(token);
     }
 
     private static string GetOverlayHtml() => """
@@ -152,8 +286,9 @@ internal sealed class ObsOverlayServer : IDisposable
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; min-height: 100%; overflow: hidden; background: transparent; }
     body { padding: 8px; }
+    body.component-mode { padding: 0; }
     .overlay {
-      width: 760px;
+      width: 1280px;
       padding: 0;
       background: transparent;
       transform-origin: top left;
@@ -168,7 +303,7 @@ internal sealed class ObsOverlayServer : IDisposable
     .wait-value.warn { color: #ffb020; }
     .wait-value.long { color: var(--red); }
     .wait-detail { color: var(--muted); font-size: 12px; margin-top: 5px; text-shadow: var(--shadow); }
-    .session { width: 300px; flex: 0 0 300px; padding-top: 1px; }
+    .session { width: 840px; flex: 0 0 840px; padding-top: 1px; }
     .row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
     .label { color: var(--muted); font-size: 12px; font-weight: 700; text-shadow: var(--shadow); }
     .section-title { color: var(--cyan); font-size: 13px; font-weight: 700; text-shadow: var(--shadow); }
@@ -199,6 +334,37 @@ internal sealed class ObsOverlayServer : IDisposable
     .kd-value { color: var(--text); font-size: 20px; font-weight: 700; margin-left: 10px; text-shadow: var(--shadow); }
     .kills { color: var(--green); font-size: 16px; font-weight: 700; text-shadow: var(--shadow); }
     .deaths { color: var(--red); font-size: 16px; font-weight: 700; text-shadow: var(--shadow); }
+    .medals { display: grid; grid-template-columns: repeat(9, 1fr); gap: 7px; margin-top: 8px; }
+    .medal { text-align: center; min-width: 0; opacity: .34; }
+    .medal.earned { opacity: 1; }
+    .medal img { width: 40px; height: 40px; object-fit: contain; display: block; margin: 0 auto 2px; }
+    .medal-name { color: var(--muted); font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: var(--shadow); }
+    .medal-count { color: var(--cyan); font-size: 14px; font-weight: 700; text-shadow: var(--shadow); }
+    .recap { width: 840px; flex: 0 0 840px; color: var(--text); animation: recapIn .32s ease-out both; }
+    .recap.hidden { display: none; }
+    .recap-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .recap-title { color: var(--cyan); font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-shadow: var(--shadow); }
+    .recap-result { color: var(--green); font-size: 22px; font-weight: 700; text-shadow: var(--shadow); }
+    .recap-result.loss { color: var(--red); }
+    .recap-grid { display: grid; grid-template-columns: 1fr 1.05fr 1.55fr; gap: 14px; align-items: center; }
+    .recap-block { min-width: 0; border-left: 1px solid rgba(0,200,255,.34); padding-left: 12px; }
+    .recap-game { font-size: 20px; font-weight: 700; text-shadow: var(--shadow); }
+    .recap-game span { color: var(--muted); font-size: 10px; font-weight: 400; }
+    .recap-kd-change { color: var(--muted); font-size: 10px; margin-top: 7px; }
+    .recap-kd-change strong { color: var(--cyan); font-size: 15px; }
+    .recap-best { color: var(--green); font-size: 9px; margin-top: 3px; }
+    .recap-feature { display: flex; align-items: center; gap: 10px; }
+    .recap-feature img { width: 66px; height: 66px; object-fit: contain; }
+    .recap-feature-name { color: var(--cyan); font-size: 15px; font-weight: 700; text-shadow: var(--shadow); }
+    .recap-feature-detail { color: var(--muted); font-size: 9px; margin-top: 3px; }
+    .recap-deltas { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; }
+    .recap-delta { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 6px; }
+    .recap-delta img { width: 28px; height: 28px; object-fit: contain; }
+    .recap-delta-name { color: var(--muted); font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .recap-delta-count { color: var(--green); font-size: 12px; font-weight: 700; }
+    .recap-progress { height: 2px; margin-top: 8px; background: rgba(0,200,255,.18); overflow: hidden; }
+    .recap-progress > div { height: 100%; background: var(--cyan); transform-origin: left; }
+    @keyframes recapIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body>
@@ -248,27 +414,77 @@ internal sealed class ObsOverlayServer : IDisposable
         </div>
         <div class="row record">
           <div><span id="wins" class="wins">0W</span><span class="sep">-</span><span id="losses" class="losses">0L</span></div>
-          <div><div class="winrate-label">WIN RATE</div><div id="winRate" class="winrate">--</div></div>
+          <div><div class="winrate-label">WIN RATE</div><div id="winRate" class="winrate">0%</div></div>
         </div>
         <div class="stat-box row">
-          <div><span class="label">K/D</span><span id="kd" class="kd-value">--</span></div>
+          <div><span class="label">K/D</span><span id="kd" class="kd-value">0.00</span></div>
           <div id="kills" class="kills">0 Kills</div>
           <div id="deaths" class="deaths">0 Deaths</div>
         </div>
+        <div id="medals" class="medals">
+          <div class="medal" data-field="doubleKills"><img src="/medals/double-kill.png"><div class="medal-name">DOUBLE</div><div class="medal-count">×0</div></div>
+          <div class="medal" data-field="tripleKills"><img src="/medals/triple-kill.png"><div class="medal-name">TRIPLE</div><div class="medal-count">×0</div></div>
+          <div class="medal" data-field="overkills"><img src="/medals/overkill.png"><div class="medal-name">OVERKILL</div><div class="medal-count">×0</div></div>
+          <div class="medal" data-field="killtaculars"><img src="/medals/killtacular.png"><div class="medal-name">KILLTACULAR</div><div class="medal-count">×0</div></div>
+          <div class="medal" data-field="killtrocities"><img src="/medals/killtrocity.png"><div class="medal-name">KILLTROCITY</div><div class="medal-count">×0</div></div>
+          <div class="medal" data-field="killimanjaros"><img src="/medals/killimanjaro.png"><div class="medal-name">KILLIMANJARO</div><div class="medal-count">×0</div></div>
+          <div class="medal" data-field="killtastrophes"><img src="/medals/killtastrophe.png"><div class="medal-name">KILLTASTROPHE</div><div class="medal-count">×0</div></div>
+          <div class="medal" data-field="killpocalypses"><img src="/medals/killpocalypse.png"><div class="medal-name">KILLPOCALYPSE</div><div class="medal-count">×0</div></div>
+          <div class="medal" data-field="killionaires"><img src="/medals/killionaire.png"><div class="medal-name">KILLIONAIRE</div><div class="medal-count">×0</div></div>
+        </div>
+      </section>
+
+      <section id="recap" class="recap hidden">
+        <div class="recap-head">
+          <div class="recap-title">POST-GAME RECAP</div>
+          <div id="recapResult" class="recap-result">VICTORY</div>
+        </div>
+        <div class="recap-grid">
+          <div class="recap-block">
+            <div id="recapGame" class="recap-game">0 KILLS &nbsp; 0 DEATHS &nbsp; 0.00 K/D</div>
+            <div class="recap-kd-change">SESSION K/D &nbsp; <strong id="recapKd">0.00 → 0.00</strong></div>
+            <div id="recapBest" class="recap-best"></div>
+          </div>
+          <div class="recap-block recap-feature">
+            <img id="recapFeatureIcon" src="/medals/double-kill.png">
+            <div><div id="recapFeatureName" class="recap-feature-name">SESSION UPDATE</div><div id="recapFeatureDetail" class="recap-feature-detail"></div></div>
+          </div>
+          <div id="recapDeltas" class="recap-block recap-deltas"></div>
+        </div>
+        <div class="recap-progress"><div id="recapProgress"></div></div>
       </section>
     </div>
   </main>
 
   <script>
     const $ = id => document.getElementById(id);
-    const set = (id, value) => { $(id).textContent = value || "--"; };
-    const setBlankable = (id, value) => { $(id).textContent = value || ""; };
+    const set = (id, value) => {
+      const next = value || "--";
+      if ($(id).textContent !== next) $(id).textContent = next;
+    };
+    const setBlankable = (id, value) => {
+      const next = value || "";
+      if ($(id).textContent !== next) $(id).textContent = next;
+    };
     const params = new URLSearchParams(window.location.search);
     const isObsMode = params.get("mode") === "obs";
+    const component = params.get("component") || "all";
     const urlScale = Math.max(0.25, Math.min(4, Number(params.get("scale")) || 1));
     document.body.classList.toggle("obs-mode", isObsMode);
-    const BASE_WIDTH = 760;
-    const BASE_HEIGHT = 112;
+    document.body.classList.toggle("component-mode", component !== "all");
+    const componentSize = {
+      network: [430, 132],
+      wait: [360, 112],
+      session: [920, 230],
+      all: [1280, 150]
+    }[component] || [1280, 150];
+    const BASE_WIDTH = componentSize[0];
+    const BASE_HEIGHT = componentSize[1];
+    let lastPlacementKey = "";
+    let lastOverlayData = null;
+    const componentOverlay = document.querySelector(".overlay");
+    componentOverlay.style.width = `${BASE_WIDTH}px`;
+    componentOverlay.style.minHeight = `${BASE_HEIGHT}px`;
 
     function formatKb(value) {
       if (value === null || value === undefined) return "--";
@@ -287,35 +503,75 @@ internal sealed class ObsOverlayServer : IDisposable
       }).join(" ");
     }
 
+    function medalFile(name) {
+      const files = {
+        "Double Kill": "double-kill.png", "Triple Kill": "triple-kill.png",
+        "Overkill": "overkill.png", "Killtacular": "killtacular.png",
+        "Killtrocity": "killtrocity.png", "Killimanjaro": "killimanjaro.png",
+        "Killtastrophe": "killtastrophe.png", "Killpocalypse": "killpocalypse.png",
+        "Killionaire": "killionaire.png"
+      };
+      return files[name] || "double-kill.png";
+    }
+
     function applyPlacement(data) {
       const overlay = document.querySelector(".overlay");
       if (!overlay) return;
 
+      const componentPlacement = data.overlayPlacements?.[component];
+      const placement = component !== "all" && componentPlacement
+        ? componentPlacement
+        : {
+            leftRatio: data.overlayLeftRatio,
+            topRatio: data.overlayTopRatio,
+            widthRatio: data.overlayWidthRatio,
+            heightRatio: data.overlayHeightRatio
+          };
+
+      const contentHeight = Math.max(BASE_HEIGHT, overlay.scrollHeight);
+      const placementKey = isObsMode
+        ? `${component}|obs|${urlScale}|${window.innerWidth}|${window.innerHeight}|${contentHeight}|${placement.leftRatio}|${placement.topRatio}|${placement.widthRatio}|${placement.heightRatio}`
+        : `${component}|game|${urlScale}|${window.innerWidth}|${window.innerHeight}`;
+      if (placementKey === lastPlacementKey) return;
+      lastPlacementKey = placementKey;
+
       if (isObsMode) {
-        const left = (data.overlayLeftRatio ?? 0) * window.innerWidth;
-        const top = (data.overlayTopRatio ?? 0) * window.innerHeight;
-        const width = Math.max(1, (data.overlayWidthRatio ?? 0) * window.innerWidth);
-        const scale = (width > 1 ? width / BASE_WIDTH : 1) * urlScale;
+        const left = (placement.leftRatio ?? 0) * window.innerWidth;
+        const top = (placement.topRatio ?? 0) * window.innerHeight;
+        const width = Math.max(1, (placement.widthRatio ?? 0) * window.innerWidth);
+        const height = Math.max(1, (placement.heightRatio ?? 0) * window.innerHeight);
+        const widthScale = width > 1 ? width / BASE_WIDTH : 1;
+        const heightScale = height > 1 ? height / contentHeight : widthScale;
+        const availableHeight = Math.max(1, window.innerHeight - top - 4);
+        const viewportScale = availableHeight / contentHeight;
+        const scale = Math.max(0.1, Math.min(
+          Math.min(widthScale, heightScale) * urlScale,
+          viewportScale
+        ));
         overlay.style.left = `${left}px`;
         overlay.style.top = `${top}px`;
+        overlay.style.zoom = 1;
         overlay.style.transform = `scale(${scale})`;
         return;
       }
 
       const scale = Math.min(
         window.innerWidth / BASE_WIDTH,
-        window.innerHeight / BASE_HEIGHT
+        window.innerHeight / contentHeight
       );
-      overlay.style.transform = `scale(${Math.max(0.1, scale * urlScale)})`;
+      const fittedScale = Math.max(0.1, scale * urlScale);
+      overlay.style.zoom = 1;
+      overlay.style.transform = `scale(${fittedScale})`;
     }
 
     async function refresh() {
       try {
         const data = await fetch("/state.json", { cache: "no-store" }).then(r => r.json());
+        lastOverlayData = data;
         applyPlacement(data);
         const hasPing = data.rttMs !== null && data.rttMs !== undefined;
         const hasNetwork = hasPing || data.uploadKilobytesPerSecond !== null || data.downloadKilobytesPerSecond !== null;
-        $("network").classList.toggle("hidden", !data.showNetworkStats);
+        $("network").classList.toggle("hidden", component !== "all" && component !== "network" || !data.showNetworkStats);
         setBlankable("server", hasNetwork && data.serverLabel !== "SERVER: --" ? data.serverLabel : "");
         setBlankable("ping", hasPing ? `Ping: ${data.rttMs} ms` : "");
         const hasJitter = data.jitterMs !== null && data.jitterMs !== undefined;
@@ -333,7 +589,7 @@ internal sealed class ObsOverlayServer : IDisposable
         const showWait = data.showMatchmakingWait &&
           data.matchmakingWaitSeconds !== null && data.matchmakingWaitSeconds !== undefined &&
           (!data.matchmakingExpiresAtUtc || Date.now() < Date.parse(data.matchmakingExpiresAtUtc));
-        $("matchmaking").classList.toggle("hidden", !showWait);
+        $("matchmaking").classList.toggle("hidden", (component !== "all" && component !== "wait") || !showWait);
         if (showWait) {
           const estimate = Math.max(0, Number(data.matchmakingWaitSeconds));
           const elapsed = data.matchmakingStartedAtUtc
@@ -351,21 +607,81 @@ internal sealed class ObsOverlayServer : IDisposable
             : `elapsed ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`);
         }
 
-        $("session").classList.toggle("hidden", !data.showSessionStats);
+        // A dedicated session window exists only while that component is enabled,
+        // so keep it rendered during startup and empty-state snapshots. The
+        // combined page still honors the visibility setting from app state.
+        const sessionAllowed = component === "session" ||
+          (component === "all" && data.showSessionStats);
+        // Keep the empty session on the exact same render path as a completed,
+        // expired recap. Without this normalization the && expression returns
+        // null (not false) until the first game creates a recap object.
+        const recap = data.postGameRecap || {
+          won: false,
+          kills: 0,
+          deaths: 0,
+          gameKd: "0.00",
+          previousSessionKd: "0.00",
+          sessionKd: "0.00",
+          bestSpree: 0,
+          isNewBestSpree: false,
+          featuredMedal: "\u2014",
+          medalDeltas: [],
+          capturedAtUtc: "1970-01-01T00:00:00Z",
+          expiresAtUtc: "1970-01-01T00:00:00Z"
+        };
+        const showRecap = Boolean(
+          sessionAllowed && Date.now() < Date.parse(recap.expiresAtUtc));
+        $("session").classList.toggle("hidden", !sessionAllowed || showRecap);
+        $("recap").classList.toggle("hidden", !showRecap);
+        if (showRecap) {
+          set("recapResult", recap.won ? "VICTORY" : "DEFEAT");
+          $("recapResult").classList.toggle("loss", !recap.won);
+          set("recapGame", `${recap.kills} KILLS   ${recap.deaths} DEATHS   ${recap.gameKd} K/D`);
+          set("recapKd", `${recap.previousSessionKd} \u2192 ${recap.sessionKd}`);
+          setBlankable("recapBest", recap.isNewBestSpree ? `NEW SESSION BEST  \u2022  ${recap.bestSpree} KILL SPREE` : `${recap.bestSpree} KILL SPREE`);
+          const featured = recap.featuredMedal && recap.featuredMedal !== "\u2014" ? recap.featuredMedal : "SESSION UPDATE";
+          set("recapFeatureName", featured.toUpperCase());
+          const featureSource = `/medals/${medalFile(recap.featuredMedal)}`;
+          if (!$("recapFeatureIcon").src.endsWith(featureSource)) $("recapFeatureIcon").src = featureSource;
+          set("recapFeatureDetail", recap.featuredMedal && recap.featuredMedal !== "\u2014" ? "HIGHEST MULTIKILL THIS GAME" : "GAME ADDED TO SESSION");
+          const deltaMarkup = (recap.medalDeltas || []).map(delta => `
+            <div class="recap-delta">
+              <img src="/medals/${medalFile(delta.name)}">
+              <div class="recap-delta-name">${delta.name.toUpperCase()}</div>
+              <div class="recap-delta-count">${delta.previousCount} \u2192 ${delta.newCount}</div>
+            </div>`).join("") || `<div class="recap-delta-name">NO MULTIKILLS THIS GAME</div>`;
+          if ($("recapDeltas").innerHTML !== deltaMarkup) $("recapDeltas").innerHTML = deltaMarkup;
+          const start = Date.parse(recap.capturedAtUtc);
+          const end = Date.parse(recap.expiresAtUtc);
+          const remaining = Math.max(0, Math.min(1, (end - Date.now()) / Math.max(1, end - start)));
+          $("recapProgress").style.transform = `scaleX(${remaining})`;
+        }
         const games = data.gamesPlayed ?? 0;
         set("wins", `${data.wins ?? 0}W`);
-        setBlankable("losses", games > 0 || (data.losses ?? 0) > 0 ? `${data.losses ?? 0}L` : "");
-        setBlankable("games", games > 0 ? `${games} game${games === 1 ? "" : "s"}` : "");
-        setBlankable("winRate", games > 0 ? `${Math.round(((data.wins ?? 0) / games) * 100)}%` : "--");
+        set("losses", `${data.losses ?? 0}L`);
+        set("games", `${games} game${games === 1 ? "" : "s"}`);
+        set("winRate", games > 0 ? `${Math.round(((data.wins ?? 0) / games) * 100)}%` : "0%");
         set("kd", data.sessionKd || "--");
-        setBlankable("kills", (data.kills ?? 0) > 0 ? `${data.kills} Kills` : "");
-        setBlankable("deaths", (data.deaths ?? 0) > 0 ? `${data.deaths} Deaths` : "");
+        set("kills", `${data.kills ?? 0} Kills`);
+        set("deaths", `${data.deaths ?? 0} Deaths`);
+        document.querySelectorAll(".medal").forEach(el => {
+          const count = Number(data[el.dataset.field] ?? 0);
+          el.classList.toggle("earned", count > 0);
+          const countElement = el.querySelector(".medal-count");
+          const countText = `\u00D7${count}`;
+          if (countElement.textContent !== countText) countElement.textContent = countText;
+        });
       } catch {
       }
     }
 
     refresh();
     setInterval(refresh, 500);
+    window.addEventListener("resize", () => {
+      if (!lastOverlayData) return;
+      lastPlacementKey = "";
+      requestAnimationFrame(() => applyPlacement(lastOverlayData));
+    });
   </script>
 </body>
 </html>
@@ -397,10 +713,22 @@ internal sealed record ObsOverlaySnapshot(
     long Kills,
     long Deaths,
     string SessionKd,
+    ObsPostGameRecap? PostGameRecap,
+    int BestSpree,
+    int DoubleKills,
+    int TripleKills,
+    int Overkills,
+    int Killtaculars,
+    int Killtrocities,
+    int Killimanjaros,
+    int Killtastrophes,
+    int Killpocalypses,
+    int Killionaires,
     double OverlayLeftRatio,
     double OverlayTopRatio,
     double OverlayWidthRatio,
-    double OverlayHeightRatio)
+    double OverlayHeightRatio,
+    IReadOnlyDictionary<string, ObsOverlayPlacement> OverlayPlacements)
 {
     public static ObsOverlaySnapshot Empty { get; } = new(
         ShowSessionStats: true,
@@ -427,8 +755,46 @@ internal sealed record ObsOverlaySnapshot(
         Kills: 0,
         Deaths: 0,
         SessionKd: "--",
+        PostGameRecap: null,
+        BestSpree: 0,
+        DoubleKills: 0,
+        TripleKills: 0,
+        Overkills: 0,
+        Killtaculars: 0,
+        Killtrocities: 0,
+        Killimanjaros: 0,
+        Killtastrophes: 0,
+        Killpocalypses: 0,
+        Killionaires: 0,
         OverlayLeftRatio: 0,
         OverlayTopRatio: 0,
-        OverlayWidthRatio: 760.0 / 1920.0,
-        OverlayHeightRatio: 132.0 / 1080.0);
+        OverlayWidthRatio: 1280.0 / 1920.0,
+        OverlayHeightRatio: 170.0 / 1080.0,
+        OverlayPlacements: new Dictionary<string, ObsOverlayPlacement>());
 }
+
+internal sealed record ObsOverlayPlacement(
+    double LeftRatio,
+    double TopRatio,
+    double WidthRatio,
+    double HeightRatio);
+
+internal sealed record ObsPostGameRecap(
+    bool Won,
+    long Kills,
+    long Deaths,
+    string GameKd,
+    string PreviousSessionKd,
+    string SessionKd,
+    int BestSpree,
+    bool IsNewBestSpree,
+    string FeaturedMedal,
+    IReadOnlyList<ObsMedalDelta> MedalDeltas,
+    DateTimeOffset CapturedAtUtc,
+    DateTimeOffset ExpiresAtUtc);
+
+internal sealed record ObsMedalDelta(
+    string Name,
+    int PreviousCount,
+    int NewCount,
+    int EarnedCount);

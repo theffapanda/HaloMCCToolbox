@@ -344,6 +344,9 @@ ASALocalRun/
 # Codex scratch workspace
 **/.codex_tmp/
 
+# Local-only verified rejoin baseline (must never be published)
+/docs/REJOIN_WORKING_BASELINE.md
+
 # NVidia Nsight GPU debugger configuration file
 *.nvuser
 
