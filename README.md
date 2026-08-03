@@ -458,6 +458,19 @@ Built with:
 - [Microsoft Edge WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 - Consolas — the only acceptable monospace font
 
+Also:
+Shoutout to the below projects which inspired various functionalities, I've learned more from your projects than I can document!
+
+H3 Dolly Cam:
+https://www.nexusmods.com/halothemasterchiefcollection/mods/1888?tab=files&file_id=6683
+
+Carnage Reporter:
+https://github.com/CYRiXplaysHalo/CarnageReporter
+
+Halo 3 Camera Tool:
+https://github.com/Krevil/Halo3CameraTool
+
+
 ---
 
 *If this tool helped you report a cheater, that's a win. 🐼*
