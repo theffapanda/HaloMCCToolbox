@@ -1,3 +1,0 @@
-slot=0 array=0 resource=ResourceId::29967 view=ResourceId::29969
-slot=1 array=0 resource=ResourceId::30248 view=ResourceId::30250
-slot=2 array=0 resource=ResourceId::53244 view=ResourceId::53245
