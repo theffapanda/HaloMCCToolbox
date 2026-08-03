@@ -11,6 +11,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 using Titanium.Web.Proxy;
@@ -95,9 +96,21 @@ public class ProxyService : IDisposable
 
     public string CurrentPlayerGamertag => _playerGamertag;
 
-    // Cached session body from INJECT[Member] — used to fake PUT responses
+    // Golden-rule guard: the client receives the real MPSD roster whenever it
+    // contains the player.  Recovery is a last-resort path only for a live
+    // match document from which MPSD has actually removed this player.
+    // The service-authoritative path is always preferred.  Recovery is only
+    // reachable when the live MPSD match document is present but no longer
+    // contains this player (the documented removal/fallback case).
+    private const bool EnableSyntheticMatchRecovery = true;
     private string? _cachedInjectedMatchBody;
-    private string  _cachedInjectedMatchEtag = "";
+    private string _cachedInjectedMatchEtag = "";
+    // Exact pre-crash match document retained for the narrow case where MPSD
+    // removes the player before the restarted client can read it back.
+    private string? _lastAuthoritativeMatchBody;
+    private string? _savedCrashRestoreMatchBody;
+
+    // Cached session body from INJECT[Member] — used to fake PUT responses
 
     // When true, the next PUT {"members":{"me":null}} to CascadeMatchmaking is
     // rewritten to a harmless touch {"members":{"me":{}}} so the player stays
@@ -112,10 +125,23 @@ public class ProxyService : IDisposable
     // membership. Disabled when background sync completes successfully.
     private bool _ghostSessionMode = false;
     private SavedHandleInfo? _ghostSession = null;
-    private Task? _ghostSessionSyncTask;  // background sync task
+    private readonly object _ghostSessionSyncLock = new();
+    private Task? _ghostSessionSyncTask;
+    private CancellationTokenSource? _ghostSessionSyncCancellation;
+    private string _ghostSessionSyncIdentityKey = "";
+    private TaskCompletionSource<SynchronizedMatchSnapshot?>? _ghostSessionSynchronizedBodyReady;
     private bool _ghostSessionSyncSuccess = false;
     private string _ghostSessionOriginalConnectionGuid = "";
+    private string _ghostSessionOriginalSubscriptionId = "";
     private bool _ghostSessionGuidUpgraded = false;
+    private bool _restoreIdentityLatched;
+    private string _restoreIdentitySquadSessionName = "";
+    private string _restoreConnectionGuid = "";
+    private string _restoreSubscriptionId = "";
+    private List<string> _restoreChangeTypes = new();
+    private Dictionary<string, string> _restoreMpsdRequestHeaders = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record SynchronizedMatchSnapshot(string Body, string ETag);
 
     private const string PlaceholderConnectionGuid = "12345678-1234-1234-1234-123456789abc";
 
@@ -366,9 +392,10 @@ public class ProxyService : IDisposable
         _pendingCrashRestoreStartedAt = DateTime.UtcNow;  // Start timeout clock
         _jitHandleDone = false;
         _jitPutDone = false;
-        _blockMatchLeave = true;
         _cachedInjectedMatchBody = null;
         _cachedInjectedMatchEtag = "";
+        _savedCrashRestoreMatchBody = null;
+        _blockMatchLeave = true;
 
         // RACE CONDITION FIX: Accept matchSession parameter from caller (MainWindow)
         // to ensure we don't rely on _lastMatchSession timing. Prefer the stronger
@@ -385,26 +412,107 @@ public class ProxyService : IDisposable
         // Enable aggressive ghost session mode
         if (_lastMatchSession is not null)
         {
+            if (string.IsNullOrWhiteSpace(_playerXuid) &&
+                !string.IsNullOrWhiteSpace(_lastMatchSession.PlayerXuid))
+            {
+                _playerXuid = _lastMatchSession.PlayerXuid;
+            }
+
+            CaptureCrashRestoreMatchBodySnapshot();
+
             _ghostSessionMode = true;
             _ghostSession = _lastMatchSession;
             _ghostSessionSyncSuccess = false;
             _ghostSessionOriginalConnectionGuid = _ghostSession.ConnectionGuid ?? "";
+            _ghostSessionOriginalSubscriptionId = _ghostSession.SubscriptionId ?? "";
             _ghostSessionGuidUpgraded = false;
+            ResetRestoreIdentityLatch();
 
-            // Start background sync immediately
-            _ghostSessionSyncTask = AutoSyncGhostSessionAsync();
+            // The match-session write must use the replacement GUID published by
+            // the restarted MCC process. Starting here races MCC startup and can
+            // write the stale pre-crash GUID instead.
+            ResetGhostSessionSync();
+            RejoinFixDiagnostics.Info(
+                "restore",
+                $"Crash restore armed for {_ghostSession.TemplateName}/{_ghostSession.SessionShort}; waiting for replacement connection GUID before MPSD sync.");
         }
 
         OnCrashRestorePendingChanged?.Invoke(this, true);
     }
 
+    private void CaptureCrashRestoreMatchBodySnapshot()
+    {
+        _savedCrashRestoreMatchBody = null;
+
+        try
+        {
+            string playerXuid = !string.IsNullOrWhiteSpace(_playerXuid)
+                ? _playerXuid
+                : _lastMatchSession?.PlayerXuid ?? "";
+
+            string? body = _lastAuthoritativeMatchBody;
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                string path = RejoinFixPaths.LastMatchmakingSessionDocumentFile;
+                if (!File.Exists(path))
+                    return;
+                body = File.ReadAllText(path);
+            }
+
+            if (string.IsNullOrWhiteSpace(playerXuid) ||
+                !MatchRosterContainsPlayer(body, playerXuid))
+            {
+                RejoinFixDiagnostics.Warn(
+                    "restore",
+                    "No pre-crash matchmaking body containing the saved player was available for fallback member recovery.");
+                return;
+            }
+
+            _savedCrashRestoreMatchBody = body;
+            RejoinFixDiagnostics.Info(
+                "restore",
+                $"Captured pre-crash authoritative match body for fallback roster recovery (xuid={playerXuid}).");
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("restore", $"Failed to capture pre-crash match body for fallback recovery: {ex.Message}");
+        }
+    }
+
     public void ClearGhostSessionMode()
     {
+        CancelGhostSessionSync();
         _ghostSessionMode = false;
         _ghostSession = null;
         _ghostSessionSyncSuccess = false;
         _ghostSessionOriginalConnectionGuid = "";
+        _ghostSessionOriginalSubscriptionId = "";
         _ghostSessionGuidUpgraded = false;
+        ResetRestoreIdentityLatch();
+    }
+
+    /// <summary>
+    /// Completes one crash-rejoin transaction after MCC has received a valid
+    /// current PlayFab game-server assignment.  Keep the saved match reference
+    /// and match-leave protection, but release the transaction-scoped restore
+    /// state so a later quit/rejoin starts from a fresh generation.
+    /// </summary>
+    private void CompleteCrashRestoreAfterLiveAssignment()
+    {
+        if (!_pendingCrashRestore)
+            return;
+
+        _pendingCrashRestore = false;
+        _pendingCrashRestoreStartedAt = DateTime.MinValue;
+        ClearGhostSessionMode();
+        _cachedInjectedMatchBody = null;
+        _cachedInjectedMatchEtag = "";
+        _savedCrashRestoreMatchBody = null;
+
+        RejoinFixDiagnostics.Info(
+            "restore",
+            "Completed crash-rejoin transaction after accepting the current live PlayFab assignment; cleared transaction-scoped restore state for the next rejoin.");
+        OnCrashRestorePendingChanged?.Invoke(this, false);
     }
 
     public bool IsGhostSessionActive() => _ghostSessionMode;
@@ -699,6 +807,10 @@ public class ProxyService : IDisposable
         var req = e.HttpClient.Request;
         if (!IsDomainWatched(req.RequestUri.Host)) return;
 
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in req.Headers)
+            headers[h.Name] = h.Value;
+
         if (req.Method == "PUT" &&
             req.RequestUri.AbsolutePath.Contains("/CascadeSquadSession/sessions/", StringComparison.OrdinalIgnoreCase))
         {
@@ -715,7 +827,7 @@ public class ProxyService : IDisposable
             }
             string body = TryDecompressGzip(rawBytes, contentEncoding);
             ObserveSquadSessionDocument(req.Url, body, "request-put");
-            TryUpgradeGhostSessionConnectionGuid(body);
+            TryUpgradeGhostSessionConnectionIdentity(req.Url, body, headers);
         }
 
         // Ghost session interception: intercept MPSD requests during crash recovery
@@ -726,10 +838,6 @@ public class ProxyService : IDisposable
                 return;  // Request intercepted and handled
             }
         }
-
-        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var h in req.Headers)
-            headers[h.Name] = h.Value;
 
         var requestUri = req.RequestUri;
         if (string.Equals(req.Method, "GET", StringComparison.OrdinalIgnoreCase) &&
@@ -782,6 +890,14 @@ public class ProxyService : IDisposable
 
         }
 
+        if (_pendingCrashRestore &&
+            req.Method == "POST" &&
+            req.RequestUri.Host.EndsWith("playfabapi.com", StringComparison.OrdinalIgnoreCase) &&
+            req.RequestUri.AbsolutePath.Contains("/Party/RequestParty", StringComparison.OrdinalIgnoreCase))
+        {
+            LogCrashRestoreRequestPartyTuple(entry.RequestBody);
+        }
+
         // ── Block match leave during crash restore ────────────────────────────
         // MCC cancels a queue either by deleting its SmartMatch ticket or by
         // leaving the associated CascadeMatchTicketSession.
@@ -790,9 +906,11 @@ public class ProxyService : IDisposable
         bool isTicketSessionLeave = req.Method == "PUT" &&
             req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
             req.RequestUri.AbsolutePath.Contains("/CascadeMatchTicketSession/sessions/", StringComparison.OrdinalIgnoreCase) &&
-            entry.RequestBody.Contains("\"me\":null", StringComparison.Ordinal);
+            IsMemberLeaveDocument(entry.RequestBody);
         if (isSmartMatchDelete || isTicketSessionLeave)
+        {
             OnSmartMatchWaitCancelled?.Invoke(this, EventArgs.Empty);
+        }
 
         // Cap 16 proved: on startup MCC sends {"members":{"me":null}} to
         // CascadeMatchmaking to leave any leftover match.  This removes the
@@ -812,18 +930,26 @@ public class ProxyService : IDisposable
         bool isLeaveRequest = req.Method == "PUT" &&
                               req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
                               req.RequestUri.AbsolutePath.Contains("/sessions/", StringComparison.OrdinalIgnoreCase) &&
-                              !string.IsNullOrEmpty(entry.RequestBody) &&
-                              entry.RequestBody.Contains("\"me\":null");
+                              IsMemberLeaveDocument(entry.RequestBody);
 
         if (isLeaveRequest)
         {
             Debug.WriteLine($"[LEAVE] Detected leave request. _blockMatchLeave={_blockMatchLeave}");
-            if (_blockMatchLeave)
+            bool isSavedAuthoritativeMatchLeave =
+                _lastMatchSession is not null &&
+                IsExactSessionDocumentPath(
+                    req.RequestUri,
+                    "CascadeMatchmaking",
+                    _lastMatchSession.SessionName);
+
+            if (_blockMatchLeave && isSavedAuthoritativeMatchLeave)
             {
                 // Short-circuit: fake 200 to MCC, leave never reaches MPSD
                 Debug.WriteLine("[LEAVE] BLOCKING — returning fake 200");
                 e.Ok("{}");
-                _blockMatchLeave = false; // one-shot: only block the first leave after crash
+                RejoinFixDiagnostics.Info(
+                    "restore",
+                    $"Blocked match-session leave for {_lastMatchSession!.SessionShort}; preserved authoritative roster membership during crash restore.");
 
                 OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
                 {
@@ -894,7 +1020,131 @@ public class ProxyService : IDisposable
         ((req.RequestUri.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
           (req.RequestUri.AbsolutePath.Contains("/handles", StringComparison.OrdinalIgnoreCase) ||
            req.RequestUri.AbsolutePath.Contains("/sessions/", StringComparison.OrdinalIgnoreCase))) ||
-         req.RequestUri.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase));
+          req.RequestUri.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase) ||
+          (req.RequestUri.Host.EndsWith("playfabapi.com", StringComparison.OrdinalIgnoreCase) &&
+           req.RequestUri.AbsolutePath.Contains("/Party/RequestParty", StringComparison.OrdinalIgnoreCase)));
+
+    private static bool IsMemberLeaveDocument(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.TryGetProperty("members", out var members) &&
+                members.ValueKind == JsonValueKind.Object &&
+                members.TryGetProperty("me", out var me) &&
+                me.ValueKind == JsonValueKind.Null;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static void LogCrashRestoreRequestPartyTuple(string requestBody)
+    {
+        if (string.IsNullOrWhiteSpace(requestBody))
+        {
+            RejoinFixDiagnostics.Warn(
+                "game-server",
+                "Crash-restore RequestParty request body was unavailable; PlayFab linkage cannot be verified.");
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(requestBody);
+            JsonElement root = document.RootElement;
+            string partyId = root.TryGetProperty("PartyId", out var partyIdElement)
+                ? partyIdElement.GetString() ?? ""
+                : "";
+            string version = root.TryGetProperty("Version", out var versionElement)
+                ? versionElement.GetString() ?? ""
+                : "";
+            bool hasSessionCookie = root.TryGetProperty("SessionCookie", out var cookieElement) &&
+                cookieElement.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(cookieElement.GetString());
+            string preferredRegions = root.TryGetProperty("PreferredRegions", out var regionsElement) &&
+                regionsElement.ValueKind == JsonValueKind.Array
+                    ? string.Join(',', regionsElement.EnumerateArray()
+                        .Where(region => region.ValueKind == JsonValueKind.String)
+                        .Select(region => region.GetString())
+                        .Where(region => !string.IsNullOrWhiteSpace(region)))
+                    : "";
+
+            RejoinFixDiagnostics.Info(
+                "game-server",
+                $"Observed crash-restore RequestParty request party={partyId} version={version} sessionCookie={(hasSessionCookie ? "present" : "missing")} preferredRegions={preferredRegions}.");
+        }
+        catch (JsonException ex)
+        {
+            RejoinFixDiagnostics.Warn(
+                "game-server",
+                $"Crash-restore RequestParty request body was invalid JSON: {ex.Message}");
+        }
+    }
+
+
+    private static bool IsExactSessionDocumentPath(Uri uri, string templateName, string sessionName)
+    {
+        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (int index = 0; index + 3 < segments.Length; index++)
+        {
+            if (segments[index].Equals("sessionTemplates", StringComparison.OrdinalIgnoreCase) &&
+                segments[index + 1].Equals(templateName, StringComparison.OrdinalIgnoreCase) &&
+                segments[index + 2].Equals("sessions", StringComparison.OrdinalIgnoreCase) &&
+                segments[index + 3].Equals(sessionName, StringComparison.OrdinalIgnoreCase) &&
+                index + 4 == segments.Length)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void ReadDiscoveryMatchState(
+        string body,
+        string sessionName,
+        string playerXuid,
+        out bool matchFound,
+        out bool playerFoundForMatch)
+    {
+        matchFound = false;
+        playerFoundForMatch = false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (!document.RootElement.TryGetProperty("results", out var results) ||
+                results.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (var result in results.EnumerateArray())
+            {
+                if (!result.TryGetProperty("sessionRef", out var sessionRef) ||
+                    !sessionRef.TryGetProperty("name", out var name) ||
+                    !string.Equals(name.GetString(), sessionName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                matchFound = true;
+                if (result.TryGetProperty("xuid", out var xuid) &&
+                    string.Equals(xuid.GetString(), playerXuid, StringComparison.Ordinal))
+                {
+                    playerFoundForMatch = true;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+    }
 
     private static string ShortServerId(string serverId) =>
         string.IsNullOrWhiteSpace(serverId)
@@ -1741,6 +1991,7 @@ public class ProxyService : IDisposable
                 SessionName    = sessionName,
                 SavedAt        = DateTime.UtcNow,
                 ConnectionGuid = connectionGuid,
+                PlayerXuid     = _playerXuid,
                 RequestHeaders = new Dictionary<string, string>(requestHeaders, StringComparer.OrdinalIgnoreCase),
             };
 
@@ -1818,6 +2069,10 @@ public class ProxyService : IDisposable
             RejoinFixDiagnostics.Info("capture", $"Saved match session {info.TemplateName}/{info.SessionShort} (guid={info.ConnectionGuid}).");
 
             _lastMatchSession = info;
+            // Arm protection as soon as the authoritative match is captured.
+            // Waiting for Process.Exited is too late for a clean MCC shutdown:
+            // MCC can send its match leave before the watcher observes the exit.
+            _blockMatchLeave = true;
 
             // Diagnostic: emit a synthetic entry so the capture log shows this fired
             OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
@@ -2129,6 +2384,8 @@ public class ProxyService : IDisposable
         _blockMatchLeave = false;
         _cachedInjectedMatchBody = null;
         _cachedInjectedMatchEtag = "";
+        _lastAuthoritativeMatchBody = null;
+        _savedCrashRestoreMatchBody = null;
         ClearGhostSessionMode();  // Also clear ghost mode when clearing saved session
         RejoinFixDiagnostics.Info("capture", "Cleared saved match-session state.");
         OnCrashRestorePendingChanged?.Invoke(this, false);
@@ -2169,6 +2426,15 @@ public class ProxyService : IDisposable
         }
 
         _playerXuid = xuid;
+
+        // Persist identity with the restore snapshot so recovery does not depend
+        // on MCC repeating GET /sessions?xuid=... after it restarts.
+        if (_lastMatchSession is not null &&
+            !string.Equals(_lastMatchSession.PlayerXuid, xuid, StringComparison.Ordinal))
+        {
+            _lastMatchSession.PlayerXuid = xuid;
+            PersistSavedMatchSessionSnapshot(_lastMatchSession);
+        }
 
         if (changed)
         {
@@ -2243,9 +2509,12 @@ public class ProxyService : IDisposable
                 // connectionRequiredForActiveMembers capability)
                 string connGuid = GetCurrentGhostConnectionGuid();
                 int restoreMemberCount = GetObservedSquadMemberCountForRestore();
+                string partyProperties = restoreMemberCount > 1
+                    ? ",\"custom\":{\"membercount\":" + restoreMemberCount + "}"
+                    : "";
                 using var putReq = new HttpRequestMessage(HttpMethod.Put, match.SessionUrl);
                 putReq.Content = new StringContent(
-                    "{\"members\":{\"me\":{\"properties\":{\"system\":{\"active\":true,\"connection\":\"" + connGuid + "\"},\"custom\":{\"membercount\":" + restoreMemberCount + "}}}}}",
+                    "{\"members\":{\"me\":{\"properties\":{\"system\":{\"active\":true,\"connection\":\"" + connGuid + "\"}" + partyProperties + "}}}}",
                     System.Text.Encoding.UTF8, "application/json");
                 putReq.Headers.TryAddWithoutValidation("If-Match", etag);
                 foreach (var (k, v) in freshHeaders)
@@ -2372,10 +2641,13 @@ public class ProxyService : IDisposable
                 ObservePlayerXuid(xuid);
             }
 
-            bool matchAlreadyInResults = body.Contains(match.SessionName, StringComparison.OrdinalIgnoreCase);
-            bool isEmpty = body.Contains("\"results\":[]") || body.Contains("\"results\": []");
-
-            if (_pendingCrashRestore && matchAlreadyInResults && body.Contains(_playerXuid))
+            ReadDiscoveryMatchState(
+                body,
+                match.SessionName,
+                _playerXuid,
+                out bool matchAlreadyInResults,
+                out bool playerFoundForMatch);
+            if (_pendingCrashRestore && matchAlreadyInResults && playerFoundForMatch)
             {
                 // PASSIVE: Match session is already in MPSD discovery results AND player is in members.
                 // Player is still an active member on the server — let MCC see the real response.
@@ -2397,7 +2669,7 @@ public class ProxyService : IDisposable
                     ResponseBody = body.Length > 500 ? body[..500] + "…" : body,
                 });
             }
-            else if (_pendingCrashRestore && matchAlreadyInResults && !body.Contains(_playerXuid))
+            else if (_pendingCrashRestore && matchAlreadyInResults && !playerFoundForMatch)
             {
                 // CRITICAL FIX: Match in discovery but player was removed from session.
                 // Need to inject player back into discovery so MCC can rejoin.
@@ -2467,7 +2739,7 @@ public class ProxyService : IDisposable
                 e.SetResponseBodyString(body);
                 entry.ResponseBody = body;
             }
-            else if (!matchAlreadyInResults && (_pendingCrashRestore || isEmpty) &&
+            else if (!matchAlreadyInResults && _pendingCrashRestore &&
                      (DateTime.UtcNow - match.SavedAt).TotalMinutes <= 30)
             {
                 // FALLBACK: Player was removed from session (heartbeat expired).
@@ -2521,7 +2793,9 @@ public class ProxyService : IDisposable
         // via PUT /members/me (403).  Instead, when MCC GETs the match session, we modify
         // the response to include our player in the members list so MCC sees itself as a
         // member and can properly connect to the game server.
-        bool memberInjected = false;
+        // Hold the real match GET until the latched identity has been written to
+        // MPSD and verified. The response remains a service-authoritative body.
+        bool authoritativeMatchBodyRead = false;
         if (!injected && _lastMatchSession is not null &&
             !string.IsNullOrEmpty(_playerXuid) &&
             entry.Method == "GET" &&
@@ -2531,10 +2805,66 @@ public class ProxyService : IDisposable
             resp.StatusCode == 200 &&
             resp.HasBody)
         {
-            var body = await e.GetResponseBodyAsString();
+            string body = await e.GetResponseBodyAsString();
+            if (!_pendingCrashRestore && MatchRosterContainsPlayer(body, _playerXuid))
+            {
+                // Keep an in-memory copy while the live match is healthy. The
+                // disk capture can later be overwritten by MPSD's removal
+                // response before the process watcher arms restore.
+                _lastAuthoritativeMatchBody = body;
+            }
+            // Match GETs remain passive during restore.  The known-working
+            // implementation lets MCC consume the real service body while the
+            // replacement identity is synchronized in the background; a failed
+            // background PUT must not hold or replace this read.
             PersistMatchmakingSessionDocument(entry.Url, body);
-            // Only inject if our player is NOT in the members list
-            if (!body.Contains(_playerXuid))
+            e.SetResponseBodyString(body);
+            entry.ResponseBody = body;
+
+            // A real MPSD response is authoritative when it contains the
+            // restarted player.  If MPSD has actually removed that member,
+            // leave the body available to the narrowly-scoped fallback member
+            // recovery below; discovery/member recovery is documented for this
+            // case only.
+            authoritativeMatchBodyRead =
+                !_pendingCrashRestore || MatchRosterContainsPlayer(body, _playerXuid);
+
+            if (_pendingCrashRestore && !authoritativeMatchBodyRead)
+            {
+                RejoinFixDiagnostics.Warn(
+                    "restore",
+                    $"Live MPSD roster for {_lastMatchSession.SessionShort} no longer contains xuid={_playerXuid}; entering documented fallback member recovery.");
+
+                if (GetObservedSquadMemberCountForRestore() <= 0)
+                {
+                    RejoinFixDiagnostics.Warn(
+                        "restore",
+                        "Fallback member recovery refused because the pre-crash squad membercount is unknown; refusing to guess solo for a party-capable restore.");
+                }
+            }
+        }
+
+        bool memberInjected = false;
+        if (EnableSyntheticMatchRecovery && _pendingCrashRestore &&
+            !authoritativeMatchBodyRead && !injected && _lastMatchSession is not null &&
+            GetObservedSquadMemberCountForRestore() > 0 &&
+            !string.IsNullOrEmpty(_playerXuid) &&
+            entry.Method == "GET" &&
+            entry.Host.EndsWith("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
+            entry.Path.Contains("/CascadeMatchmaking/sessions/", StringComparison.OrdinalIgnoreCase) &&
+            entry.Path.Contains(_lastMatchSession.SessionName, StringComparison.OrdinalIgnoreCase) &&
+            resp.StatusCode == 200 &&
+            resp.HasBody)
+        {
+            var body = await e.GetResponseBodyAsString();
+            // Do not gate this response on background MPSD synchronization.  If
+            // the service has removed the player, the narrowly-scoped member
+            // fallback below handles that response instead.
+            PersistMatchmakingSessionDocument(entry.Url, body);
+            // Only recover when the real service body truly lacks our roster
+            // member.  Do not use a substring test: the XUID must be the
+            // member's authoritative constants.system.xuid.
+            if (!MatchRosterContainsPlayer(body, _playerXuid))
             {
                 try
                 {
@@ -2564,9 +2894,25 @@ public class ProxyService : IDisposable
                     // The PREVIOUS last member's "next" already == nextIdx, so it
                     // naturally chains into our new member without modification.
                     string connGuid = GetCurrentGhostConnectionGuid();
+                    string subscriptionId = _ghostSession?.SubscriptionId ?? _lastMatchSession.SubscriptionId ?? "";
+                    IReadOnlyList<string> changeTypes = _ghostSession?.ChangeTypes is { Count: > 0 }
+                        ? _ghostSession.ChangeTypes
+                        : (_lastMatchSession.ChangeTypes is { Count: > 0 }
+                            ? _lastMatchSession.ChangeTypes
+                            : new List<string> { "everything" });
                     int restoreMemberCount = GetObservedSquadMemberCountForRestore();
-                    string gt = !string.IsNullOrEmpty(_playerGamertag)
-                        ? ",\"gamertag\":\"" + _playerGamertag + "\""
+                    // Keep the fallback member minimal, matching the known-good
+                    // implementation.  Copying a stale pre-crash matchmaking
+                    // ticket/team record mixes generations and causes MCC to
+                    // reject the rejoin.  Only live identity fields belong here.
+                    string subscriptionJson = !string.IsNullOrWhiteSpace(subscriptionId)
+                        ? ",\"subscription\":{\"id\":" +
+                          System.Text.Json.JsonSerializer.Serialize(subscriptionId) +
+                          ",\"changeTypes\":" +
+                          System.Text.Json.JsonSerializer.Serialize(changeTypes) + "}"
+                        : "";
+                    string partyCustomJson = restoreMemberCount > 1
+                        ? ",\"custom\":{\"membercount\":" + restoreMemberCount + "}"
                         : "";
                     string memberJson =
                         "\"" + nextIdx + "\":{" +
@@ -2576,9 +2922,10 @@ public class ProxyService : IDisposable
                         "\"properties\":{\"system\":{" +
                         "\"active\":true," +
                         "\"connection\":\"" + connGuid + "\"" +
-                        "},\"custom\":{\"membercount\":" + restoreMemberCount + "}}" +
-                        gt +
-                        ",\"activeTitleId\":\"1144039928\"}";
+                        subscriptionJson +
+                        "}" + partyCustomJson + "}" +
+                        ",\"gamertag\":\"" + _playerGamertag + "\"," +
+                        "\"activeTitleId\":\"1144039928\"}";
 
                     // ── Splice into the members object ──────────────────────
                     int membersIdx = body.IndexOf("\"members\":{", StringComparison.Ordinal);
@@ -2629,6 +2976,10 @@ public class ProxyService : IDisposable
                             respEtag = et;
                         _cachedInjectedMatchEtag = respEtag;
 
+                        RejoinFixDiagnostics.Info(
+                            "restore",
+                            $"Injected missing match member using live rejoin identity xuid={_playerXuid} guid={connGuid} subscription={ShortIdentityValue(subscriptionId)} membercount={FormatRestoreMemberCount(restoreMemberCount)} into {_lastMatchSession.SessionShort}.");
+
                         OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
                         {
                             Method       = "INJECT[Member]",
@@ -2667,7 +3018,8 @@ public class ProxyService : IDisposable
         // (joinRestriction:"local" + not a real member). We intercept this
         // and return the cached INJECT[Member] body as a fake 200 so MCC
         // believes the PUT succeeded and proceeds to connect to the game server.
-        if (!injected && !memberInjected &&
+        if (EnableSyntheticMatchRecovery && _pendingCrashRestore &&
+            !injected && !memberInjected && !authoritativeMatchBodyRead &&
             _cachedInjectedMatchBody is not null &&
             _lastMatchSession is not null &&
             entry.Method == "PUT" &&
@@ -2694,6 +3046,9 @@ public class ProxyService : IDisposable
             resp.Headers.AddHeader("Content-Type", "application/json");
 
             injected = true;
+            RejoinFixDiagnostics.Info(
+                "restore",
+                $"Faked match-member PUT {originalStatus}->200 for {_lastMatchSession.SessionShort} using the reconstructed authoritative session body.");
             OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
             {
                 Method       = "FAKE[MatchPut]",
@@ -2710,8 +3065,12 @@ public class ProxyService : IDisposable
         // Learn the active dedicated server from PlayFab responses. RequestParty is
         // the normal path, but MCC builds have used nearby PlayFab endpoints too, so
         // key off the server fields rather than only one URL shape.
+        bool isRequestPartyResponse =
+            entry.Host.Contains("playfabapi.com", StringComparison.OrdinalIgnoreCase) &&
+            entry.Path.Contains("/Party/RequestParty", StringComparison.OrdinalIgnoreCase);
         if (!injected && !memberInjected &&
             entry.Host.Contains("playfabapi.com", StringComparison.OrdinalIgnoreCase) &&
+            (!_pendingCrashRestore || isRequestPartyResponse) &&
             resp.StatusCode == 200 &&
             resp.HasBody)
         {
@@ -2755,13 +3114,9 @@ public class ProxyService : IDisposable
 
                         SetCurrentGameServer(serverInfo);
                         _gameServerRedirectionActive = false;
-                        // CRITICAL FIX: Do NOT clear _pendingCrashRestore here!
-                        // MCC might make multiple RequestParty calls during the rejoin sequence,
-                        // and ALL of them need to be redirected to the cached server.
-                        // The flag will be cleared by SetPendingCrashRestore when MCC confirms
-                        // successful rejoin or when the user clears the rejoin state.
-                        // _pendingCrashRestore = false;  // ← REMOVED - was causing subsequent calls to bypass redirect
-
+                        RejoinFixDiagnostics.Info(
+                            "game-server",
+                            $"Accepted live PlayFab assignment party={serverInfo.PartyId} server={serverInfo.ServerId} vm={serverInfo.VmId} ip={serverInfo.IPv4Address} fqdn={serverInfo.FQDN} region={serverInfo.Region} state={serverInfo.State} build={serverInfo.BuildId} dtls={serverInfo.DTLSCertificateSHA2Thumbprint} ports={string.Join(',', serverInfo.Ports.Select(port => $"{port.Name}:{port.Num}/{port.Protocol}"))}.");
                         entry.ResponseBody = body;
                         e.SetResponseBodyString(body);
 
@@ -2775,6 +3130,12 @@ public class ProxyService : IDisposable
                             StatusCode = 200,
                             ResponseBody = $"{(changedServer ? "UPDATED" : "REFRESHED")} live server: {serverInfo.ServerShort}",
                         });
+
+                        // RequestParty is the final documented live authority
+                        // in the rejoin chain.  Once MCC has received it, do
+                        // not carry the prior restore generation into a later
+                        // quit/rejoin attempt.
+                        CompleteCrashRestoreAfterLiveAssignment();
                         return;
                     }
                 }
@@ -2815,7 +3176,7 @@ public class ProxyService : IDisposable
                 entry.ResponseBody = squadBody;
         }
 
-        if (!smartMatchBodyRead && !injected && !memberInjected && isJson && resp.HasBody && (entry.Method == "GET" || entry.Method == "POST") && ShouldReadBody(entry.Url))
+        if (!smartMatchBodyRead && !injected && !memberInjected && !authoritativeMatchBodyRead && isJson && resp.HasBody && (entry.Method == "GET" || entry.Method == "POST") && ShouldReadBody(entry.Url))
         {
             var body = await e.GetResponseBodyAsString();
             ObserveNetworkRegionLatencies(body, "response-body");
@@ -3177,6 +3538,16 @@ public class ProxyService : IDisposable
                               url.Contains(sessionName, StringComparison.OrdinalIgnoreCase);
         bool isSquadSession = false;
 
+        // Match membership PUTs are handled locally during restore. This is
+        // the behavior from the known-working build: forwarding the write
+        // reaches MPSD after removal and returns 403.
+        if (isMatchSession && method == "PUT" && url.Contains("/members/me", StringComparison.OrdinalIgnoreCase))
+        {
+            e.Ok("{}");
+            LogGhostRequest("GHOST[Match-PUT]", req.Url, "204", "Blocked, sync in background");
+            return true;
+        }
+
         // ── Match Session Interception ────────────────────────────────────
         // Block destructive writes only; real match reads must pass through.
         if (isMatchSession)
@@ -3191,12 +3562,6 @@ public class ProxyService : IDisposable
             }
 
             // PUT /members/me in match session — accept locally (sync in background)
-            if (method == "PUT" && url.Contains("/members/me", StringComparison.OrdinalIgnoreCase))
-            {
-                e.Ok("{}");
-                LogGhostRequest("GHOST[Match-PUT]", req.Url, "204", "Blocked, sync in background");
-                return true;
-            }
         }
 
         // ── Squad Session Interception ────────────────────────────────────
@@ -3368,43 +3733,273 @@ public class ProxyService : IDisposable
         if (_lastSquadState?.MemberCount > 0)
             return _lastSquadState.MemberCount;
 
-        return 1;
+        // Unknown is not solo. A party restore without a proven count must stop
+        // instead of silently publishing membercount=1.
+        return 0;
     }
 
-    private void TryUpgradeGhostSessionConnectionGuid(string requestBody)
+    private void ResetRestoreIdentityLatch()
     {
-        if (_ghostSession is null || string.IsNullOrWhiteSpace(requestBody))
+        _restoreIdentityLatched = false;
+        _restoreIdentitySquadSessionName = "";
+        _restoreConnectionGuid = "";
+        _restoreSubscriptionId = "";
+        _restoreChangeTypes = new List<string>();
+        _restoreMpsdRequestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void TryUpgradeGhostSessionConnectionIdentity(
+        string squadUrl,
+        string requestBody,
+        IReadOnlyDictionary<string, string> requestHeaders)
+    {
+        if (!_pendingCrashRestore || _ghostSession is null || string.IsNullOrWhiteSpace(requestBody))
             return;
 
-        string newGuid = ExtractConnectionGuid(requestBody);
-        if (string.IsNullOrWhiteSpace(newGuid))
+        if (!TryExtractConnectionIdentity(
+                requestBody,
+                out string newGuid,
+                out string newSubscriptionId,
+                out List<string> newChangeTypes) ||
+            string.IsNullOrWhiteSpace(newGuid))
+        {
+            return;
+        }
+
+        string squadSessionName = TryGetSessionNameFromUrl(squadUrl);
+        if (string.IsNullOrWhiteSpace(squadSessionName))
             return;
 
-        bool changed = !string.Equals(_ghostSession.ConnectionGuid, newGuid, StringComparison.OrdinalIgnoreCase);
-        _ghostSession.ConnectionGuid = newGuid;
+        if (!_restoreIdentityLatched)
+        {
+            _restoreIdentityLatched = true;
+            _restoreIdentitySquadSessionName = squadSessionName;
+            _restoreConnectionGuid = newGuid;
+            _restoreSubscriptionId = newSubscriptionId;
+            _restoreChangeTypes = new List<string>(newChangeTypes);
+            _restoreMpsdRequestHeaders = new Dictionary<string, string>(requestHeaders, StringComparer.OrdinalIgnoreCase);
+            RejoinFixDiagnostics.Info(
+                "identity",
+                $"Latched first post-restart squad identity source {squadSessionName[..Math.Min(13, squadSessionName.Length)]}... guid={newGuid} subscription={ShortIdentityValue(newSubscriptionId)} changeTypes={FormatChangeTypes(newChangeTypes)} with current MPSD authorization context.");
+        }
+        else
+        {
+            if (!string.Equals(_restoreIdentitySquadSessionName, squadSessionName, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(_restoreConnectionGuid, newGuid, StringComparison.OrdinalIgnoreCase))
+            {
+                RejoinFixDiagnostics.Warn(
+                    "identity",
+                    $"Ignored later squad identity {squadSessionName[..Math.Min(13, squadSessionName.Length)]}... guid={newGuid}; restore remains latched to {_restoreIdentitySquadSessionName[..Math.Min(13, _restoreIdentitySquadSessionName.Length)]}... guid={_restoreConnectionGuid}.");
+                return;
+            }
 
+            if (string.IsNullOrWhiteSpace(_restoreSubscriptionId) && !string.IsNullOrWhiteSpace(newSubscriptionId))
+            {
+                _restoreSubscriptionId = newSubscriptionId;
+                _restoreChangeTypes = new List<string>(newChangeTypes);
+            }
+            else if (!string.IsNullOrWhiteSpace(newSubscriptionId) &&
+                     !string.Equals(_restoreSubscriptionId, newSubscriptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                RejoinFixDiagnostics.Warn(
+                    "identity",
+                    $"Ignored later RTA subscription {ShortIdentityValue(newSubscriptionId)} for the latched squad identity; using {ShortIdentityValue(_restoreSubscriptionId)}.");
+                return;
+            }
+            else if (_restoreChangeTypes.Count == 0 && newChangeTypes.Count > 0)
+            {
+                _restoreChangeTypes = new List<string>(newChangeTypes);
+            }
+            else if (newChangeTypes.Count > 0 && !ChangeTypesMatch(_restoreChangeTypes, newChangeTypes))
+            {
+                RejoinFixDiagnostics.Warn(
+                    "identity",
+                    $"Ignored later RTA changeTypes={FormatChangeTypes(newChangeTypes)}; using latched changeTypes={FormatChangeTypes(_restoreChangeTypes)}.");
+                return;
+            }
+        }
+
+        _ghostSession.ConnectionGuid = _restoreConnectionGuid;
+        _ghostSession.SubscriptionId = _restoreSubscriptionId;
+        _ghostSession.ChangeTypes = new List<string>(_restoreChangeTypes);
         if (_lastMatchSession is not null &&
             string.Equals(_lastMatchSession.SessionName, _ghostSession.SessionName, StringComparison.OrdinalIgnoreCase))
         {
-            _lastMatchSession.ConnectionGuid = newGuid;
+            _lastMatchSession.ConnectionGuid = _restoreConnectionGuid;
+            _lastMatchSession.SubscriptionId = _restoreSubscriptionId;
+            _lastMatchSession.ChangeTypes = new List<string>(_restoreChangeTypes);
             PersistSavedMatchSessionSnapshot(_lastMatchSession);
         }
 
         _ghostSessionGuidUpgraded =
             string.IsNullOrWhiteSpace(_ghostSessionOriginalConnectionGuid) ||
-            !string.Equals(_ghostSessionOriginalConnectionGuid, newGuid, StringComparison.OrdinalIgnoreCase);
+            !string.Equals(_ghostSessionOriginalConnectionGuid, _restoreConnectionGuid, StringComparison.OrdinalIgnoreCase);
 
-        if (changed)
+        bool completeIdentityCaptured =
+            _ghostSessionGuidUpgraded &&
+            !string.IsNullOrWhiteSpace(_restoreSubscriptionId) &&
+            _restoreChangeTypes.Count > 0;
+
+        if (completeIdentityCaptured)
         {
-            RejoinFixDiagnostics.Info("guid", $"Captured replacement connection GUID: {newGuid}");
-            Debug.WriteLine($"[GUID] Captured NEW connection GUID: {newGuid}");
+            int restoreMemberCount = GetObservedSquadMemberCountForRestore();
+            if (restoreMemberCount <= 0)
+            {
+                RejoinFixDiagnostics.Warn(
+                    "restore",
+                    "Blocked MPSD sync because no authoritative pre-crash squad membercount was captured; refusing to default the restore to solo.");
+                return;
+            }
+
+            StartGhostSessionSyncAfterIdentityCapture(
+                _restoreConnectionGuid,
+                _restoreSubscriptionId,
+                new List<string>(_restoreChangeTypes));
+        }
+        else if (_ghostSessionGuidUpgraded)
+        {
+            RejoinFixDiagnostics.Info(
+                "identity",
+                "Latched replacement GUID but the same squad identity has not yet supplied a complete RTA subscription tuple; waiting before MPSD sync.");
         }
     }
 
-    private static string ExtractConnectionGuid(string requestBody)
+    private static string FormatChangeTypes(IEnumerable<string> changeTypes) =>
+        string.Join(',', changeTypes.DefaultIfEmpty("missing"));
+
+    private static bool ChangeTypesMatch(IEnumerable<string> left, IEnumerable<string> right)
     {
+        var leftValues = left.Where(value => !string.IsNullOrWhiteSpace(value)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var rightValues = right.Where(value => !string.IsNullOrWhiteSpace(value)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return leftValues.SetEquals(rightValues);
+    }
+
+    private void ResetGhostSessionSync()
+    {
+        lock (_ghostSessionSyncLock)
+        {
+            _ghostSessionSyncCancellation?.Cancel();
+            _ghostSessionSyncCancellation?.Dispose();
+            _ghostSessionSyncCancellation = new CancellationTokenSource();
+            _ghostSessionSyncTask = null;
+            _ghostSessionSyncIdentityKey = "";
+            _ghostSessionSynchronizedBodyReady = new TaskCompletionSource<SynchronizedMatchSnapshot?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+    }
+
+    private void CancelGhostSessionSync()
+    {
+        lock (_ghostSessionSyncLock)
+        {
+            _ghostSessionSyncCancellation?.Cancel();
+            _ghostSessionSyncCancellation?.Dispose();
+            _ghostSessionSyncCancellation = null;
+            _ghostSessionSyncTask = null;
+            _ghostSessionSyncIdentityKey = "";
+            _ghostSessionSynchronizedBodyReady?.TrySetCanceled();
+            _ghostSessionSynchronizedBodyReady = null;
+        }
+    }
+
+    private void StartGhostSessionSyncAfterIdentityCapture(
+        string replacementGuid,
+        string replacementSubscriptionId,
+        List<string> replacementChangeTypes)
+    {
+        lock (_ghostSessionSyncLock)
+        {
+            if (!_pendingCrashRestore ||
+                _ghostSession is null ||
+                !_ghostSessionGuidUpgraded ||
+                string.IsNullOrWhiteSpace(replacementGuid) ||
+                string.IsNullOrWhiteSpace(replacementSubscriptionId) ||
+                replacementChangeTypes.Count == 0)
+            {
+                return;
+            }
+
+            int restoreMemberCount = GetObservedSquadMemberCountForRestore();
+            if (restoreMemberCount <= 0)
+                return;
+
+            if (!_restoreMpsdRequestHeaders.ContainsKey("Authorization"))
+            {
+                RejoinFixDiagnostics.Warn(
+                    "restore",
+                    "Blocked MPSD sync because the authoritative first post-restart squad write did not contain current MPSD authorization.");
+                return;
+            }
+
+            string identityKey = $"{replacementGuid}|{replacementSubscriptionId}|{FormatChangeTypes(replacementChangeTypes)}|{restoreMemberCount}";
+            if (string.Equals(_ghostSessionSyncIdentityKey, identityKey, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            // A new subscription is a new identity generation, even when MCC
+            // reuses the same connection GUID.  Never reuse the completed gate
+            // from the previous generation: doing so lets the next match GET
+            // through before this generation has been PUT and verified in MPSD.
+            bool hasPriorIdentityGeneration = !string.IsNullOrWhiteSpace(_ghostSessionSyncIdentityKey);
+            if (hasPriorIdentityGeneration)
+            {
+                // Wake any request waiting on the superseded generation.  The
+                // waiter will reacquire the newly-created gate below rather
+                // than falling back to the old identity.
+                _ghostSessionSynchronizedBodyReady?.TrySetResult(null);
+                _ghostSessionSyncCancellation?.Cancel();
+                _ghostSessionSyncCancellation?.Dispose();
+
+                _ghostSessionSyncCancellation = new CancellationTokenSource();
+                _ghostSessionSynchronizedBodyReady = new TaskCompletionSource<SynchronizedMatchSnapshot?>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            else
+            {
+                // ResetGhostSessionSync creates this empty gate before the
+                // replacement squad write arrives. Reuse it so a match GET
+                // that arrived first waits for the actual replacement identity.
+                _ghostSessionSyncCancellation ??= new CancellationTokenSource();
+                _ghostSessionSynchronizedBodyReady ??= new TaskCompletionSource<SynchronizedMatchSnapshot?>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            _ghostSessionSyncIdentityKey = identityKey;
+            var synchronizedBodyReady = _ghostSessionSynchronizedBodyReady;
+            var currentMpsdRequestHeaders = new Dictionary<string, string>(
+                _restoreMpsdRequestHeaders,
+                StringComparer.OrdinalIgnoreCase);
+            _ghostSessionSyncTask = AutoSyncGhostSessionAsync(
+                _ghostSession,
+                replacementGuid,
+                replacementSubscriptionId,
+                replacementChangeTypes,
+                restoreMemberCount,
+                currentMpsdRequestHeaders,
+                synchronizedBodyReady,
+                _ghostSessionSyncCancellation.Token);
+            _ = _ghostSessionSyncTask.ContinueWith(
+                _ => synchronizedBodyReady.TrySetResult(null),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+
+            RejoinFixDiagnostics.Info(
+                "restore",
+                $"Starting authoritative MPSD sync for {_ghostSession.TemplateName}/{_ghostSession.SessionShort} from squad={_restoreIdentitySquadSessionName[..Math.Min(13, _restoreIdentitySquadSessionName.Length)]}... guid={replacementGuid} subscription={ShortIdentityValue(replacementSubscriptionId)} changeTypes={FormatChangeTypes(replacementChangeTypes)} membercount={FormatRestoreMemberCount(restoreMemberCount)}.");
+        }
+    }
+
+    private static bool TryExtractConnectionIdentity(
+        string requestBody,
+        out string connectionGuid,
+        out string subscriptionId,
+        out List<string> changeTypes)
+    {
+        connectionGuid = "";
+        subscriptionId = "";
+        changeTypes = new List<string>();
+
         if (string.IsNullOrWhiteSpace(requestBody))
-            return "";
+            return false;
 
         try
         {
@@ -3415,7 +4010,24 @@ public class ProxyService : IDisposable
                 properties.TryGetProperty("system", out var system) &&
                 system.TryGetProperty("connection", out var connection))
             {
-                return connection.GetString() ?? "";
+                connectionGuid = connection.GetString() ?? "";
+                if (system.TryGetProperty("subscription", out var subscription))
+                {
+                    if (subscription.TryGetProperty("id", out var id))
+                        subscriptionId = id.GetString() ?? "";
+
+                    if (subscription.TryGetProperty("changeTypes", out var types) &&
+                        types.ValueKind == JsonValueKind.Array)
+                    {
+                        changeTypes = types.EnumerateArray()
+                            .Where(type => type.ValueKind == JsonValueKind.String)
+                            .Select(type => type.GetString() ?? "")
+                            .Where(type => !string.IsNullOrWhiteSpace(type))
+                            .ToList();
+                    }
+                }
+
+                return !string.IsNullOrWhiteSpace(connectionGuid);
             }
         }
         catch
@@ -3423,13 +4035,30 @@ public class ProxyService : IDisposable
             // Fall back to regex for partially-formed bodies.
         }
 
-        var match = System.Text.RegularExpressions.Regex.Match(
+        var connectionMatch = System.Text.RegularExpressions.Regex.Match(
             requestBody,
             @"""connection"":""([^""]+)""",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (connectionMatch.Success)
+            connectionGuid = connectionMatch.Groups[1].Value;
 
-        return match.Success ? match.Groups[1].Value : "";
+        var subscriptionMatch = System.Text.RegularExpressions.Regex.Match(
+            requestBody,
+            @"""subscription""\s*:\s*\{[^}]*""id""\s*:\s*""([^""]+)""",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (subscriptionMatch.Success)
+            subscriptionId = subscriptionMatch.Groups[1].Value;
+
+        if (!string.IsNullOrWhiteSpace(subscriptionId))
+            changeTypes.Add("everything");
+
+        return !string.IsNullOrWhiteSpace(connectionGuid);
     }
+
+    private static string ShortIdentityValue(string value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? "missing"
+            : value[..Math.Min(8, value.Length)] + "...";
 
     private static void PersistSavedMatchSessionSnapshot(SavedHandleInfo info)
     {
@@ -3448,117 +4077,525 @@ public class ProxyService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Background task: automatically sync the ghost session with real MPSD.
-    /// Once sync succeeds, disable ghost mode.
-    /// </summary>
-    private async Task AutoSyncGhostSessionAsync()
+    private async Task<string> WaitForCoherentCrashRestoreMatchBodyAsync(
+        SessionEventArgs session,
+        string authoritativeBody)
     {
-        if (_ghostSession is null) return;
+        if (!_pendingCrashRestore || _ghostSession is null)
+            return authoritativeBody;
+
+        string replacementGuid = GetCurrentGhostConnectionGuid();
+        string replacementSubscriptionId = _ghostSession.SubscriptionId;
+        int restoreMemberCount = GetObservedSquadMemberCountForRestore();
+
+        if (_ghostSessionGuidUpgraded &&
+            !string.IsNullOrWhiteSpace(replacementSubscriptionId) &&
+            restoreMemberCount > 0 &&
+            MatchMemberHasIdentity(
+                authoritativeBody,
+                _playerXuid,
+                replacementGuid,
+                replacementSubscriptionId,
+                _restoreChangeTypes,
+                restoreMemberCount))
+        {
+            return authoritativeBody;
+        }
+
+        // Only a request which arrived before synchronization may consume the
+        // verified snapshot. If MCC publishes a newer identity while this GET is
+        // waiting, reacquire the new generation's gate instead of releasing the
+        // old GUID/subscription tuple.
+        DateTime waitDeadlineUtc = DateTime.UtcNow.AddSeconds(30);
+        bool loggedSynchronizationWait = false;
+        while (true)
+        {
+            Task<SynchronizedMatchSnapshot?>? synchronizedBodyTask;
+            lock (_ghostSessionSyncLock)
+                synchronizedBodyTask = _ghostSessionSynchronizedBodyReady?.Task;
+
+            if (synchronizedBodyTask is null)
+                break;
+
+            try
+            {
+                if (!loggedSynchronizationWait)
+                {
+                    RejoinFixDiagnostics.Info(
+                        "restore",
+                        $"Holding first post-restart match GET for {_ghostSession.SessionShort} until GUID and RTA subscription are synchronized.");
+                    loggedSynchronizationWait = true;
+                }
+
+                TimeSpan remainingWait = waitDeadlineUtc - DateTime.UtcNow;
+                if (remainingWait <= TimeSpan.Zero)
+                    throw new TimeoutException();
+
+                SynchronizedMatchSnapshot? synchronizedSnapshot =
+                    await synchronizedBodyTask.WaitAsync(remainingWait);
+                if (synchronizedSnapshot is not null)
+                {
+                    // The identity can roll while the verification response is
+                    // completing. Only release this snapshot if it still matches
+                    // the currently captured identity.
+                    string currentGuid = GetCurrentGhostConnectionGuid();
+                    string currentSubscriptionId = _ghostSession.SubscriptionId;
+                    int currentMemberCount = GetObservedSquadMemberCountForRestore();
+                    if (_ghostSessionGuidUpgraded &&
+                        !string.IsNullOrWhiteSpace(currentSubscriptionId) &&
+                        currentMemberCount > 0 &&
+                        MatchMemberHasIdentity(
+                            synchronizedSnapshot.Body,
+                            _playerXuid,
+                            currentGuid,
+                            currentSubscriptionId,
+                            _restoreChangeTypes,
+                            currentMemberCount))
+                    {
+                        ApplySynchronizedMatchMetadata(session, synchronizedSnapshot);
+                        RejoinFixDiagnostics.Info(
+                            "restore",
+                            $"Released match GET for {_ghostSession.SessionShort} with verified post-sync MPSD body and matching ETag.");
+                        return synchronizedSnapshot.Body;
+                    }
+
+                    // A newer identity generation superseded this snapshot;
+                    // reacquire the current gate and continue waiting.
+                    continue;
+                }
+
+                // The gate was intentionally completed while replacing an
+                // identity generation. Loop only if a replacement gate now
+                // exists; otherwise synchronization ended without a verified
+                // service body and there is nothing further to consume.
+                lock (_ghostSessionSyncLock)
+                {
+                    if (ReferenceEquals(_ghostSessionSynchronizedBodyReady?.Task, synchronizedBodyTask))
+                        break;
+                }
+            }
+            catch (TimeoutException)
+            {
+                RejoinFixDiagnostics.Warn("restore", "Timed out waiting for verified post-sync match body; returning the authoritative MPSD body unchanged.");
+                break;
+            }
+            catch (OperationCanceledException)
+            {
+                return authoritativeBody;
+            }
+        }
+
+        RejoinFixDiagnostics.Warn(
+            "restore",
+            "No verified coherent match snapshot was available; refused synthetic identity repair and returned the authoritative MPSD body unchanged.");
+        return authoritativeBody;
+    }
+
+    private static void ApplySynchronizedMatchMetadata(
+        SessionEventArgs session,
+        SynchronizedMatchSnapshot snapshot)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.ETag))
+            return;
+
+        var responseHeaders = session.HttpClient.Response.Headers;
+        responseHeaders.RemoveHeader("ETag");
+        responseHeaders.AddHeader("ETag", snapshot.ETag);
+    }
+
+    private static bool MatchMemberHasIdentity(
+        string body,
+        string playerXuid,
+        string connectionGuid,
+        string subscriptionId,
+        IReadOnlyList<string> changeTypes,
+        int memberCount)
+    {
+        try
+        {
+            if (JsonNode.Parse(body) is not JsonObject root ||
+                root["members"] is not JsonObject members)
+            {
+                return false;
+            }
+
+            foreach (var (_, memberNode) in members)
+            {
+                if (memberNode is not JsonObject member ||
+                    member["constants"]?["system"]?["xuid"]?.GetValue<string>() != playerXuid)
+                {
+                    continue;
+                }
+
+                string observedGuid = member["properties"]?["system"]?["connection"]?.GetValue<string>() ?? "";
+                string observedSubscription = member["properties"]?["system"]?["subscription"]?["id"]?.GetValue<string>() ?? "";
+                var observedChangeTypes = member["properties"]?["system"]?["subscription"]?["changeTypes"] is JsonArray changeTypesArray
+                    ? changeTypesArray
+                        .Select(node => node?.GetValue<string>() ?? "")
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .ToList()
+                    : new List<string>();
+                JsonNode? memberCountNode = member["properties"]?["custom"]?["membercount"];
+                bool memberCountMatches = memberCount > 1
+                    ? memberCountNode is not null && memberCountNode.GetValue<int>() == memberCount
+                    : memberCountNode is null;
+                return string.Equals(observedGuid, connectionGuid, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(observedSubscription, subscriptionId, StringComparison.OrdinalIgnoreCase) &&
+                    ChangeTypesMatch(observedChangeTypes, changeTypes) &&
+                    memberCountMatches;
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    private static bool MatchRosterContainsPlayer(string body, string playerXuid)
+    {
+        try
+        {
+            if (JsonNode.Parse(body) is not JsonObject root ||
+                root["members"] is not JsonObject members)
+            {
+                return false;
+            }
+
+            return members.Any(member =>
+                member.Value is JsonObject memberObject &&
+                string.Equals(
+                    memberObject["constants"]?["system"]?["xuid"]?.GetValue<string>(),
+                    playerXuid,
+                    StringComparison.Ordinal));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the missing member from the authoritative pre-crash roster.
+    /// A minimal synthetic member omits matchmakingResult/ticket/team metadata
+    /// that MCC uses to validate the match, so only live identity fields are
+    /// overlaid on the saved member record.
+    /// </summary>
+    private string? BuildFallbackMemberFromSavedRoster(
+        int memberIndex,
+        int nextIndex,
+        string connectionGuid,
+        string subscriptionId,
+        IReadOnlyList<string> changeTypes,
+        int restoreMemberCount)
+    {
+        if (string.IsNullOrWhiteSpace(_savedCrashRestoreMatchBody) ||
+            string.IsNullOrWhiteSpace(_playerXuid))
+        {
+            return null;
+        }
 
         try
         {
-            // Wait 2 seconds before starting sync — let MCC settle after restart
-            await Task.Delay(2000);
-
-            // Give the restarted MCC a short window to publish its replacement connection GUID
-            // before we touch the live MPSD session with stale pre-crash state.
-            for (int i = 0; i < 40 && _ghostSession is not null; i++)
+            if (JsonNode.Parse(_savedCrashRestoreMatchBody) is not JsonObject root ||
+                root["members"] is not JsonObject members)
             {
-                if (_ghostSessionGuidUpgraded || string.IsNullOrWhiteSpace(_ghostSessionOriginalConnectionGuid))
-                    break;
-
-                await Task.Delay(250);
+                return null;
             }
 
-            // Attempt GET to check if session is alive
-            using var getReq = new HttpRequestMessage(HttpMethod.Get, _ghostSession.SessionUrl);
-            foreach (var (k, v) in _ghostSession.RequestHeaders)
-                if (k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    getReq.Headers.TryAddWithoutValidation(k, v);
-
-            using var getResp = await new HttpClient(new HttpClientHandler { UseProxy = false })
-                .SendAsync(getReq);
-
-            if (!getResp.IsSuccessStatusCode) return;  // Session dead, keep ghost mode
-
-            string etag = getResp.Headers.ETag?.Tag ?? "";
-            if (string.IsNullOrEmpty(etag)) return;  // No ETag, can't proceed
-
-            // Session is alive! Now PUT /members/me to re-add player as active
-            // CRITICAL: Include the connection GUID from when the player originally joined!
-            // The game server validates rejoin attempts using this GUID. If we omit or change it,
-            // the game server will reject the rejoin with "connection interrupted" error.
-            string currentGuid = GetCurrentGhostConnectionGuid();
-            string connectionField = string.IsNullOrEmpty(currentGuid)
-                ? ""
-                : $",\"connection\":\"{currentGuid}\"";
-            int restoreMemberCount = GetObservedSquadMemberCountForRestore();
-
-            var putBody = $$"""
-{
-  "members": {
-    "me": {
-      "properties": {
-        "system": {
-          "active": true{{connectionField}}
-        },
-        "custom": {
-          "membercount": {{restoreMemberCount}}
-        }
-      }
-    }
-  }
-}
-""";
-
-            using var putReq = new HttpRequestMessage(HttpMethod.Put, _ghostSession.SessionUrl);
-            putReq.Content = new StringContent(putBody, System.Text.Encoding.UTF8, "application/json");
-            putReq.Headers.TryAddWithoutValidation("If-Match", etag);
-            foreach (var (k, v) in _ghostSession.RequestHeaders)
-                if (k.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    putReq.Headers.TryAddWithoutValidation(k, v);
-
-            using var putResp = await new HttpClient(new HttpClientHandler { UseProxy = false })
-                .SendAsync(putReq);
-
-            if (putResp.IsSuccessStatusCode || putResp.StatusCode == System.Net.HttpStatusCode.NoContent)
+            foreach (var (_, sourceNode) in members)
             {
-                // Sync succeeded! Keep ghost mode ON permanently - MCC needs it during rejoin
-                _ghostSessionSyncSuccess = true;
-                OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                if (sourceNode is not JsonObject sourceMember ||
+                    !string.Equals(
+                        sourceMember["constants"]?["system"]?["xuid"]?.GetValue<string>(),
+                        _playerXuid,
+                        StringComparison.Ordinal))
                 {
-                    Method       = "GHOST[AutoSync-Permanent]",
-                    Url          = _ghostSession.SessionUrl,
-                    Host         = "sessiondirectory.xboxlive.com",
-                    Path         = new Uri(_ghostSession.SessionUrl).AbsolutePath,
-                    RequestBody  = "Background automatic sync: GET + PUT succeeded",
-                    StatusCode   = (int)putResp.StatusCode,
-                    ResponseBody = "PERMANENT: Ghost mode stays ON to support rejoin flow",
-                });
+                    continue;
+                }
 
-                // DO NOT disable ghost mode - MCC needs it to be active during the rejoin window
-                // Disabling it too early breaks the rejoin process
-                // _ghostSessionMode = false;  ← KEEP THIS COMMENTED
+                if (JsonNode.Parse(sourceMember.ToJsonString()) is not JsonObject member)
+                {
+                    return null;
+                }
+
+                member["next"] = nextIndex;
+                var constants = member["constants"] as JsonObject ?? new JsonObject();
+                var constantsSystem = constants["system"] as JsonObject ?? new JsonObject();
+                constantsSystem["xuid"] = _playerXuid;
+                constantsSystem["index"] = memberIndex;
+                constants["system"] = constantsSystem;
+                member["constants"] = constants;
+
+                var properties = member["properties"] as JsonObject ?? new JsonObject();
+                var system = properties["system"] as JsonObject ?? new JsonObject();
+                system["active"] = true;
+                system["connection"] = connectionGuid;
+                if (!string.IsNullOrWhiteSpace(subscriptionId))
+                {
+                    system["subscription"] = new JsonObject
+                    {
+                        ["id"] = subscriptionId,
+                        ["changeTypes"] = JsonSerializer.SerializeToNode(
+                            changeTypes.Count > 0 ? changeTypes : new[] { "everything" }),
+                    };
+                }
+                properties["system"] = system;
+
+                var custom = properties["custom"] as JsonObject ?? new JsonObject();
+                if (restoreMemberCount > 1)
+                {
+                    custom["membercount"] = restoreMemberCount;
+                }
+                else
+                {
+                    // Solo restore: membercount must be absent, not zero or one.
+                    custom.Remove("membercount");
+                }
+                if (custom.Count > 0)
+                {
+                    properties["custom"] = custom;
+                }
+                else
+                {
+                    properties.Remove("custom");
+                }
+                member["properties"] = properties;
+                return member.ToJsonString();
             }
         }
         catch (Exception ex)
         {
-            // Sync failed, keep ghost mode active for retry
-            OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+            RejoinFixDiagnostics.Warn(
+                "restore",
+                $"Could not reconstruct the authoritative pre-crash member: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private static string BuildMatchIdentityPutBody(
+        string connectionGuid,
+        string subscriptionId,
+        IReadOnlyCollection<string> changeTypes,
+        int restoreMemberCount)
+    {
+        var properties = new JsonObject
+        {
+            ["system"] = new JsonObject
             {
-                Method       = "GHOST[SyncError]",
-                Url          = _ghostSession?.SessionUrl ?? "unknown",
-                Host         = "sessiondirectory.xboxlive.com",
-                Path         = "",
-                RequestBody  = "Background sync failed (will retry on next request)",
-                StatusCode   = 0,
-                ResponseBody = ex.Message,
-            });
+                ["active"] = true,
+                ["connection"] = connectionGuid,
+                ["subscription"] = new JsonObject
+                {
+                    ["id"] = subscriptionId,
+                    ["changeTypes"] = JsonSerializer.SerializeToNode(
+                        changeTypes.Count > 0
+                            ? changeTypes
+                            : new[] { "everything" }),
+                },
+            },
+        };
+
+        // membercount describes party composition. The successful solo captures
+        // omit it; party restores must publish the exact pre-crash count.
+        if (restoreMemberCount > 1)
+        {
+            properties["custom"] = new JsonObject
+            {
+                ["membercount"] = restoreMemberCount,
+            };
+        }
+
+        return new JsonObject
+        {
+            ["members"] = new JsonObject
+            {
+                ["me"] = new JsonObject
+                {
+                    ["properties"] = properties,
+                },
+            },
+        }.ToJsonString();
+    }
+
+    private static string FormatRestoreMemberCount(int restoreMemberCount) =>
+        restoreMemberCount > 1
+            ? restoreMemberCount.ToString()
+            : "omitted(solo)";
+
+    /// <summary>
+    /// Synchronizes the saved match only after MCC publishes its complete replacement
+    /// connection identity. GUID, RTA subscription, change types, and pre-crash
+    /// party membercount are captured as one immutable operation. Solo restores
+    /// intentionally omit the party-only membercount field.
+    /// </summary>
+    private async Task AutoSyncGhostSessionAsync(
+        SavedHandleInfo restoreSession,
+        string replacementGuid,
+        string replacementSubscriptionId,
+        List<string> replacementChangeTypes,
+        int restoreMemberCount,
+        IReadOnlyDictionary<string, string> currentMpsdRequestHeaders,
+        TaskCompletionSource<SynchronizedMatchSnapshot?> synchronizedBodyReady,
+        CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 8;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!_pendingCrashRestore ||
+                    !_ghostSessionGuidUpgraded ||
+                    !string.Equals(GetCurrentGhostConnectionGuid(), replacementGuid, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(_ghostSession?.SubscriptionId, replacementSubscriptionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    RejoinFixDiagnostics.Warn("restore", "Cancelled MPSD sync because crash-restore identity is no longer current.");
+                    return;
+                }
+
+                using var client = new HttpClient(new HttpClientHandler
+                {
+                    UseProxy = false,
+                    AutomaticDecompression = DecompressionMethods.All,
+                });
+                using var getReq = new HttpRequestMessage(HttpMethod.Get, restoreSession.SessionUrl);
+                AddGhostSessionAuthHeaders(getReq, currentMpsdRequestHeaders);
+                using var getResp = await client.SendAsync(getReq, cancellationToken);
+
+                if (!getResp.IsSuccessStatusCode)
+                {
+                    RejoinFixDiagnostics.Warn(
+                        "restore",
+                        $"MPSD sync GET attempt {attempt}/{maxAttempts} returned {(int)getResp.StatusCode} {getResp.StatusCode}.");
+                    if (!IsTransientGhostSyncStatus(getResp.StatusCode))
+                        return;
+                    await DelayGhostSyncRetryAsync(attempt, cancellationToken);
+                    continue;
+                }
+
+                string etag = getResp.Headers.ETag?.Tag ?? "";
+                if (string.IsNullOrEmpty(etag))
+                {
+                    RejoinFixDiagnostics.Warn("restore", $"MPSD sync GET attempt {attempt}/{maxAttempts} returned no ETag.");
+                    await DelayGhostSyncRetryAsync(attempt, cancellationToken);
+                    continue;
+                }
+
+                string putBody = BuildMatchIdentityPutBody(
+                    replacementGuid,
+                    replacementSubscriptionId,
+                    replacementChangeTypes,
+                    restoreMemberCount);
+
+                using var putReq = new HttpRequestMessage(HttpMethod.Put, restoreSession.SessionUrl);
+                putReq.Content = new StringContent(putBody, Encoding.UTF8, "application/json");
+                putReq.Headers.TryAddWithoutValidation("If-Match", etag);
+                AddGhostSessionAuthHeaders(putReq, currentMpsdRequestHeaders);
+                using var putResp = await client.SendAsync(putReq, cancellationToken);
+
+                RejoinFixDiagnostics.Info(
+                    "restore",
+                    $"MPSD sync PUT attempt {attempt}/{maxAttempts} returned {(int)putResp.StatusCode} {putResp.StatusCode} (guid={replacementGuid}, subscription={ShortIdentityValue(replacementSubscriptionId)}, membercount={FormatRestoreMemberCount(restoreMemberCount)}).");
+
+                if (putResp.IsSuccessStatusCode)
+                {
+                    _ghostSessionSyncSuccess = true;
+
+                    using var verifyReq = new HttpRequestMessage(HttpMethod.Get, restoreSession.SessionUrl);
+                    AddGhostSessionAuthHeaders(verifyReq, currentMpsdRequestHeaders);
+                    using var verifyResp = await client.SendAsync(verifyReq, cancellationToken);
+                    if (verifyResp.IsSuccessStatusCode)
+                    {
+                        string verifiedBody = await verifyResp.Content.ReadAsStringAsync(cancellationToken);
+                        if (MatchMemberHasIdentity(
+                                verifiedBody,
+                                _playerXuid,
+                                replacementGuid,
+                                replacementSubscriptionId,
+                                replacementChangeTypes,
+                                restoreMemberCount))
+                        {
+                            synchronizedBodyReady.TrySetResult(new SynchronizedMatchSnapshot(
+                                verifiedBody,
+                                verifyResp.Headers.ETag?.Tag ?? ""));
+                            RejoinFixDiagnostics.Info(
+                                "restore",
+                                $"Verified authoritative post-sync MPSD identity guid={replacementGuid} subscription={ShortIdentityValue(replacementSubscriptionId)} changeTypes={FormatChangeTypes(replacementChangeTypes)} membercount={FormatRestoreMemberCount(restoreMemberCount)} etag={verifyResp.Headers.ETag?.Tag ?? "missing"}.");
+                        }
+                        else
+                        {
+                            RejoinFixDiagnostics.Warn(
+                                "restore",
+                                "Post-sync MPSD verification did not contain the complete replacement identity; response repair will not treat it as synchronized.");
+                        }
+                    }
+                    else
+                    {
+                        RejoinFixDiagnostics.Warn(
+                            "restore",
+                            $"Post-sync MPSD verification GET returned {(int)verifyResp.StatusCode} {verifyResp.StatusCode}; no synthetic response will be substituted.");
+                    }
+
+                    OnRequestCaptured?.Invoke(this, new ProxyCaptureEntry
+                    {
+                        Method       = "GHOST[AutoSync-Permanent]",
+                        Url          = restoreSession.SessionUrl,
+                        Host         = "sessiondirectory.xboxlive.com",
+                        Path         = new Uri(restoreSession.SessionUrl).AbsolutePath,
+                        RequestBody  = $"Background sync succeeded with replacement guid={replacementGuid} subscription={replacementSubscriptionId} membercount={FormatRestoreMemberCount(restoreMemberCount)}",
+                        StatusCode   = (int)putResp.StatusCode,
+                        ResponseBody = "PERMANENT: Ghost mode stays ON to support rejoin flow",
+                    });
+                    return;
+                }
+
+                if (!IsTransientGhostSyncStatus(putResp.StatusCode))
+                    return;
+
+                await DelayGhostSyncRetryAsync(attempt, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                RejoinFixDiagnostics.Warn("restore", $"MPSD sync attempt {attempt}/{maxAttempts} failed: {ex.Message}");
+                if (attempt == maxAttempts)
+                    return;
+                await DelayGhostSyncRetryAsync(attempt, cancellationToken);
+            }
         }
     }
+
+    private static void AddGhostSessionAuthHeaders(
+        HttpRequestMessage request,
+        IReadOnlyDictionary<string, string> requestHeaders)
+    {
+        foreach (var (key, value) in requestHeaders)
+        {
+            if (key.StartsWith("x-", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers.TryAddWithoutValidation(key, value);
+            }
+        }
+    }
+
+    private static bool IsTransientGhostSyncStatus(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.RequestTimeout or
+            HttpStatusCode.Conflict or
+            HttpStatusCode.PreconditionFailed or
+            HttpStatusCode.TooManyRequests ||
+        (int)statusCode >= 500;
+
+    private static Task DelayGhostSyncRetryAsync(int attempt, CancellationToken cancellationToken) =>
+        Task.Delay(
+            TimeSpan.FromMilliseconds(Math.Min(5000, 500 * Math.Pow(2, attempt - 1))),
+            cancellationToken);
 
     // ── WinINet P/Invoke ──────────────────────────────────────────────────────
     [DllImport("wininet.dll", SetLastError = true)]

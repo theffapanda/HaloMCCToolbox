@@ -1,0 +1,89 @@
+<UserControl x:Class="HaloToolbox.ReachMods"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource BgBrush}"
+             FontFamily="Consolas"
+             Foreground="{DynamicResource TextBrush}"
+             Loaded="ReachMods_Loaded"
+             Unloaded="ReachMods_Unloaded">
+    <UserControl.Resources>
+        <Style x:Key="ReachStatusPill" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="2"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="20,12,20,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Text="— HALO: REACH LIGHTING" FontSize="10"
+                       Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10"/>
+
+            <Border Grid.Row="1" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="3" Padding="18" Margin="0,0,0,12">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                        <TextBlock Text="REACH BLOOM SHADER" FontSize="13" FontWeight="Bold"
+                                   Foreground="{DynamicResource AccentBrush}"/>
+                        <TextBlock Text="OFFLINE / EAC-DISABLED ONLY" FontSize="10" FontWeight="Bold"
+                                   Foreground="{DynamicResource OrangeBrush}" Margin="14,1,0,0"/>
+                    </StackPanel>
+
+                    <WrapPanel Margin="0,0,0,12">
+                        <Border Style="{StaticResource ReachStatusPill}">
+                            <TextBlock x:Name="TxtMccStatus" Text="MCC: SEARCHING" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                        <Border Style="{StaticResource ReachStatusPill}">
+                            <TextBlock x:Name="TxtEacStatus" Text="EAC: UNKNOWN" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                        <Border Style="{StaticResource ReachStatusPill}">
+                            <TextBlock x:Name="TxtHookStatus" Text="HOOK: NOT ARMED" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                        <Border Style="{StaticResource ReachStatusPill}">
+                            <TextBlock x:Name="TxtShaderStatus" Text="SHADER: WAITING" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                    </WrapPanel>
+
+                    <TextBlock Text="1. Start MCC with Easy Anti-Cheat disabled.  2. Stop at the MCC main menu and arm the hook.  3. Load Halo: Reach."
+                               FontSize="11" Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap" LineHeight="18" Margin="0,0,0,14"/>
+
+                    <Button x:Name="BtnArm" Content="ARM REACH LIGHTING HOOK"
+                            Style="{StaticResource PrimaryButton}" Width="230"
+                            HorizontalAlignment="Left" Click="BtnArm_Click"/>
+
+                    <TextBlock x:Name="TxtDetail" Text="The hook must see Reach create its bloom shader, so arm it before entering Reach."
+                               FontSize="11" Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap" LineHeight="18" Margin="0,12,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="2" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="3" Padding="18">
+                <StackPanel>
+                    <TextBlock Text="LIGHTING TOGGLE" FontSize="13" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,12"/>
+                    <CheckBox x:Name="ChkDisableBloom" Content="DISABLE PATCHED REACH BLOOM"
+                              FontSize="12" FontWeight="Bold" IsEnabled="False"
+                              Checked="ChkDisableBloom_Changed" Unchecked="ChkDisableBloom_Changed"/>
+                    <TextBlock Text="Blocks the identified Reach bloom/downsample shader (CRC32 981019040), restoring the clearer pre-patch presentation."
+                               FontSize="11" Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap" LineHeight="18" Margin="24,8,0,0"/>
+                    <TextBlock x:Name="TxtBlockedDraws" Text="BLOCKED DRAWS: 0" FontSize="10"
+                               Foreground="{DynamicResource MutedBrush}" Margin="24,10,0,0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

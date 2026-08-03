@@ -25,12 +25,16 @@ namespace HaloToolbox
             "https://support.halowaypoint.com/hc/en-us/requests/new" +
             "?ticket_form_id=360003459232" +
             "&tf_360048983931=safety__game_title__halo_mcc";
+        private bool _closing;
 
         public HaloReportWindow()
         {
             InitializeComponent();
-            Loaded += async (_, _) => await InitWebViewAsync();
+            Loaded += OnLoadedAsync;
         }
+
+        private async void OnLoadedAsync(object sender, RoutedEventArgs e) =>
+            await InitWebViewAsync();
 
         private async Task InitWebViewAsync()
         {
@@ -40,10 +44,16 @@ namespace HaloToolbox
             // setting WebView.Source; setting Source first triggers an implicit
             // default-environment init and would cause an ArgumentException here.
             var env = await WebViewEnvironmentManager.GetOrCreateAsync();
+            if (_closing)
+                return;
             await WebView.EnsureCoreWebView2Async(env);
+            if (_closing)
+            {
+                WebView.Dispose();
+                return;
+            }
 
-            WebView.CoreWebView2.NavigationStarting  += (_, e) =>
-                Dispatcher.Invoke(() => TxtNavStatus.Text = e.Uri);
+            WebView.CoreWebView2.NavigationStarting  += OnNavigationStarting;
             WebView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
             WebView.CoreWebView2.DOMContentLoaded    += OnDomContentLoaded;
 
@@ -65,6 +75,9 @@ namespace HaloToolbox
             WebView.Source = new Uri(FormUrl);
         }
 
+        private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e) =>
+            Dispatcher.Invoke(() => TxtNavStatus.Text = e.Uri);
+
         private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
         {
             Dispatcher.Invoke(() =>
@@ -79,12 +92,37 @@ namespace HaloToolbox
         {
             // Wait for Zendesk's Nesty JS widgets to finish initialising
             await Task.Delay(2000);
+            if (_closing)
+                return;
             await Dispatcher.InvokeAsync(async () =>
             {
+                if (_closing)
+                    return;
                 TxtFillStatus.Text       = "Filling fields...";
                 TxtFillStatus.Foreground = System.Windows.Media.Brushes.Gray;
                 await RunFillAsync();
             });
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            _closing = true;
+            Loaded -= OnLoadedAsync;
+            try
+            {
+                if (WebView.CoreWebView2 is not null)
+                {
+                    WebView.CoreWebView2.NavigationStarting -= OnNavigationStarting;
+                    WebView.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
+                    WebView.CoreWebView2.DOMContentLoaded -= OnDomContentLoaded;
+                }
+                WebView.Dispose();
+            }
+            catch
+            {
+                // Closing can race asynchronous WebView initialization.
+            }
+            base.OnClosed(e);
         }
 
         private async void BtnFill_Click(object sender, RoutedEventArgs e)

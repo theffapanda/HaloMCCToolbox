@@ -511,7 +511,7 @@ public partial class Theater : UserControl
         catch (Exception ex)
         {
             try { TxtStatus.Text = $"LOAD ERROR: {ex.GetType().Name}: {ex.Message}"; }
-            catch { System.Windows.MessageBox.Show($"Theater load error:\n{ex}", "Theater Error"); }
+            catch { ToolboxDialog.Show($"Theater load error:\n{ex}", "Theater Error"); }
         }
     }
 
@@ -959,7 +959,7 @@ public partial class Theater : UserControl
             ? $"\n\nThe theater limit is {MccTheaterFileLimit}. The {rotationsNeeded} oldest active film(s) will be removed from MCC after confirming they are backed up."
             : "";
 
-        var result = MessageBox.Show(
+        var result = ToolboxDialog.Show(
             $"Restore {description} to their original MCC theater folders?\n\nExisting source files will be overwritten.{rotationNotice}",
             "Confirm Restore",
             MessageBoxButton.YesNo,
@@ -1116,7 +1116,7 @@ public partial class Theater : UserControl
         if (clips.Count == 0) return;
 
         var plural = clips.Count == 1 ? "clip" : "clips";
-        var result = MessageBox.Show(
+        var result = ToolboxDialog.Show(
             $"Delete {description}?\n\nThis will remove the backup copy. Source files (if present) will also be deleted.",
             "Confirm Delete",
             MessageBoxButton.YesNo,

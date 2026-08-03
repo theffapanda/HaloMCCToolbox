@@ -13,6 +13,7 @@ namespace HaloToolbox;
 public partial class Playlists : UserControl
 {
     private const string RotationDataPath = "Data\\playlist-rotations.csv";
+    private const string RotationDataResourceName = "HaloToolbox.Data.playlist-rotations.csv";
 
     private readonly ObservableCollection<PlaylistViewGroup> _visibleGroups = new();
     private readonly List<PlaylistViewSummary> _allPlaylists = new();
@@ -348,13 +349,28 @@ public partial class Playlists : UserControl
             _allRotationRecords.Clear();
 
             var dataPath = Path.Combine(AppContext.BaseDirectory, RotationDataPath);
-            if (!File.Exists(dataPath))
+            IEnumerable<string> lines;
+            if (File.Exists(dataPath))
             {
-                TxtConfirmedSummary.Text = $"Rotation schedule data not found at {dataPath}";
-                return;
+                lines = File.ReadLines(dataPath);
+            }
+            else
+            {
+                using var stream = typeof(Playlists).Assembly.GetManifestResourceStream(RotationDataResourceName);
+                if (stream is null)
+                {
+                    TxtConfirmedSummary.Text = "Embedded rotation schedule data was not found.";
+                    return;
+                }
+
+                using var reader = new StreamReader(stream);
+                var embeddedLines = new List<string>();
+                while (reader.ReadLine() is { } line)
+                    embeddedLines.Add(line);
+                lines = embeddedLines;
             }
 
-            foreach (var line in File.ReadAllLines(dataPath).Skip(1))
+            foreach (var line in lines.Skip(1))
             {
                 if (string.IsNullOrWhiteSpace(line))
                     continue;

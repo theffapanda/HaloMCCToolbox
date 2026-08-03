@@ -2,15 +2,23 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:HaloToolbox"
-        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Icon="Resources/halo_toolbox_whiteicon.ico"
         Title="Halo MCC Toolbox — The FFA Panda"
         Height="1024" Width="1012"
         MinHeight="700" MinWidth="800"
         WindowStyle="None"
-        AllowsTransparency="True"
-        Background="Transparent"
+        AllowsTransparency="False"
+        Background="{DynamicResource BgBrush}"
         ResizeMode="CanResizeWithGrip">
+
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="6"
+                            CornerRadius="4"
+                            GlassFrameThickness="0"
+                            UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
         <Geometry x:Key="HaloToolboxLogoGeometry">M1874.5,3170.74C1892.03,3140.2 1909.1,3121.35 1929.64,3104.35C1961.07,3078.35 1989.78,3060.54 2019.25,3038C2048.73,3015.46 2061.49,2997.77 2061.49,2972.8C2061.49,2947.84 2057.31,2903.1 2034.77,2862.79C2016.99,2830.99 1994.09,2821.64 1985.2,2819.11L1985.2,2931.88C1985.2,2942.68 1976.44,2951.44 1965.64,2951.44L1874.3,2951.44C1863.5,2951.44 1854.73,2942.68 1854.73,2931.88L1854.73,2818.24L1852.29,2818.24C1852.29,2818.24 1830.63,2826.71 1822.53,2832.68C1814.44,2838.64 1807.33,2843.75 1800.66,2853.98C1793.98,2864.21 1751.41,2938.49 1747.45,2945C1743.5,2951.52 1743.9,2953.53 1749.2,2953.53L1764.69,2953.53C1764.69,2995.42 1778.47,2993.82 1778.47,3029.04C1778.47,3056.07 1780.89,3103.07 1758.74,3186.81C1794.43,3188.92 1834.17,3183.47 1874.5,3170.74ZM1927.02,3003.27L1915.5,3003.27L1920.62,3019.18L1927.02,3019.18L1927.02,3023.48C1927.02,3030.64 1921.21,3036.45 1914.05,3036.45L1851.77,3036.45C1844.62,3036.45 1838.8,3030.64 1838.8,3023.48L1838.8,3019.18L1852.55,3019.18L1847.44,3003.27L1838.8,3003.27L1838.8,2997.54C1838.8,2990.38 1844.62,2984.57 1851.77,2984.57L1914.05,2984.57C1921.21,2984.57 1927.02,2990.38 1927.02,2997.54L1927.02,3003.27ZM1864.07,2992.24C1869.77,3003.96 1874.55,3016.1 1876.61,3029.51L1884.61,3029.69C1882.56,3016.83 1878.36,3004.37 1872.43,2992.24L1864.07,2992.24ZM1880.44,2992.24C1886.14,3003.96 1890.92,3016.1 1892.98,3029.51L1900.98,3029.69C1898.93,3016.83 1894.73,3004.37 1888.8,2992.24L1880.44,2992.24ZM1847.69,2992.24C1853.39,3003.96 1858.18,3016.1 1860.24,3029.51L1868.24,3029.69C1866.19,3016.83 1861.99,3004.37 1856.06,2992.24L1847.69,2992.24ZM1896.81,2992.24C1902.51,3003.96 1907.3,3016.1 1909.36,3029.51L1917.35,3029.69C1915.31,3016.83 1911.1,3004.37 1905.17,2992.24L1896.81,2992.24ZM1622.76,3151.67C1566.26,3062.86 1633.18,2922.72 1792.3,2821.49C1951.42,2720.26 2110.04,2740.91 2159.3,2818.34L2215.8,2782.39L2210.63,2721.05L2161.95,2752.03C2130.79,2703.06 1993.29,2673.41 1883.3,2716.38L1871.64,2698.05C1871.64,2698.05 1797.87,2727.3 1750.05,2757.72C1702.23,2788.14 1603.94,2850.03 1546.99,2945.12C1490.04,3040.21 1485.99,3133.64 1502.79,3176.68C1512.45,3201.42 1510.8,3209.21 1497.47,3217.69L1448.35,3248.94L1466.96,3278.19L1516.32,3246.79C1527.92,3239.41 1537.82,3240.24 1551.01,3252.81C1574.11,3274.81 1633.64,3314.79 1713.37,3320.37C1810.53,3327.17 1906.96,3297.57 1995.42,3241.29C2033.38,3217.14 2042.76,3209.83 2042.76,3209.83L2036.96,3180.65C2036.96,3180.65 2084.43,3148.83 2114.98,3120.22C2145.54,3091.6 2160.61,3071.59 2177.75,3029.84C2162.4,3024.86 2125.48,3010.68 2125.48,3010.68C2125.48,3010.68 2090.39,3078.64 1980.42,3148.6C1843.33,3235.81 1679.26,3240.48 1622.76,3151.67Z</Geometry>
@@ -128,7 +136,7 @@
             ClipToBounds="True">
 
         <!-- Scanlines overlay -->
-        <Grid>
+        <Grid x:Name="MainRootGrid">
             <Grid.RowDefinitions>
                 <RowDefinition Height="42"/>
                 <RowDefinition Height="*"/>
@@ -228,7 +236,7 @@
                                                Foreground="{DynamicResource AccentBrush}"
                                                Margin="0,0,0,10"/>
                                     <CheckBox Content="Tools" IsChecked="True" IsEnabled="False" Margin="0,3"/>
-                                    <CheckBox x:Name="ShowH3ModsSection" Content="H3 Mods" Tag="H3Mods" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowH3ModsSection" Content="Mods" Tag="H3Mods" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowReportSection" Content="Report" Tag="Report" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowStatsSection" Content="Stats" Tag="Stats" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowTheaterSection" Content="Theater" Tag="Theater" Margin="0,3" Click="SectionVisibility_Click"/>
@@ -408,6 +416,7 @@
                             <RowDefinition Height="Auto"/>  <!-- section label: Fix & Repair -->
                             <RowDefinition Height="Auto"/>  <!-- credentials card -->
                             <RowDefinition Height="Auto"/>  <!-- EAC card -->
+                            <RowDefinition Height="Auto"/>  <!-- audio devices card -->
                             <RowDefinition Height="Auto"/>  <!-- rejoin fix card -->
                             <RowDefinition Height="Auto"/>  <!-- Steam firewall card -->
                             <RowDefinition Height="Auto"/>  <!-- MCC installation path -->
@@ -521,8 +530,57 @@
                             </Grid>
                         </Border>
 
-                        <!-- Advanced Features Card -->
+                        <!-- Audio Device Repair Card -->
                         <Border Grid.Row="3"
+                                Background="{DynamicResource PanelBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Padding="20"
+                                Margin="0,0,0,14">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="0" Opacity="0.5"/>
+                            </Border.Effect>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Expander IsExpanded="True" HorizontalContentAlignment="Stretch" Margin="0,0,20,0">
+                                    <Expander.Header>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="🔊 "
+                                                       FontSize="16"
+                                                       Foreground="#00C8FF"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Text="REPAIR AUDIO DEVICES"
+                                                       FontFamily="Consolas"
+                                                       FontSize="13"
+                                                       FontWeight="Bold"
+                                                       Foreground="White"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Expander.Header>
+                                    <TextBlock Text="Clears MCC's saved audio output device so it can detect the current Windows device on launch. Use this when MCC starts with no audio until an in-game audio device is changed."
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               TextWrapping="Wrap"
+                                               LineHeight="18"
+                                               Margin="0,10,0,0"/>
+                                </Expander>
+                                <Button Grid.Column="1"
+                                        x:Name="BtnRepairAudioDevices"
+                                        Content="RUN FIX"
+                                        Style="{StaticResource OrangeButton}"
+                                        Width="110"
+                                        Click="BtnRepairAudioDevices_Click"
+                                        VerticalAlignment="Top"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Advanced Features Card -->
+                        <Border Grid.Row="4"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -626,6 +684,7 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <CheckBox x:Name="ChkNetworkStatsOverlay"
                                                       Grid.Column="0"
@@ -635,8 +694,19 @@
                                                       VerticalAlignment="Center"
                                                       Checked="ChkNetworkStatsOverlay_Checked"
                                                       Unchecked="ChkNetworkStatsOverlay_Unchecked"/>
+                                            <CheckBox x:Name="NetworkStatsObsOnlyToggle"
+                                                      Grid.Column="1"
+                                                      Content="OBS ONLY"
+                                                      Style="{StaticResource MapCheckBox}"
+                                                      FontSize="9"
+                                                      Margin="14,0,0,0"
+                                                      VerticalAlignment="Center"
+                                                      IsEnabled="{Binding IsChecked, ElementName=ChkNetworkStatsOverlay}"
+                                                      ToolTip="Hide Network Stats from the player while keeping its OBS browser source visible."
+                                                      Checked="NetworkStatsObsOnlyToggle_Checked"
+                                                      Unchecked="NetworkStatsObsOnlyToggle_Unchecked"/>
                                             <Button x:Name="BtnNetworkStatsOverlayMove"
-                                                    Grid.Column="1"
+                                                    Grid.Column="2"
                                                     Content="REPOSITION"
                                                     Style="{StaticResource PrimaryButton}"
                                                     Padding="8,3"
@@ -645,22 +715,54 @@
                                                     Visibility="Collapsed"
                                                     Click="BtnNetworkStatsOverlayMove_Click"/>
                                         </Grid>
-                                        <CheckBox x:Name="ChkMatchmakingWaitOverlay"
-                                                  Content="MATCHMAKING WAIT ESTIMATE"
-                                                  ToolTip="Show SmartMatch's initial estimated wait and the actual elapsed search time."
-                                                  Style="{StaticResource MapCheckBox}"
-                                                  FontSize="10"
-                                                  Margin="0,6,0,0"
-                                                  Checked="ChkMatchmakingWaitOverlay_Checked"
-                                                  Unchecked="ChkMatchmakingWaitOverlay_Unchecked"/>
-                                        <CheckBox x:Name="StatsObsSessionStatsToggle"
-                                                  Content="SESSION STATS"
-                                                  Style="{StaticResource MapCheckBox}"
-                                                  FontSize="10"
-                                                  Margin="0,6,0,0"
-                                                  ToolTip="Include session W/L, K/D, kills, and deaths in both the in-game and OBS overlays."
-                                                  Checked="StatsObsSessionStatsToggle_Checked"
-                                                  Unchecked="StatsObsSessionStatsToggle_Unchecked"/>
+                                        <Grid Margin="0,6,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox x:Name="ChkMatchmakingWaitOverlay"
+                                                      Grid.Column="0"
+                                                      Content="MATCHMAKING WAIT ESTIMATE"
+                                                      ToolTip="Show SmartMatch's initial estimated wait and the actual elapsed search time."
+                                                      Style="{StaticResource MapCheckBox}"
+                                                      FontSize="10"
+                                                      Checked="ChkMatchmakingWaitOverlay_Checked"
+                                                      Unchecked="ChkMatchmakingWaitOverlay_Unchecked"/>
+                                            <CheckBox x:Name="MatchmakingWaitObsOnlyToggle"
+                                                      Grid.Column="1"
+                                                      Content="OBS ONLY"
+                                                      Style="{StaticResource MapCheckBox}"
+                                                      FontSize="9"
+                                                      Margin="14,0,0,0"
+                                                      IsEnabled="{Binding IsChecked, ElementName=ChkMatchmakingWaitOverlay}"
+                                                      ToolTip="Hide Matchmaking Wait from the player while keeping its OBS browser source visible."
+                                                      Checked="MatchmakingWaitObsOnlyToggle_Checked"
+                                                      Unchecked="MatchmakingWaitObsOnlyToggle_Unchecked"/>
+                                        </Grid>
+                                        <Grid Margin="0,6,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox x:Name="StatsObsSessionStatsToggle"
+                                                      Grid.Column="0"
+                                                      Content="SESSION STATS"
+                                                      Style="{StaticResource MapCheckBox}"
+                                                      FontSize="10"
+                                                      ToolTip="Include session W/L, K/D, kills, deaths, and medals in the overlay."
+                                                      Checked="StatsObsSessionStatsToggle_Checked"
+                                                      Unchecked="StatsObsSessionStatsToggle_Unchecked"/>
+                                            <CheckBox x:Name="SessionStatsObsOnlyToggle"
+                                                      Grid.Column="1"
+                                                      Content="OBS ONLY"
+                                                      Style="{StaticResource MapCheckBox}"
+                                                      FontSize="9"
+                                                      Margin="14,0,0,0"
+                                                      IsEnabled="{Binding IsChecked, ElementName=StatsObsSessionStatsToggle}"
+                                                      ToolTip="Hide Session Stats and medals from the player while keeping its OBS browser source visible."
+                                                      Checked="SessionStatsObsOnlyToggle_Checked"
+                                                      Unchecked="SessionStatsObsOnlyToggle_Unchecked"/>
+                                        </Grid>
                                         <TextBlock Text="OUTPUT"
                                                    FontFamily="Consolas"
                                                    FontSize="9"
@@ -695,7 +797,7 @@
                         </Border>
 
                         <!-- Steam Firewall Card -->
-                        <Border Grid.Row="4"
+                        <Border Grid.Row="5"
                                 x:Name="SteamFirewallCard"
                                 Visibility="Collapsed"
                                 Background="{DynamicResource PanelBrush}"
@@ -760,7 +862,7 @@
                         </Border>
 
                         <!-- MCC Installation Path -->
-                        <Border Grid.Row="5"
+                        <Border Grid.Row="6"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -800,7 +902,7 @@
                         </Border>
 
                         <!-- Map Selector -->
-                        <Border Grid.Row="6"
+                        <Border Grid.Row="7"
                                 Background="Transparent"
                                 BorderThickness="0"
                                 VerticalAlignment="Stretch">
@@ -1064,9 +1166,15 @@
                     </Grid>
                 </TabItem>
 
-                <!-- ═══ TAB 2: H3 MODS ═══ -->
-                <TabItem x:Name="H3ModsSection" Header="🔧  H3 MODS" Style="{StaticResource DarkTabItem}">
-                    <local:H3Mods x:Name="H3ModsTab"/>
+                <!-- ═══ TAB 2: MODS ═══ -->
+                <TabItem x:Name="H3ModsSection" Header="🔧  MODS" Style="{StaticResource DarkTabItem}">
+                    <ContentControl x:Name="ModsHost">
+                        <TextBlock Text="Mods load when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
                 </TabItem>
 
                 <!-- ═══ TAB 2: LOG ═══ -->
@@ -1404,7 +1512,7 @@
                                            FontSize="10"
                                            HorizontalAlignment="Center"
                                            Margin="0,4,0,0"
-                                           Text="● checking session…"
+                                           Text="● session not checked"
                                            Foreground="{DynamicResource MutedBrush}"
                                            ToolTip="Indicates whether a Halo Support / Microsoft Account session is stored locally. Green = already logged in. Red = will need to log in."/>
                             </StackPanel>
@@ -1636,7 +1744,8 @@
                         <!-- ── Row 2: Action buttons ──────────────────────────────────── -->
                         <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="14,8">
-                            <StackPanel Orientation="Horizontal">
+                            <DockPanel LastChildFill="False">
+                            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
                                 <Button x:Name="StatsResetBtn"
                                         Content="⟳ RESET SESSION"
                                         Style="{StaticResource PrimaryButton}"
@@ -1659,6 +1768,21 @@
                                               Checked="StatsAutoToggle_Checked"
                                               Unchecked="StatsAutoToggle_Unchecked"/>
                             </StackPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <ToggleButton x:Name="StatsLobbyViewBtn"
+                                              Content="LOBBY VIEW"
+                                              Style="{StaticResource StatsToggleBtn}"
+                                              IsChecked="True"
+                                              Padding="12,5"
+                                              Click="StatsLobbyView_Click"/>
+                                <ToggleButton x:Name="StatsSessionViewBtn"
+                                              Content="SESSION VIEW"
+                                              Style="{StaticResource StatsToggleBtn}"
+                                              Margin="6,0,0,0"
+                                              Padding="12,5"
+                                              Click="StatsSessionView_Click"/>
+                            </StackPanel>
+                            </DockPanel>
                         </Border>
 
                         <!-- ── Row 3: Matchmaking population ──────────────────────────── -->
@@ -1669,12 +1793,21 @@
                                   BorderThickness="0,0,0,1">
                             <Expander.Header>
                                 <DockPanel Margin="14,7" LastChildFill="True">
-                                    <Button DockPanel.Dock="Right"
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button x:Name="StatsPopulationGraphBtn"
+                                            Content="⌁ GRAPH"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Padding="8,3"
+                                            Margin="0,0,6,0"
+                                            FontSize="10"
+                                            Click="StatsPopulationGraph_Click"/>
+                                    <Button
                                             Content="↻ REFRESH"
                                             Style="{StaticResource PrimaryButton}"
                                             Padding="8,3"
                                             FontSize="10"
                                             Click="StatsPopulationRefresh_Click"/>
+                                    </StackPanel>
                                     <StackPanel>
                                         <TextBlock Text="MATCHMAKING POPULATION"
                                                    FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
@@ -1776,7 +1909,7 @@
                         </Border>
 
                         <!-- ── Row 5: Current lobby + last game ────────────────────────── -->
-                        <Grid Grid.Row="5">
+                        <Grid x:Name="StatsLobbyContent" Grid.Row="5">
                             <Grid.RowDefinitions>
                                 <RowDefinition x:Name="StatsCurrentLobbyHeaderRow" Height="Auto"/>
                                 <RowDefinition x:Name="StatsCurrentLobbyListRow" Height="260" MinHeight="170"/>
@@ -2021,6 +2154,84 @@
                             </ListView>
                         </Grid>
 
+                        <!-- Advanced session dashboard. It overlays rows 3-5 when
+                             SESSION VIEW is selected, preserving the existing lobby UI. -->
+                        <Border x:Name="StatsSessionContent"
+                                Grid.Row="3" Grid.RowSpan="3"
+                                Panel.ZIndex="20"
+                                Visibility="Collapsed"
+                                Background="{DynamicResource BgBrush}">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel Margin="14,12">
+                                    <UniformGrid Columns="6" Margin="0,0,0,10">
+                                        <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10" Margin="0,0,6,0">
+                                            <StackPanel><TextBlock Text="RECORD" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsDashboardRecord" Text="0W–0L" FontFamily="Consolas" FontSize="21" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" Margin="0,5,0,0"/></StackPanel>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10" Margin="0,0,6,0">
+                                            <StackPanel><TextBlock Text="WIN RATE" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsDashboardWinRate" Text="—" FontFamily="Consolas" FontSize="21" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" Margin="0,5,0,0"/></StackPanel>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10" Margin="0,0,6,0">
+                                            <StackPanel><TextBlock Text="K/D" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsDashboardKd" Text="—" FontFamily="Consolas" FontSize="21" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" Margin="0,5,0,0"/></StackPanel>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10" Margin="0,0,6,0">
+                                            <StackPanel><TextBlock Text="KILLS" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsDashboardKills" Text="0" FontFamily="Consolas" FontSize="21" FontWeight="Bold" Foreground="#39FF14" HorizontalAlignment="Center" Margin="0,5,0,0"/></StackPanel>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10" Margin="0,0,6,0">
+                                            <StackPanel><TextBlock Text="DEATHS" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsDashboardDeaths" Text="0" FontFamily="Consolas" FontSize="21" FontWeight="Bold" Foreground="#FF2D55" HorizontalAlignment="Center" Margin="0,5,0,0"/></StackPanel>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10">
+                                            <StackPanel><TextBlock Text="BEST SPREE" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsDashboardBestSpree" Text="0" FontFamily="Consolas" FontSize="21" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" Margin="0,5,0,0"/></StackPanel>
+                                        </Border>
+                                    </UniformGrid>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="4*"/><ColumnDefinition Width="1.15*"/></Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="12" Margin="0,0,8,0">
+                                            <StackPanel>
+                                                <TextBlock Text="MULTIKILL TOTALS" FontFamily="Consolas" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,8"/>
+                                                <UniformGrid Columns="9">
+                                                    <StackPanel><Image Source="Resources/Medals/double-kill.png" Width="58" Height="58"/><TextBlock Text="DOUBLE" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalDouble" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/></StackPanel>
+                                                    <StackPanel><Image Source="Resources/Medals/triple-kill.png" Width="58" Height="58"/><TextBlock Text="TRIPLE" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalTriple" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/></StackPanel>
+                                                    <StackPanel><Image Source="Resources/Medals/overkill.png" Width="58" Height="58"/><TextBlock Text="OVERKILL" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalOverkill" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/></StackPanel>
+                                                    <StackPanel><Image Source="Resources/Medals/killtacular.png" Width="58" Height="58"/><TextBlock Text="KILLTACULAR" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalKilltacular" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/></StackPanel>
+                                                    <StackPanel><Image Source="Resources/Medals/killtrocity.png" Width="58" Height="58"/><TextBlock Text="KILLTROCITY" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalKilltrocity" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/></StackPanel>
+                                                    <Border BorderBrush="{DynamicResource AccentBrush}" BorderThickness="1" Padding="3"><StackPanel><Image Source="Resources/Medals/killimanjaro.png" Width="58" Height="58"/><TextBlock Text="KILLIMANJARO" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalKillimanjaro" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/></StackPanel></Border>
+                                                    <StackPanel Opacity="0.55"><Image Source="Resources/Medals/killtastrophe.png" Width="58" Height="58"/><TextBlock Text="KILLTASTROPHE" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalKilltastrophe" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/></StackPanel>
+                                                    <StackPanel Opacity="0.55"><Image Source="Resources/Medals/killpocalypse.png" Width="58" Height="58"/><TextBlock Text="KILLPOCALYPSE" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalKillpocalypse" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/></StackPanel>
+                                                    <StackPanel Opacity="0.55"><Image Source="Resources/Medals/killionaire.png" Width="58" Height="58"/><TextBlock Text="KILLIONAIRE" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/><TextBlock x:Name="StatsMedalKillionaire" Text="0" FontFamily="Consolas" FontSize="17" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/></StackPanel>
+                                                </UniformGrid>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Grid.Column="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="12">
+                                            <StackPanel>
+                                                <TextBlock Text="SESSION HIGHLIGHTS" FontFamily="Consolas" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10"/>
+                                                <TextBlock Text="BEST GAME" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/><TextBlock x:Name="StatsDashboardBestGame" Text="—" FontFamily="Consolas" FontSize="18" Foreground="{DynamicResource AccentBrush}" Margin="0,1,0,8"/>
+                                                <TextBlock Text="BEST K/D" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/><TextBlock x:Name="StatsDashboardBestKd" Text="—" FontFamily="Consolas" FontSize="18" Foreground="{DynamicResource AccentBrush}" Margin="0,1,0,8"/>
+                                                <TextBlock Text="WIN STREAK" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/><TextBlock x:Name="StatsDashboardWinStreak" Text="0" FontFamily="Consolas" FontSize="18" Foreground="#39FF14"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+
+                                    <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                        <StackPanel>
+                                            <TextBlock Text="GAME TIMELINE" FontFamily="Consolas" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" Margin="12,8"/>
+                                            <ListView x:Name="StatsSessionTimelineList" MaxHeight="230" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                                <ListView.View><GridView>
+                                                    <GridViewColumn Header="GAME" Width="55" DisplayMemberBinding="{Binding Game}"/>
+                                                    <GridViewColumn Header="RESULT" Width="85"><GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Result}" Foreground="{Binding ResultColor}" FontFamily="Consolas" FontWeight="Bold" Padding="6,5"/></DataTemplate></GridViewColumn.CellTemplate></GridViewColumn>
+                                                    <GridViewColumn Header="K–D" Width="90" DisplayMemberBinding="{Binding KillsDeaths}"/>
+                                                    <GridViewColumn Header="K/D" Width="85" DisplayMemberBinding="{Binding KD}"/>
+                                                    <GridViewColumn Header="BEST SPREE" Width="105" DisplayMemberBinding="{Binding BestSpree}"/>
+                                                    <GridViewColumn Header="HIGHEST MULTIKILL" Width="190"><GridViewColumn.CellTemplate><DataTemplate><StackPanel Orientation="Horizontal"><Image Source="{Binding HighestMultikillIcon}" Width="26" Height="26" Margin="4,2,8,2"/><TextBlock Text="{Binding HighestMultikill}" FontFamily="Consolas" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/></StackPanel></DataTemplate></GridViewColumn.CellTemplate></GridViewColumn>
+                                                </GridView></ListView.View>
+                                            </ListView>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+
                         <!-- ── Row 6: Status bar ──────────────────────────────────────── -->
                         <Border Grid.Row="6" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,1,0,0" Padding="14,6">
@@ -2035,12 +2246,24 @@
 
                 <!-- ═══ TAB 4: THEATER ═══ -->
                 <TabItem x:Name="TheaterSection" Header="🎬  THEATER" Style="{StaticResource DarkTabItem}">
-                    <local:Theater x:Name="TheaterTab"/>
+                    <ContentControl x:Name="TheaterHost">
+                        <TextBlock Text="Theater loads when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
                 </TabItem>
 
                 <!-- ═══ TAB 5: PLAYLISTS ═══ -->
                 <TabItem x:Name="PlaylistsSection" Header="🗂  PLAYLISTS" Style="{StaticResource DarkTabItem}">
-                    <local:Playlists x:Name="PlaylistsTab"/>
+                    <ContentControl x:Name="PlaylistsHost">
+                        <TextBlock Text="Playlists load when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
                 </TabItem>
 
                 <!-- ═══ TAB 6: ABOUT ═══ -->
@@ -2367,14 +2590,6 @@
                                VerticalAlignment="Center"/>
                 </Grid>
             </Border>
-
-            <!-- Hidden WebView2 — shares the persistent cookie environment with HaloReportWindow.
-                 Used only for CheckSupportSessionAsync(); never navigated or rendered. -->
-            <wv2:WebView2 x:Name="HiddenCookieChecker"
-                          Grid.RowSpan="3"
-                          Width="0" Height="0"
-                          IsHitTestVisible="False"
-                          Focusable="False"/>
 
             <!-- Scanline overlay -->
             <Rectangle Grid.RowSpan="3"

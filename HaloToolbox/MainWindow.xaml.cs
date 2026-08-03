@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -8,6 +8,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -92,14 +93,15 @@ namespace HaloToolbox
         private static readonly string StatsWatchPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low",
             @"MCC\Temporary");
-        private const string StatsSettingsFile = "stats_gamertag.txt";
-        private const string StatsCacheFile    = "stats_cache.json";
-        private const string StatsTokenFile    = "stats_token.txt";
+        private static readonly string StatsSettingsFile = App.StatsGamertagPath;
+        private static readonly string StatsCacheFile    = App.StatsCachePath;
+        private static readonly string StatsTokenFile    = App.StatsTokenPath;
 
         // ── Stats Tab — mutable state (always access under _statsLock) ───────
         private readonly object _statsLock = new();
         private string _statsGamertag = "";
         private StatsSessionStats _statsSession = new();
+        private readonly ObservableCollection<StatsSessionGameRow> _statsSessionGames = new();
         private List<XElement> _statsLastPlayers = new();
         private string _statsLastFileSig = "";
         private bool _statsAutoPullLobby = true;
@@ -110,6 +112,21 @@ namespace HaloToolbox
         private string _statsLastGameServerText = "";
         private List<StatsPlayerRow> _statsCurrentLobbySnapshotRows = new();
         private List<StatsPlayerRow> _statsLastCompletedLobbyRows = new();
+
+        // MCC's unified multiplayer-medal IDs from the carnage report. These
+        // are shared metadata IDs, not Halo 3's old sequential 8-16 values.
+        internal static readonly StatsMedalDefinition[] StatsMultikillMedals =
+        {
+            new("Double Kill",     62, "Resources/Medals/double-kill.png"),
+            new("Triple Kill",    224, "Resources/Medals/triple-kill.png"),
+            new("Overkill",       162, "Resources/Medals/overkill.png"),
+            new("Killtacular",    140, "Resources/Medals/killtacular.png"),
+            new("Killtrocity",    142, "Resources/Medals/killtrocity.png"),
+            new("Killimanjaro",   134, "Resources/Medals/killimanjaro.png"),
+            new("Killtastrophe",  141, "Resources/Medals/killtastrophe.png"),
+            new("Killpocalypse",  139, "Resources/Medals/killpocalypse.png"),
+            new("Killionaire",    137, "Resources/Medals/killionaire.png"),
+        };
 
         // ── Stats Tab — lookup caches ────────────────────────────────────────
         private readonly Dictionary<string, string> _statsKd =
@@ -132,6 +149,7 @@ namespace HaloToolbox
         private readonly ObservableCollection<StatsPlayerRow> _statsCurrentLobbyRows = new();
         private readonly ObservableCollection<StatsPlayerRow> _statsLobbyRows = new();
         private readonly ObservableCollection<MatchmakingPopulationRow> _statsPopulationRows = new();
+        private readonly List<MatchmakingPopulationSample> _statsPopulationHistory = new();
         private readonly SemaphoreSlim _statsPopulationRefreshLock = new(1, 1);
         private string _statsPopulationSortProperty = nameof(MatchmakingPopulationRow.Population);
         private ListSortDirection _statsPopulationSortDirection = ListSortDirection.Descending;
@@ -141,19 +159,35 @@ namespace HaloToolbox
         private readonly GameServerConnectionMonitor _gameServerConnectionMonitor = new();
         private readonly ObsOverlayServer _obsOverlayServer = new();
         private GameNetworkStatsOverlayWindow? _gameNetworkStatsOverlay;
+        private GameNetworkStatsOverlayWindow? _matchmakingWaitOverlay;
+        private GameNetworkStatsOverlayWindow? _sessionStatsOverlay;
         private bool _networkStatsOverlayEnabled = true;
         private bool _matchmakingWaitOverlayEnabled = true;
         private SmartMatchWaitEstimate? _smartMatchWaitEstimate;
         private int? _smartMatchHopperPopulation;
         private string _smartMatchHopperDisplayName = "";
         private readonly System.Windows.Threading.DispatcherTimer _matchmakingPopulationTimer;
+        private readonly System.Windows.Threading.DispatcherTimer _populationHistoryTimer;
         private DateTimeOffset _lastFullPopulationRefreshUtc = DateTimeOffset.MinValue;
         private bool _networkStatsOverlayMoveEnabled;
         private bool _obsBrowserOverlayEnabled;
         private bool _obsBrowserOverlaySessionStatsEnabled = true;
+        private bool _networkStatsObsOnly;
+        private bool _matchmakingWaitObsOnly;
+        private bool _sessionStatsObsOnly;
         private NetworkStatsSnapshot? _lastNetworkStatsSnapshot;
         private NetworkTrafficSnapshot? _lastNetworkTrafficSnapshot;
-        private Rect _lastOverlayRelativePlacement = new(0, 0, 760.0 / 1920.0, 132.0 / 1080.0);
+        private ObsPostGameRecap? _postGameRecap;
+        private Task? _supportSessionCheckTask;
+        private Microsoft.Web.WebView2.Wpf.WebView2? _hiddenCookieChecker;
+        private Mods? _modsTab;
+        private Theater? _theaterTab;
+        private Playlists? _playlistsTab;
+        private string _playlistsMccPath = App.DefaultMccPath;
+        private bool _firstRenderInitializationQueued;
+        private bool _statsInitialized;
+        private Rect _lastOverlayRelativePlacement = new(0, 0, 1280.0 / 1920.0, 170.0 / 1080.0);
+        private readonly Dictionary<string, Rect> _componentOverlayRelativePlacements = new(StringComparer.OrdinalIgnoreCase);
         private GameServerInfo? _lastNetworkStatsRelayServer;
         private GameServerInfo? _trustedDedicatedServer;
         private bool _mainWindowInitialized;
@@ -315,54 +349,58 @@ namespace HaloToolbox
                 Interval = TimeSpan.FromSeconds(10)
             };
             _matchmakingPopulationTimer.Tick += MatchmakingPopulationTimer_Tick;
+            _populationHistoryTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMinutes(1)
+            };
+            _populationHistoryTimer.Tick += PopulationHistoryTimer_Tick;
             RestoreMainWindowPlacement();
             LoadSectionVisibility();
             _lastMainTab = MainTabs.SelectedItem as TabItem;
             MainTabs.SelectionChanged += MainTabs_SelectionChanged;
+            if (App.LoadSetupPreference("OpenLastSection", true))
+            {
+                string lastSection = App.LoadLastMainSection();
+                var savedTab = MainTabs.Items
+                    .OfType<TabItem>()
+                    .FirstOrDefault(tab => tab.Name == lastSection && tab.Visibility == Visibility.Visible);
+                if (savedTab is not null)
+                {
+                    MainTabs.SelectedItem = savedTab;
+                    _lastMainTab = savedTab;
+                }
+            }
             _networkStatsOverlayEnabled = App.LoadGameNetworkStatsOverlayEnabled();
             ChkNetworkStatsOverlay.IsChecked = _networkStatsOverlayEnabled;
             _matchmakingWaitOverlayEnabled = App.LoadMatchmakingWaitOverlayEnabled();
             ChkMatchmakingWaitOverlay.IsChecked = _matchmakingWaitOverlayEnabled;
+            string savedRejoinFirewallMode = App.LoadRejoinFirewallMode();
+            SetRejoinFirewallCheckbox(
+                ChkRejoinFixFirewall,
+                string.Equals(savedRejoinFirewallMode, "Campaign", StringComparison.OrdinalIgnoreCase));
+            SetRejoinFirewallCheckbox(
+                ChkRejoinFixFirewallMatchmaking,
+                string.Equals(savedRejoinFirewallMode, "Matchmaking", StringComparison.OrdinalIgnoreCase));
             TxtMccPath.Text = App.LoadMccInstallationPath();
-            PlaylistsTab.SetMccInstallationPath(TxtMccPath.Text);
+            _playlistsMccPath = TxtMccPath.Text;
             TxtMccPath.TextChanged += TxtMccPath_TextChanged;
             MapList.ItemsSource = _maps;
             AppendLog("[INFO]", "Halo MCC Toolbox started. Made by The FFA Panda.", "#00C8FF");
-
-            // Check Halo Support login state once the window is fully rendered
-            // Load maps asynchronously in background after window renders
-            Loaded += async (_, _) =>
-            {
-                await CheckSupportSessionAsync();
-                ThemeToggleBtn.Content = App.IsDarkTheme ? "☾" : "☀";
-
-                // Load maps asynchronously so UI isn't blocked
-                string mccPath = TxtMccPath.Text.Trim();
-                var defaultMapsPath = Path.Combine(mccPath, "halo3", "maps");
-                if (Directory.Exists(defaultMapsPath))
-                {
-                    AppendLog("[INFO]", "Loading maps in background...", "#4A5A6A");
-                    await Task.Run(() => LoadMaps(mccPath));
-                }
-
-                // Start stats monitoring loop after UI is fully initialized
-                _ = Task.Run(StatsMonitorLoop);
-            };
-
-            // Initialize the Stats tab (lobby monitor)
-            StatsInitialize();
-            StatsPopulationList.ItemsSource = _statsPopulationRows;
-            _ = StatsRefreshMatchmakingPopulationAsync();
+            ContentRendered += MainWindow_ContentRendered;
             _statsAutoPullLobby = App.LoadStatsAutoLobbyEnabled();
             StatsAutoToggle.IsChecked = _statsAutoPullLobby;
             StatsAutoToggle.Content = _statsAutoPullLobby ? "AUTO: ON" : "AUTO: OFF";
             _obsBrowserOverlayEnabled = App.LoadObsBrowserOverlayEnabled();
             _obsBrowserOverlaySessionStatsEnabled = App.LoadObsBrowserOverlaySessionStatsEnabled();
+            _networkStatsObsOnly = App.LoadNetworkStatsObsOnlyEnabled();
+            _matchmakingWaitObsOnly = App.LoadMatchmakingWaitObsOnlyEnabled();
+            _sessionStatsObsOnly = App.LoadSessionStatsObsOnlyEnabled();
             StatsObsOverlayToggle.IsChecked = _obsBrowserOverlayEnabled;
             StatsObsSessionStatsToggle.IsChecked = _obsBrowserOverlaySessionStatsEnabled;
+            NetworkStatsObsOnlyToggle.IsChecked = _networkStatsObsOnly;
+            MatchmakingWaitObsOnlyToggle.IsChecked = _matchmakingWaitObsOnly;
+            SessionStatsObsOnlyToggle.IsChecked = _sessionStatsObsOnly;
             StatsRefreshObsOverlayUi();
-            if (_obsBrowserOverlayEnabled)
-                TryStartObsOverlayServer(logStatus: false);
             _rejoinProxy.WinHttpManualSetRequired += (_, command) =>
                 Dispatcher.InvokeAsync(() =>
                 {
@@ -424,7 +462,7 @@ namespace HaloToolbox
                 {
                     _smartMatchWaitEstimate = estimate;
                     _smartMatchHopperPopulation = null;
-                    _smartMatchHopperDisplayName = PlaylistsTab.GetMatchmakingHoppers()
+                    _smartMatchHopperDisplayName = EnsurePlaylistsTab().GetMatchmakingHoppers()
                         .FirstOrDefault(x => x.HopperName.Equals(
                             estimate.HopperName,
                             StringComparison.OrdinalIgnoreCase))?.DisplayName
@@ -469,13 +507,15 @@ namespace HaloToolbox
                 Dispatcher.InvokeAsync(() => AppendLog("[NET]", status, "#4A5A6A"));
             Closed += (_, _) =>
             {
-                H3ModsTab.Dispose();
+                DisposeHiddenCookieChecker();
+                _modsTab?.Dispose();
                 StopRejoinCrashWatcher();
                 _gameServerConnectionMonitor.Dispose();
                 _networkStatsMonitor.Dispose();
                 _obsOverlayServer.Dispose();
                 _rejoinProxy.Dispose();
                 _matchmakingPopulationTimer.Stop();
+                _populationHistoryTimer.Stop();
             };
             Closing += MainWindow_Closing;
             StateChanged += (_, _) => UpdateMaximizeButton();
@@ -498,6 +538,109 @@ namespace HaloToolbox
             Dispatcher.InvokeAsync(SynchronizeStartupFirewallStateAsync);
             Dispatcher.InvokeAsync(StartPendingRejoinFixAfterElevationAsync);
 
+        }
+
+        private void MainWindow_ContentRendered(object? sender, EventArgs e)
+        {
+            if (_firstRenderInitializationQueued)
+                return;
+
+            _firstRenderInitializationQueued = true;
+            ContentRendered -= MainWindow_ContentRendered;
+
+            // Input and rendering have higher dispatcher priority than these callbacks,
+            // so the first window can be dragged immediately while startup work is
+            // divided into small, independently scheduled pieces.
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(InitializeDeferredUiState));
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(StartDeferredBackgroundWork));
+        }
+
+        private void InitializeDeferredUiState()
+        {
+            ThemeToggleBtn.Content = App.IsDarkTheme ? "☾" : "☀";
+            EnsureStatsInitialized();
+            _populationHistoryTimer.Start();
+        }
+
+        private void StartDeferredBackgroundWork()
+        {
+            string mccPath = TxtMccPath.Text.Trim();
+            var defaultMapsPath = Path.Combine(mccPath, "halo3", "maps");
+            if (Directory.Exists(defaultMapsPath))
+            {
+                AppendLog("[INFO]", "Loading maps in background...", "#4A5A6A");
+                _ = Task.Run(() => LoadMaps(mccPath));
+            }
+
+            _ = Task.Run(StatsMonitorLoop);
+            _ = RefreshPopulationAfterFirstInputAsync();
+        }
+
+        private async Task RefreshPopulationAfterFirstInputAsync()
+        {
+            // Keep the initial dispatcher free long enough for the first drag/click.
+            await Task.Delay(1000);
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                return;
+
+            await StatsRefreshMatchmakingPopulationAsync();
+        }
+
+        private void EnsureStatsInitialized()
+        {
+            if (_statsInitialized)
+                return;
+
+            _statsInitialized = true;
+            StatsInitialize();
+            StatsPopulationList.ItemsSource = _statsPopulationRows;
+        }
+
+        private Mods EnsureModsTab()
+        {
+            if (_modsTab is not null)
+                return _modsTab;
+
+            _modsTab = new Mods();
+            ModsHost.Content = _modsTab;
+            return _modsTab;
+        }
+
+        private Theater EnsureTheaterTab()
+        {
+            if (_theaterTab is not null)
+                return _theaterTab;
+
+            _theaterTab = new Theater();
+            TheaterHost.Content = _theaterTab;
+            return _theaterTab;
+        }
+
+        private Playlists EnsurePlaylistsTab()
+        {
+            if (_playlistsTab is not null)
+                return _playlistsTab;
+
+            _playlistsTab = new Playlists();
+            _playlistsTab.SetMccInstallationPath(_playlistsMccPath);
+            PlaylistsHost.Content = _playlistsTab;
+            return _playlistsTab;
+        }
+
+        private void EnsureSelectedSectionContent(TabItem selectedTab)
+        {
+            if (ReferenceEquals(selectedTab, H3ModsSection))
+                EnsureModsTab();
+            else if (ReferenceEquals(selectedTab, TheaterSection))
+                EnsureTheaterTab();
+            else if (ReferenceEquals(selectedTab, PlaylistsSection))
+                EnsurePlaylistsTab();
+            else if (ReferenceEquals(selectedTab, StatsSection))
+                EnsureStatsInitialized();
         }
 
         // ------------------------------------------
@@ -592,9 +735,17 @@ namespace HaloToolbox
             if (e.AddedItems.Count != 1 || e.AddedItems[0] is not TabItem selectedTab)
                 return;
 
+            // WebView2 profile startup can briefly occupy the WPF UI thread. Keep it
+            // out of the application launch path and initialize it only when needed.
+            if (_mainWindowInitialized && ReferenceEquals(selectedTab, ReportSection))
+                _ = EnsureSupportSessionCheckedAsync();
+
             if (!ReferenceEquals(selectedTab, H3ModsSection) || IsRunningAsAdministrator())
             {
+                EnsureSelectedSectionContent(selectedTab);
                 _lastMainTab = selectedTab;
+                if (App.LoadSetupPreference("OpenLastSection", true))
+                    App.SaveLastMainSection(selectedTab.Name);
                 return;
             }
 
@@ -603,9 +754,9 @@ namespace HaloToolbox
             MainTabs.SelectedItem = _lastMainTab ?? ToolsSection;
             _restoringMainTabSelection = false;
 
-            var result = MessageBox.Show(
-                "H3 Mods requires the Toolbox to run as Administrator.\n\nRelaunch as Administrator now?",
-                "H3 Mods -- Halo MCC Toolbox",
+            var result = ToolboxDialog.Show(
+                "Mods requires the Toolbox to run as Administrator.\n\nRelaunch as Administrator now?",
+                "Mods -- Halo MCC Toolbox",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Information);
 
@@ -619,14 +770,14 @@ namespace HaloToolbox
             }
             catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
             {
-                AppendLog("[INFO]", "H3 Mods relaunch cancelled at administrator prompt.", "#4A5A6A");
-                SetStatus("H3 Mods requires Administrator.", "#4A5A6A");
+                AppendLog("[INFO]", "Mods relaunch cancelled at administrator prompt.", "#4A5A6A");
+                SetStatus("Mods requires Administrator.", "#4A5A6A");
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Could not relaunch the Toolbox as Administrator.\n\n{ex.Message}",
-                    "H3 Mods -- Halo MCC Toolbox",
+                    "Mods -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
                 AppendLog("[ERROR]", $"Could not relaunch as Administrator: {ex.Message}", "#FF2D55");
@@ -852,7 +1003,8 @@ namespace HaloToolbox
 
             _gameServerConnectionMonitor.Start();
 
-            if (!_networkStatsOverlayEnabled && !_matchmakingWaitOverlayEnabled && !_obsBrowserOverlayEnabled)
+            if (!_networkStatsOverlayEnabled && !_matchmakingWaitOverlayEnabled &&
+                !_obsBrowserOverlaySessionStatsEnabled && !_obsBrowserOverlayEnabled)
             {
                 _networkStatsMonitor.Stop();
                 CloseGameNetworkStatsOverlay();
@@ -861,16 +1013,22 @@ namespace HaloToolbox
                 return;
             }
 
-            if (_networkStatsOverlayEnabled || _matchmakingWaitOverlayEnabled)
+            if (_networkStatsOverlayEnabled || _matchmakingWaitOverlayEnabled || _obsBrowserOverlaySessionStatsEnabled)
             {
                 EnsureGameNetworkStatsOverlay();
-                _gameNetworkStatsOverlay?.SetPreferredProcessId(TryGetMccProcessId());
-                _gameNetworkStatsOverlay?.SetMoveMode(_networkStatsOverlayMoveEnabled);
+                foreach (var overlay in AllGameOverlays())
+                {
+                    overlay.SetPreferredProcessId(TryGetMccProcessId());
+                    overlay.SetMoveMode(_networkStatsOverlayMoveEnabled);
+                }
             }
             else
             {
                 CloseGameNetworkStatsOverlay();
             }
+
+            if (_obsBrowserOverlayEnabled)
+                EnsureOverlaySourceServer(logStatus: false);
 
             if (string.IsNullOrWhiteSpace(targetIp))
             {
@@ -1010,37 +1168,66 @@ namespace HaloToolbox
 
         private void EnsureGameNetworkStatsOverlay()
         {
-            if (_gameNetworkStatsOverlay is not null)
+            if (_networkStatsOverlayEnabled && !_networkStatsObsOnly && _gameNetworkStatsOverlay is null)
+                _gameNetworkStatsOverlay = CreateComponentOverlay("network");
+            else if ((!_networkStatsOverlayEnabled || _networkStatsObsOnly) && _gameNetworkStatsOverlay is not null)
+                CloseComponentOverlay(ref _gameNetworkStatsOverlay);
+
+            if (_matchmakingWaitOverlayEnabled && !_matchmakingWaitObsOnly && _matchmakingWaitOverlay is null)
+                _matchmakingWaitOverlay = CreateComponentOverlay("wait");
+            else if ((!_matchmakingWaitOverlayEnabled || _matchmakingWaitObsOnly) && _matchmakingWaitOverlay is not null)
+                CloseComponentOverlay(ref _matchmakingWaitOverlay);
+
+            if (_obsBrowserOverlaySessionStatsEnabled && !_sessionStatsObsOnly && _sessionStatsOverlay is null)
+                _sessionStatsOverlay = CreateComponentOverlay("session");
+            else if ((!_obsBrowserOverlaySessionStatsEnabled || _sessionStatsObsOnly) && _sessionStatsOverlay is not null)
+                CloseComponentOverlay(ref _sessionStatsOverlay);
+
+            foreach (var overlay in AllGameOverlays())
             {
-                EnsureOverlaySourceServer(logStatus: false);
-                _gameNetworkStatsOverlay.SetOverlaySource(_obsOverlayServer.GameOverlayUrl);
-                return;
+                overlay.SetPreferredProcessId(TryGetMccProcessId());
+                overlay.SetMoveMode(_networkStatsOverlayMoveEnabled);
+                overlay.UpdateSessionStats(BuildObsOverlaySnapshot());
             }
+            PublishObsOverlaySnapshot();
+        }
 
-            EnsureOverlaySourceServer(logStatus: false);
-
-            var overlay = new GameNetworkStatsOverlayWindow
+        private GameNetworkStatsOverlayWindow CreateComponentOverlay(string component)
+        {
+            var overlay = new GameNetworkStatsOverlayWindow(
+                component,
+                App.LoadGameOverlayVisualStyle(component))
             {
                 Owner = this
             };
-            overlay.RelativePlacementChanged += GameNetworkStatsOverlay_RelativePlacementChanged;
+            overlay.RelativePlacementChanged += (_, placement) =>
+                ComponentOverlay_RelativePlacementChanged(component, placement);
             overlay.Closed += (_, _) =>
             {
-                overlay.RelativePlacementChanged -= GameNetworkStatsOverlay_RelativePlacementChanged;
-                if (ReferenceEquals(_gameNetworkStatsOverlay, overlay))
-                    _gameNetworkStatsOverlay = null;
+                if (ReferenceEquals(_gameNetworkStatsOverlay, overlay)) _gameNetworkStatsOverlay = null;
+                if (ReferenceEquals(_matchmakingWaitOverlay, overlay)) _matchmakingWaitOverlay = null;
+                if (ReferenceEquals(_sessionStatsOverlay, overlay)) _sessionStatsOverlay = null;
             };
-            _gameNetworkStatsOverlay = overlay;
             overlay.Show();
-            overlay.SetOverlaySource(_obsOverlayServer.GameOverlayUrl);
-            overlay.SetMoveMode(_networkStatsOverlayMoveEnabled);
-            overlay.UpdateSessionStats(BuildObsOverlaySnapshot());
-            PublishObsOverlaySnapshot();
+            return overlay;
+        }
+
+        private IEnumerable<GameNetworkStatsOverlayWindow> AllGameOverlays()
+        {
+            if (_gameNetworkStatsOverlay is not null) yield return _gameNetworkStatsOverlay;
+            if (_matchmakingWaitOverlay is not null) yield return _matchmakingWaitOverlay;
+            if (_sessionStatsOverlay is not null) yield return _sessionStatsOverlay;
         }
 
         private void GameNetworkStatsOverlay_RelativePlacementChanged(object? sender, Rect placement)
         {
             _lastOverlayRelativePlacement = placement;
+            PublishObsOverlaySnapshot();
+        }
+
+        private void ComponentOverlay_RelativePlacementChanged(string component, Rect placement)
+        {
+            _componentOverlayRelativePlacements[component] = placement;
             PublishObsOverlaySnapshot();
         }
 
@@ -1062,26 +1249,30 @@ namespace HaloToolbox
 
         private void CloseGameNetworkStatsOverlay()
         {
-            if (_gameNetworkStatsOverlay is null)
-                return;
-
-            var overlay = _gameNetworkStatsOverlay;
+            var overlays = AllGameOverlays().ToList();
             _gameNetworkStatsOverlay = null;
-            overlay.Close();
+            _matchmakingWaitOverlay = null;
+            _sessionStatsOverlay = null;
+            foreach (var overlay in overlays) overlay.Close();
         }
 
-        private async void ChkNetworkStatsOverlay_Checked(object sender, RoutedEventArgs e)
+        private static void CloseComponentOverlay(ref GameNetworkStatsOverlayWindow? overlay)
+        {
+            var closing = overlay;
+            overlay = null;
+            closing?.Close();
+        }
+
+        private void ChkNetworkStatsOverlay_Checked(object sender, RoutedEventArgs e)
         {
             _networkStatsOverlayEnabled = true;
             if (!_mainWindowInitialized)
                 return;
 
             App.SaveGameNetworkStatsOverlayEnabled(true);
-            if (!await EnsureCompanionServicesRunningAsync("Game Network Stats Overlay"))
+            if (!_rejoinProxy.IsRunning)
             {
-                _networkStatsOverlayEnabled = false;
-                App.SaveGameNetworkStatsOverlayEnabled(false);
-                ChkNetworkStatsOverlay.IsChecked = false;
+                UpdateRejoinFixUi();
                 return;
             }
             StartNetworkStatsOverlay(GetNetworkStatsTargetIp(), GetNetworkStatsTargetServerInfo());
@@ -1096,29 +1287,25 @@ namespace HaloToolbox
                 return;
 
             App.SaveGameNetworkStatsOverlayEnabled(false);
-            BtnNetworkStatsOverlayMove.Visibility = Visibility.Collapsed;
             _networkStatsOverlayMoveEnabled = false;
             _gameServerConnectionMonitor.Stop();
             _networkStatsMonitor.Stop();
-            if (!_matchmakingWaitOverlayEnabled)
-                CloseGameNetworkStatsOverlay();
-            else
-                PublishObsOverlaySnapshot();
-            if (!_matchmakingWaitOverlayEnabled && !_obsBrowserOverlayEnabled)
+            CloseComponentOverlay(ref _gameNetworkStatsOverlay);
+            PublishObsOverlaySnapshot();
+            if (!_matchmakingWaitOverlayEnabled && !_obsBrowserOverlaySessionStatsEnabled && !_obsBrowserOverlayEnabled)
                 _obsOverlayServer.Stop();
             AppendLog("[NET]", "Game network stats overlay disabled.", "#C8D8E8");
+            UpdateRejoinFixUi();
         }
 
-        private async void ChkMatchmakingWaitOverlay_Checked(object sender, RoutedEventArgs e)
+        private void ChkMatchmakingWaitOverlay_Checked(object sender, RoutedEventArgs e)
         {
             _matchmakingWaitOverlayEnabled = true;
             if (!_mainWindowInitialized) return;
             App.SaveMatchmakingWaitOverlayEnabled(true);
-            if (!await EnsureCompanionServicesRunningAsync("Matchmaking Wait Overlay"))
+            if (!_rejoinProxy.IsRunning)
             {
-                _matchmakingWaitOverlayEnabled = false;
-                App.SaveMatchmakingWaitOverlayEnabled(false);
-                ChkMatchmakingWaitOverlay.IsChecked = false;
+                UpdateRejoinFixUi();
                 return;
             }
             if (_rejoinProxy.IsRunning)
@@ -1136,12 +1323,12 @@ namespace HaloToolbox
             _matchmakingWaitOverlayEnabled = false;
             if (!_mainWindowInitialized) return;
             App.SaveMatchmakingWaitOverlayEnabled(false);
-            if (!_networkStatsOverlayEnabled)
-                CloseGameNetworkStatsOverlay();
+            CloseComponentOverlay(ref _matchmakingWaitOverlay);
             PublishObsOverlaySnapshot();
-            if (!_networkStatsOverlayEnabled && !_obsBrowserOverlayEnabled)
+            if (!_networkStatsOverlayEnabled && !_obsBrowserOverlaySessionStatsEnabled && !_obsBrowserOverlayEnabled)
                 _obsOverlayServer.Stop();
             AppendLog("[MATCH]", "Matchmaking wait estimate overlay disabled.", "#C8D8E8");
+            UpdateRejoinFixUi();
         }
 
         private void ChkNetworkStatsOverlayMove_Checked(object sender, RoutedEventArgs e)
@@ -1153,7 +1340,7 @@ namespace HaloToolbox
             if (_networkStatsOverlayEnabled && _rejoinProxy.IsRunning)
                 StartNetworkStatsOverlay(GetNetworkStatsTargetIp(), GetNetworkStatsTargetServerInfo());
 
-            _gameNetworkStatsOverlay?.SetMoveMode(true);
+            foreach (var overlay in AllGameOverlays()) overlay.SetMoveMode(true);
             AppendLog("[NET]", "Overlay drag mode enabled. Drag the overlay, then turn drag mode off.", "#00C8FF");
         }
 
@@ -1163,14 +1350,17 @@ namespace HaloToolbox
             if (!_mainWindowInitialized)
                 return;
 
-            _gameNetworkStatsOverlay?.SetMoveMode(false);
+            foreach (var overlay in AllGameOverlays()) overlay.SetMoveMode(false);
             AppendLog("[NET]", "Overlay drag mode disabled; overlay is click-through.", "#C8D8E8");
         }
 
         private void BtnNetworkStatsOverlayMove_Click(object sender, RoutedEventArgs e)
         {
             _networkStatsOverlayMoveEnabled = !_networkStatsOverlayMoveEnabled;
-            _gameNetworkStatsOverlay?.SetMoveMode(_networkStatsOverlayMoveEnabled);
+            if (_networkStatsOverlayMoveEnabled)
+                EnsureGameNetworkStatsOverlay();
+
+            foreach (var overlay in AllGameOverlays()) overlay.SetMoveMode(_networkStatsOverlayMoveEnabled);
             BtnNetworkStatsOverlayMove.Content = _networkStatsOverlayMoveEnabled
                 ? "FINISH"
                 : "REPOSITION";
@@ -1180,6 +1370,9 @@ namespace HaloToolbox
                     ? "Overlay drag mode enabled. Drag the overlay, then finish repositioning."
                     : "Overlay drag mode disabled; overlay is click-through.",
                 _networkStatsOverlayMoveEnabled ? "#00C8FF" : "#C8D8E8");
+
+            if (!_networkStatsOverlayMoveEnabled && !_rejoinProxy.IsRunning)
+                CloseGameNetworkStatsOverlay();
         }
 
         private void BtnClearLog_Click(object sender, RoutedEventArgs e)
@@ -1530,7 +1723,7 @@ namespace HaloToolbox
                     Dispatcher.Invoke(() =>
                     {
                         SetStatus("Diagnostics ZIP created.", "#39FF14");
-                        var open = MessageBox.Show(
+                        var open = ToolboxDialog.Show(
                             $"Diagnostics ZIP created.\n\nSaved to:\n{zipPath}\n\nOpen containing folder?",
                             "Logs Exported -- Halo MCC Toolbox",
                             MessageBoxButton.YesNo,
@@ -1546,7 +1739,7 @@ namespace HaloToolbox
                     Dispatcher.Invoke(() =>
                     {
                         SetStatus("Failed to export diagnostics logs.", "#FF2D55");
-                        MessageBox.Show($"Failed to export logs:\n\n{ex.Message}",
+                        ToolboxDialog.Show($"Failed to export logs:\n\n{ex.Message}",
                             "Error -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Error);
                     });
                 }
@@ -1559,7 +1752,7 @@ namespace HaloToolbox
 
         private async void BtnRemoveToolboxTraces_Click(object sender, RoutedEventArgs e)
         {
-            var confirm = MessageBox.Show(
+            var confirm = ToolboxDialog.Show(
                 "This will remove Halo MCC Toolbox data from this PC:\n\n" +
                 "- Toolbox Local/Roaming AppData, including WebView2 logins and Rejoin Fix files\n" +
                 "- Toolbox registry settings\n" +
@@ -1588,7 +1781,7 @@ namespace HaloToolbox
                 AppendLog("[DONE]", "Toolbox trace cleanup complete. Restart the app to recreate fresh settings.", "#39FF14");
                 SetStatus("Toolbox traces removed.", "#39FF14");
 
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     "Halo MCC Toolbox traces were removed.\n\nRestart the app if you want to keep using it with fresh settings.",
                     "Toolbox Traces Removed -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -1598,7 +1791,7 @@ namespace HaloToolbox
             {
                 AppendLog("[ERROR]", $"Toolbox trace cleanup failed: {ex.Message}", "#FF2D55");
                 SetStatus("Toolbox trace cleanup failed.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Toolbox trace cleanup failed:\n\n{ex.Message}",
                     "Cleanup Failed -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -1728,14 +1921,40 @@ exit 0";
 
         private void DisposeHiddenCookieChecker()
         {
+            var checker = _hiddenCookieChecker;
+            if (checker is null)
+                return;
+
+            _hiddenCookieChecker = null;
             try
             {
-                HiddenCookieChecker.Dispose();
+                MainRootGrid.Children.Remove(checker);
+                checker.Dispose();
             }
             catch (Exception ex)
             {
                 AppendLog("[WARN]", $"Could not release WebView2 before cleanup: {ex.Message}", "#FF6A00");
             }
+        }
+
+        private Microsoft.Web.WebView2.Wpf.WebView2 EnsureHiddenCookieChecker()
+        {
+            if (_hiddenCookieChecker is not null)
+                return _hiddenCookieChecker;
+
+            // Keep WebView2 out of the startup visual tree. Constructing it from XAML
+            // can initialize Edge while the main window is rendering and block input.
+            var checker = new Microsoft.Web.WebView2.Wpf.WebView2
+            {
+                Width = 0,
+                Height = 0,
+                IsHitTestVisible = false,
+                Focusable = false
+            };
+            Grid.SetRowSpan(checker, 3);
+            MainRootGrid.Children.Add(checker);
+            _hiddenCookieChecker = checker;
+            return checker;
         }
 
         private bool ClearToolboxWinInetProxyIfPresent()
@@ -2018,7 +2237,7 @@ exit 0";
         // ------------------------------------------
         private void BtnCleanCreds_Click(object sender, RoutedEventArgs e)
         {
-            var result = MessageBox.Show(
+            var result = ToolboxDialog.Show(
                 "This will delete your stored Xbox Live credentials and MCC webcache files.\n\nMake sure MCC is closed before continuing.\n\nProceed?",
                 "Confirm -- Halo MCC Toolbox",
                 MessageBoxButton.YesNo,
@@ -2124,7 +2343,7 @@ exit 0";
                     AppendLog("[DONE]", "Cleanup complete! Restart MCC and sign in again.", "#39FF14");
                     SetStatus("Cleanup complete.", "#39FF14");
                     Dispatcher.Invoke(() =>
-                        MessageBox.Show("Cleanup complete!\n\nXBL credentials and webcache have been cleared.\nRestart Halo MCC and sign in again.",
+                        ToolboxDialog.Show("Cleanup complete!\n\nXBL credentials and webcache have been cleared.\nRestart Halo MCC and sign in again.",
                             "Done -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Information));
                 }
                 catch (Exception ex)
@@ -2174,12 +2393,12 @@ echo All tasks complete.
                           $"{eacInMcc}\n\n" +
                           "Make sure your MCC installation path is set correctly.";
                 AppendLog("[ERROR]", "EasyAntiCheat_EOS_Setup.exe not found.", "#FF2D55");
-                MessageBox.Show(msg, "EAC Not Found -- Halo MCC Toolbox",
+                ToolboxDialog.Show(msg, "EAC Not Found -- Halo MCC Toolbox",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            var confirm = MessageBox.Show(
+            var confirm = ToolboxDialog.Show(
                 "This will launch the EasyAntiCheat EOS setup tool.\n\n" +
                 "When it opens:\n" +
                 "  1. Click  \"Repair Service\"\n" +
@@ -2215,8 +2434,134 @@ echo All tasks complete.
             {
                 AppendLog("[ERROR]", $"Failed to launch EAC setup: {ex.Message}", "#FF2D55");
                 SetStatus("Failed to launch EAC setup.", "#FF2D55");
-                MessageBox.Show($"Could not launch EasyAntiCheat EOS setup:\n\n{ex.Message}",
+                ToolboxDialog.Show($"Could not launch EasyAntiCheat EOS setup:\n\n{ex.Message}",
                     "Error -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        // ------------------------------------------
+        // TOOL: Repair MCC audio device selection
+        // ------------------------------------------
+        private void BtnRepairAudioDevices_Click(object sender, RoutedEventArgs e)
+        {
+            var mccProcesses = Process.GetProcessesByName("MCC-Win64-Shipping");
+            var isMccRunning = mccProcesses.Length > 0;
+            foreach (var process in mccProcesses)
+                process.Dispose();
+
+            if (isMccRunning)
+            {
+                AppendLog("[AUDIO]", "Repair blocked because MCC is running.", "#FF6A00");
+                ToolboxDialog.Show(
+                    "Close Halo: The Master Chief Collection before running this fix.",
+                    "MCC Is Running -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var settingsPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "AppData", "LocalLow", "MCC", "Saved", "Config", "WindowsNoEditor",
+                "GameUserSettings.ini");
+
+            if (!File.Exists(settingsPath))
+            {
+                AppendLog("[ERROR]", $"MCC settings file not found: {settingsPath}", "#FF2D55");
+                ToolboxDialog.Show(
+                    $"MCC's settings file was not found:\n\n{settingsPath}\n\nLaunch MCC once, close it, and try again.",
+                    "Settings Not Found -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var confirm = ToolboxDialog.Show(
+                "This will back up MCC's settings and clear its saved audio output device. " +
+                "MCC will detect the current Windows output device the next time it launches.\n\n" +
+                "No other MCC settings will be changed.\n\nProceed?",
+                "Repair Audio Devices -- Halo MCC Toolbox",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information);
+
+            if (confirm != MessageBoxResult.Yes)
+            {
+                AppendLog("[AUDIO]", "Audio device repair cancelled by user.", "#4A5A6A");
+                return;
+            }
+
+            BtnRepairAudioDevices.IsEnabled = false;
+            SetStatus("Repairing MCC audio device settings...", "#FF6A00");
+
+            var attributes = File.GetAttributes(settingsPath);
+            var wasReadOnly = attributes.HasFlag(FileAttributes.ReadOnly);
+
+            try
+            {
+                string settings;
+                Encoding encoding;
+                using (var reader = new StreamReader(settingsPath, Encoding.UTF8, true))
+                {
+                    settings = reader.ReadToEnd();
+                    encoding = reader.CurrentEncoding;
+                }
+
+                var match = Regex.Match(settings, @"(?m)^AudioOutputDevice=.*$");
+                if (!match.Success)
+                    throw new InvalidDataException("AudioOutputDevice setting was not found.");
+
+                if (match.Value == "AudioOutputDevice=")
+                {
+                    AppendLog("[AUDIO]", "MCC audio output device is already reset.", "#39FF14");
+                    SetStatus("Audio device setting is already reset.", "#39FF14");
+                    ToolboxDialog.Show(
+                        "MCC's saved audio output device is already cleared. No changes were needed.",
+                        "Repair Audio Devices -- Halo MCC Toolbox",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    return;
+                }
+
+                var backupPath = settingsPath + ".audio-repair-" +
+                                 DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".bak";
+                File.Copy(settingsPath, backupPath, false);
+
+                if (wasReadOnly)
+                    File.SetAttributes(settingsPath, attributes & ~FileAttributes.ReadOnly);
+
+                var repairedSettings = settings.Remove(match.Index, match.Length)
+                                               .Insert(match.Index, "AudioOutputDevice=");
+                File.WriteAllText(settingsPath, repairedSettings, encoding);
+
+                AppendLog("[AUDIO]", "Cleared MCC's saved audio output device.", "#39FF14");
+                AppendLog("[BACKUP]", backupPath, "#4A5A6A");
+                SetStatus("MCC audio devices repaired.", "#39FF14");
+                ToolboxDialog.Show(
+                    "Audio device repair complete.\n\nLaunch MCC to test the fix.",
+                    "Done -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[ERROR]", $"Audio device repair failed: {ex.Message}", "#FF2D55");
+                SetStatus("Audio device repair failed.", "#FF2D55");
+                ToolboxDialog.Show(
+                    $"Could not repair MCC's audio device setting:\n\n{ex.Message}",
+                    "Error -- Halo MCC Toolbox",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                if (wasReadOnly && File.Exists(settingsPath))
+                {
+                    try { File.SetAttributes(settingsPath, File.GetAttributes(settingsPath) | FileAttributes.ReadOnly); }
+                    catch (Exception ex)
+                    { AppendLog("[WARN]", $"Could not restore read-only state: {ex.Message}", "#FF6A00"); }
+                }
+
+                BtnRepairAudioDevices.IsEnabled = true;
             }
         }
 
@@ -2224,6 +2569,7 @@ echo All tasks complete.
         {
             PollMccProcessesForRejoinCrashRestore();
             _rejoinCrashWatchTimer.Start();
+            RejoinFixDiagnostics.Info("restore", "MCC process watcher started; all exits during a saved match will arm crash restore.");
         }
 
         private void StopRejoinCrashWatcher()
@@ -2344,8 +2690,9 @@ echo All tasks complete.
             try { process.Exited -= MccProcess_Exited; } catch { }
             try { process.Dispose(); } catch { }
 
-            if (hasExitCode && exitCode == 0)
-                return;
+            RejoinFixDiagnostics.Warn(
+                "restore",
+                $"Observed MCC process exit{FormatExitCode(pid, hasExitCode ? exitCode : null)}; evaluating saved match for restore.");
 
             Dispatcher.InvokeAsync(() => ArmRejoinCrashRestoreFromMccExit(pid, hasExitCode ? exitCode : null));
         }
@@ -2358,17 +2705,17 @@ echo All tasks complete.
             var matchSession = TryLoadSavedRejoinMatchSession();
             if (matchSession is null)
             {
-                RejoinFixDiagnostics.Warn(
-                    "restore",
-                    $"MCC exited unexpectedly{FormatExitCode(pid, exitCode)}, but no saved matchmaking session was available.");
+            RejoinFixDiagnostics.Warn(
+                "restore",
+                $"MCC exited{FormatExitCode(pid, exitCode)}, but no saved matchmaking session was available.");
                 return;
             }
 
             _rejoinProxy.SetPendingCrashRestore(matchSession);
             RejoinFixDiagnostics.Warn(
                 "restore",
-                $"MCC exited unexpectedly{FormatExitCode(pid, exitCode)}; armed crash restore for {matchSession.TemplateName}/{matchSession.SessionShort}.");
-            AppendLog("[REJOIN]", $"MCC exited unexpectedly; armed crash restore for {matchSession.SessionShort}.", "#FF6A00");
+                $"MCC exited{FormatExitCode(pid, exitCode)}; armed crash restore for {matchSession.TemplateName}/{matchSession.SessionShort}.");
+            AppendLog("[REJOIN]", $"MCC exited; armed crash restore for {matchSession.SessionShort}.", "#FF6A00");
             SetStatus("Rejoin crash restore armed.", "#FF6A00");
             UpdateRejoinFixUi();
         }
@@ -2415,9 +2762,15 @@ echo All tasks complete.
 
             BtnRejoinFix.Content = isRunning ? "STOP SERVICES" : "START SERVICES";
             ChkRejoinRecovery.IsChecked = isRunning;
-            BtnNetworkStatsOverlayMove.Visibility = _networkStatsOverlayEnabled && isRunning
+            bool hasPlayerVisibleOverlay =
+                (_networkStatsOverlayEnabled && !_networkStatsObsOnly) ||
+                (_matchmakingWaitOverlayEnabled && !_matchmakingWaitObsOnly) ||
+                (_obsBrowserOverlaySessionStatsEnabled && !_sessionStatsObsOnly);
+            BtnNetworkStatsOverlayMove.Visibility =
+                hasPlayerVisibleOverlay
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            BtnNetworkStatsOverlayMove.IsEnabled = hasPlayerVisibleOverlay;
 
             if (isRunning && _rejoinWinHttpManualNeeded)
             {
@@ -2487,34 +2840,15 @@ echo All tasks complete.
 
         private void UpdateRejoinFirewallOptionAvailability(bool isRejoinFixRunning)
         {
-            ChkRejoinFixFirewall.IsEnabled = isRejoinFixRunning;
-            ChkRejoinFixFirewallMatchmaking.IsEnabled = isRejoinFixRunning;
-            ChkRejoinFixFirewall.Content = isRejoinFixRunning
-                ? RejoinFirewallCampaignLabel
-                : RejoinFirewallCampaignLabel + RejoinFirewallDisabledSuffix;
-            ChkRejoinFixFirewallMatchmaking.Content = isRejoinFixRunning
-                ? RejoinFirewallMatchmakingLabel
-                : RejoinFirewallMatchmakingLabel + RejoinFirewallDisabledSuffix;
-
-            string? disabledReason = isRejoinFixRunning
+            ChkRejoinFixFirewall.IsEnabled = true;
+            ChkRejoinFixFirewallMatchmaking.IsEnabled = true;
+            ChkRejoinFixFirewall.Content = RejoinFirewallCampaignLabel;
+            ChkRejoinFixFirewallMatchmaking.Content = RejoinFirewallMatchmakingLabel;
+            string? pendingReason = isRejoinFixRunning
                 ? null
-                : "Start Rejoin Fix before enabling firewall fixes.";
-            ChkRejoinFixFirewall.ToolTip = disabledReason;
-            ChkRejoinFixFirewallMatchmaking.ToolTip = disabledReason;
-            if (isRejoinFixRunning)
-                return;
-
-            bool hadSelectedFirewallMode = ChkRejoinFixFirewall.IsChecked == true
-                || ChkRejoinFixFirewallMatchmaking.IsChecked == true;
-
-            if (!hadSelectedFirewallMode)
-                return;
-
-            _rejoinCampaignFirewallApplying = false;
-            _rejoinCampaignFirewallEnabled = false;
-            DisableSteamFirewallAutoMode(logStatus: false);
-            SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
-            SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                : "Selection saved. This starts only when you click Start Services.";
+            ChkRejoinFixFirewall.ToolTip = pendingReason;
+            ChkRejoinFixFirewallMatchmaking.ToolTip = pendingReason;
         }
 
         private void UpdateRejoinFirewallStatus(string? overrideText = null, string? overrideColor = null)
@@ -2760,7 +3094,7 @@ echo All tasks complete.
             if (!IsRunningAsAdministrator())
             {
                 ChkSteamFirewallAuto.IsChecked = false;
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     "Auto mode needs the Toolbox to run as Administrator so it can toggle MCC firewall rules without interrupting matchmaking.\n\nThe Toolbox will relaunch as Administrator now.",
                     "MCC P2P Firewall Auto -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -2815,15 +3149,13 @@ echo All tasks complete.
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
+            SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+            App.SaveRejoinFirewallMode("Campaign");
             if (!_rejoinProxy.IsRunning)
             {
-                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
-                SetStatus("Start Rejoin Fix before enabling firewall fixes.", "#4A5A6A");
                 UpdateRejoinFixUi();
                 return;
             }
-
-            SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
             DisableSteamFirewallAutoMode(logStatus: false);
             _rejoinCampaignFirewallEnabled = false;
             UpdateRejoinFirewallStatus();
@@ -2848,6 +3180,8 @@ echo All tasks complete.
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
+            if (ChkRejoinFixFirewallMatchmaking.IsChecked != true)
+                App.SaveRejoinFirewallMode("Disabled");
             _rejoinCampaignFirewallEnabled = false;
             if (!_rejoinProxy.IsRunning)
             {
@@ -2863,15 +3197,13 @@ echo All tasks complete.
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
+            SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+            App.SaveRejoinFirewallMode("Matchmaking");
             if (!_rejoinProxy.IsRunning)
             {
-                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
-                SetStatus("Start Rejoin Fix before enabling firewall fixes.", "#4A5A6A");
                 UpdateRejoinFixUi();
                 return;
             }
-
-            SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
             _rejoinCampaignFirewallApplying = false;
             _rejoinCampaignFirewallEnabled = false;
             UpdateRejoinFirewallStatus();
@@ -2899,6 +3231,8 @@ echo All tasks complete.
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
+            if (ChkRejoinFixFirewall.IsChecked != true)
+                App.SaveRejoinFirewallMode("Disabled");
             if (!_rejoinProxy.IsRunning)
             {
                 UpdateRejoinFixUi();
@@ -3323,7 +3657,7 @@ echo All tasks complete.
             {
                 AppendLog("[ERROR]", $"MCC P2P firewall fix failed: {ex.Message}", "#FF2D55");
                 SetStatus("MCC P2P firewall fix failed.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"MCC P2P Firewall Fix could not be changed:\n\n{ex.Message}",
                     "MCC P2P Firewall Fix -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -3944,7 +4278,7 @@ try {{
             {
                 if (!IsRunningAsAdministrator())
                 {
-                    MessageBox.Show(
+                    ToolboxDialog.Show(
                         $"{requestedFeature} needs Advanced Features. The Toolbox will relaunch as Administrator and start them automatically.\n\nIf MCC is currently open, restart MCC afterward so traffic capture can take effect.",
                         "Advanced Features -- Halo MCC Toolbox",
                         MessageBoxButton.OK,
@@ -3969,7 +4303,7 @@ try {{
                 RejoinFixDiagnostics.Error("proxy", $"Automatic service activation for {requestedFeature} failed: {ex.Message}");
                 AppendLog("[ERROR]", $"Advanced Features failed: {ex.Message}", "#FF2D55");
                 SetStatus("Advanced Features failed to start.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Advanced Features could not start:\n\n{ex.Message}",
                     "Advanced Features -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -3996,7 +4330,7 @@ try {{
                 RejoinFixDiagnostics.Error("proxy", $"Automatic activation after elevation failed: {ex.Message}");
                 AppendLog("[ERROR]", $"Rejoin Fix failed: {ex.Message}", "#FF2D55");
                 SetStatus("Rejoin Fix failed to start.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Rejoin Fix could not start:\n\n{ex.Message}",
                     "Rejoin Fix -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -4024,16 +4358,13 @@ try {{
                     StopRejoinCrashWatcher();
                     _rejoinProxy.Stop();
                     StartNetworkStatsOverlay("");
+                    _obsOverlayServer.Stop();
                     _rejoinWinHttpManualNeeded = false;
                     DisableSteamFirewallAutoMode(logStatus: false);
                     if (rejoinFirewallWasEnabled)
                         await DisableRejoinFirewallRulesAsync(logStatus: false);
                     _rejoinCampaignFirewallApplying = false;
                     _rejoinCampaignFirewallEnabled = false;
-                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
-                    SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
-                    ChkNetworkStatsOverlay.IsChecked = false;
-                    ChkMatchmakingWaitOverlay.IsChecked = false;
                     AppendLog("[REJOIN]", "Advanced Features stopped.", "#C8D8E8");
                     SetStatus("Rejoin Fix stopped.", "#C8D8E8");
                 }
@@ -4041,7 +4372,7 @@ try {{
                 {
                     if (!IsRunningAsAdministrator())
                     {
-                        MessageBox.Show(
+                        ToolboxDialog.Show(
                             "Advanced Features need the Toolbox to run as Administrator so live MCC features can use the system proxy and firewall settings.\n\nIf MCC is currently open, restart it afterward so traffic capture can take effect.\n\nThe Toolbox will relaunch as Administrator now.",
                             "Advanced Features -- Halo MCC Toolbox",
                             MessageBoxButton.OK,
@@ -4065,7 +4396,7 @@ try {{
                 RejoinFixDiagnostics.Error("proxy", $"Activation failed: {ex.Message}");
                 AppendLog("[ERROR]", $"Rejoin Fix failed: {ex.Message}", "#FF2D55");
                 SetStatus("Rejoin Fix failed to start.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Rejoin Fix could not start:\n\n{ex.Message}",
                     "Rejoin Fix -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -4110,7 +4441,8 @@ try {{
 
         private void TxtMccPath_TextChanged(object sender, TextChangedEventArgs e)
         {
-            PlaylistsTab.SetMccInstallationPath(TxtMccPath.Text);
+            _playlistsMccPath = TxtMccPath.Text;
+            _playlistsTab?.SetMccInstallationPath(_playlistsMccPath);
             App.SaveMccInstallationPath(TxtMccPath.Text);
         }
 
@@ -4118,7 +4450,8 @@ try {{
         {
             var mccPath = TxtMccPath.Text.Trim();
             App.SaveMccInstallationPath(mccPath);
-            PlaylistsTab.SetMccInstallationPath(mccPath);
+            _playlistsMccPath = mccPath;
+            _playlistsTab?.SetMccInstallationPath(mccPath);
         }
 
         private void LoadMaps(string mccPath)
@@ -4267,7 +4600,7 @@ try {{
 
         private void ShowNoMapsLoadedMessage()
         {
-            MessageBox.Show("No maps loaded. Load your maps first.", "Halo MCC Toolbox",
+            ToolboxDialog.Show("No maps loaded. Load your maps first.", "Halo MCC Toolbox",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
@@ -4406,7 +4739,7 @@ try {{
 
             if (!Directory.Exists(tempDir))
             {
-                MessageBox.Show($"MCC Temporary folder not found:\n{tempDir}",
+                ToolboxDialog.Show($"MCC Temporary folder not found:\n{tempDir}",
                     "Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -4516,7 +4849,7 @@ try {{
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to parse carnage report:\n\n{ex.Message}\n\nPath: {xmlPath}",
+                ToolboxDialog.Show($"Failed to parse carnage report:\n\n{ex.Message}\n\nPath: {xmlPath}",
                     "Parse Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 AppendLog("[ERROR]", $"Carnage parse failed: {ex.Message}", "#FF2D55");
             }
@@ -4602,6 +4935,9 @@ try {{
         // ------------------------------------------
         // Halo Support session status check
         // ------------------------------------------
+        private Task EnsureSupportSessionCheckedAsync()
+            => _supportSessionCheckTask ??= CheckSupportSessionAsync();
+
         /// <summary>
         /// Checks whether a Halo Support / Microsoft Account session is stored in the
         /// persistent WebView2 profile and updates TxtSupportSessionStatus accordingly.
@@ -4610,8 +4946,9 @@ try {{
         ///   1. login.live.com  — look for RPSSecAuth / MSPAuth (MS Account "stay signed in")
         ///   2. support.halowaypoint.com — look for Zendesk session / auth cookies
         ///
-        /// The hidden WebView2 (HiddenCookieChecker) shares the same CoreWebView2Environment
-        /// as HaloReportWindow so it reads from the same on-disk cookie store.
+        /// The hidden WebView2 is created lazily and shares the same CoreWebView2Environment
+        /// as HaloReportWindow so it reads from the same on-disk cookie store. It must not
+        /// be declared in MainWindow.xaml because that can block the first render on Edge.
         /// </summary>
         private async Task CheckSupportSessionAsync()
         {
@@ -4626,10 +4963,11 @@ try {{
             {
                 // Initialize the hidden WebView2 with the shared persistent environment.
                 // EnsureCoreWebView2Async is idempotent — safe to call multiple times.
+                var checker = EnsureHiddenCookieChecker();
                 var env = await WebViewEnvironmentManager.GetOrCreateAsync();
-                await HiddenCookieChecker.EnsureCoreWebView2Async(env);
+                await checker.EnsureCoreWebView2Async(env);
 
-                var mgr = HiddenCookieChecker.CoreWebView2.CookieManager;
+                var mgr = checker.CoreWebView2.CookieManager;
 
                 // ── Signal 1: Microsoft Account "Stay signed in" cookies ──────────────
                 // RPSSecAuth and MSPAuth are the persistent auth cookies set by
@@ -4722,7 +5060,7 @@ try {{
             var suspect = _players.FirstOrDefault(p => p.IsSelected);
             if (suspect == null)
             {
-                MessageBox.Show("Please select the cheating player on the scoreboard first.",
+                ToolboxDialog.Show("Please select the cheating player on the scoreboard first.",
                     "No Player Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -4733,7 +5071,7 @@ try {{
 
             if (CboCheatType.SelectedIndex < 0)
             {
-                MessageBox.Show("Please select a cheat type.", "Missing Info",
+                ToolboxDialog.Show("Please select a cheat type.", "Missing Info",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -4866,7 +5204,7 @@ try {{
                         TxtReportStatus.Text       = $"Report built -- {theaterFiles.Length} theater file(s), {sizeTxt}.";
                         TxtReportStatus.Foreground = Brush("#39FF14");
 
-                        var open = MessageBox.Show(
+                        var open = ToolboxDialog.Show(
                             $"Report ZIP created!\n\n" +
                             $"  Suspect   : {suspect.Gamertag}\n" +
                             $"  Game      : {selectedGame}\n" +
@@ -4890,7 +5228,7 @@ try {{
                     {
                         TxtReportStatus.Text       = $"Failed: {ex.Message}";
                         TxtReportStatus.Foreground = Brush("#FF2D55");
-                        MessageBox.Show($"Failed to build report:\n\n{ex.Message}",
+                        ToolboxDialog.Show($"Failed to build report:\n\n{ex.Message}",
                             "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                     });
                 }
@@ -4911,13 +5249,13 @@ try {{
             var suspect = _players.FirstOrDefault(p => p.IsSelected);
             if (suspect == null)
             {
-                MessageBox.Show("Please select the cheating player on the scoreboard first.",
+                ToolboxDialog.Show("Please select the cheating player on the scoreboard first.",
                     "No Player Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             if (CboCheatType.SelectedIndex < 0)
             {
-                MessageBox.Show("Please select a cheat type first.",
+                ToolboxDialog.Show("Please select a cheat type first.",
                     "Missing Info", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -4953,7 +5291,11 @@ try {{
             };
             // Re-check session status when the support window closes so we reflect
             // any login that just happened (or a session that was revoked).
-            win.Closed += (_, _) => _ = CheckSupportSessionAsync();
+            win.Closed += (_, _) =>
+            {
+                _supportSessionCheckTask = null;
+                _ = EnsureSupportSessionCheckedAsync();
+            };
 
             win.Show();
             AppendLog("[REPORT]", "Opened Halo Support form for: " + suspect.Gamertag, "#00C8FF");
@@ -4979,6 +5321,8 @@ try {{
             StatsHttp.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0");
             StatsCurrentLobbyList.ItemsSource = _statsCurrentLobbyRows;
             StatsLobbyList.ItemsSource = _statsLobbyRows;
+            StatsSessionTimelineList.ItemsSource = _statsSessionGames;
+            StatsShowLobbyView();
 
             StatsLoadGamertag();
             StatsLoadPersistentCache();
@@ -5008,7 +5352,7 @@ try {{
                 return;
 
             StatsSetStatus($"Loading last game: {file.Name}");
-            Task.Run(() => StatsProcessFile(file.FullName, countTowardSession: false));
+            Task.Run(() => StatsTryProcessFile(file.FullName, countTowardSession: false));
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -5031,21 +5375,59 @@ try {{
 
         private void StatsResetBtn_Click(object sender, RoutedEventArgs e)
         {
-            lock (_statsLock) { _statsSession.Reset(); }
+            lock (_statsLock) { _statsSession.Reset(); _postGameRecap = null; }
+            Dispatcher.Invoke(() => _statsSessionGames.Clear());
             StatsRefreshSessionUI();
             StatsSetStatus("Session reset.");
+        }
+
+        private void StatsLobbyView_Click(object sender, RoutedEventArgs e) => StatsShowLobbyView();
+
+        private void StatsSessionView_Click(object sender, RoutedEventArgs e) => StatsShowSessionView();
+
+        private void StatsShowLobbyView()
+        {
+            if (StatsLobbyContent is null || StatsSessionContent is null) return;
+            StatsLobbyContent.Visibility = Visibility.Visible;
+            StatsSessionContent.Visibility = Visibility.Collapsed;
+            StatsLobbyViewBtn.IsChecked = true;
+            StatsSessionViewBtn.IsChecked = false;
+        }
+
+        private void StatsShowSessionView()
+        {
+            if (StatsLobbyContent is null || StatsSessionContent is null) return;
+            StatsLobbyContent.Visibility = Visibility.Collapsed;
+            StatsSessionContent.Visibility = Visibility.Visible;
+            StatsLobbyViewBtn.IsChecked = false;
+            StatsSessionViewBtn.IsChecked = true;
         }
 
         private void StatsScanBtn_Click(object sender, RoutedEventArgs e)
             => _ = StatsFetchLobbyStats();
 
-        private void StatsLastGameBtn_Click(object sender, RoutedEventArgs e)
+        private async void StatsLastGameBtn_Click(object sender, RoutedEventArgs e)
         {
             if (!Directory.Exists(StatsWatchPath)) { StatsSetStatus("MCC folder not found."); return; }
             var f = StatsLatestCarnageFile();
             if (f == null) { StatsSetStatus("No carnage report found."); return; }
+
+            StatsLastGameBtn.IsEnabled = false;
+            StatsLastGameBtn.Content = "↻ LOADING...";
             StatsSetStatus($"Loading {f.Name}…");
-            Task.Run(() => StatsProcessFile(f.FullName));
+            try
+            {
+                await Task.Run(() => StatsTryProcessFile(f.FullName));
+            }
+            catch (Exception ex)
+            {
+                StatsSetStatus($"Could not load {f.Name}: {ex.Message}");
+            }
+            finally
+            {
+                StatsLastGameBtn.Content = "↺ LAST GAME";
+                StatsLastGameBtn.IsEnabled = true;
+            }
         }
 
         private void StatsAutoToggle_Checked(object sender, RoutedEventArgs e)
@@ -5065,7 +5447,16 @@ try {{
         private void StatsObsOverlayToggle_Checked(object sender, RoutedEventArgs e)
         {
             _obsBrowserOverlayEnabled = true;
+            if (!_mainWindowInitialized)
+                return;
+
             App.SaveObsBrowserOverlayEnabled(true);
+            if (!_rejoinProxy.IsRunning)
+            {
+                StatsRefreshObsOverlayUi();
+                UpdateRejoinFixUi();
+                return;
+            }
             EnsureOverlaySourceServer(logStatus: true);
             StartNetworkStatsOverlay(GetNetworkStatsTargetIp(), GetNetworkStatsTargetServerInfo());
             StatsRefreshObsOverlayUi();
@@ -5076,6 +5467,9 @@ try {{
         private void StatsObsOverlayToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             _obsBrowserOverlayEnabled = false;
+            if (!_mainWindowInitialized)
+                return;
+
             App.SaveObsBrowserOverlayEnabled(false);
             if (!_networkStatsOverlayEnabled)
                 _obsOverlayServer.Stop();
@@ -5085,18 +5479,107 @@ try {{
             StatsSetStatus("OBS overlay stopped.");
         }
 
+        private void NetworkStatsObsOnlyToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            _networkStatsObsOnly = true;
+            if (!_mainWindowInitialized)
+                return;
+
+            App.SaveNetworkStatsObsOnlyEnabled(true);
+            CloseComponentOverlay(ref _gameNetworkStatsOverlay);
+            EnsureOverlaySourceServer(logStatus: false);
+            PublishObsOverlaySnapshot();
+            UpdateRejoinFixUi();
+            StatsSetStatus("Network Stats are now OBS-only.");
+        }
+
+        private void NetworkStatsObsOnlyToggle_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _networkStatsObsOnly = false;
+            if (!_mainWindowInitialized)
+                return;
+
+            App.SaveNetworkStatsObsOnlyEnabled(false);
+            if (_networkStatsOverlayEnabled && _rejoinProxy.IsRunning)
+                EnsureGameNetworkStatsOverlay();
+            PublishObsOverlaySnapshot();
+            UpdateRejoinFixUi();
+            StatsSetStatus("Network Stats are visible in-game and in OBS.");
+        }
+
+        private void MatchmakingWaitObsOnlyToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            _matchmakingWaitObsOnly = true;
+            if (!_mainWindowInitialized)
+                return;
+
+            App.SaveMatchmakingWaitObsOnlyEnabled(true);
+            CloseComponentOverlay(ref _matchmakingWaitOverlay);
+            EnsureOverlaySourceServer(logStatus: false);
+            PublishObsOverlaySnapshot();
+            UpdateRejoinFixUi();
+            StatsSetStatus("Matchmaking Wait is now OBS-only.");
+        }
+
+        private void MatchmakingWaitObsOnlyToggle_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _matchmakingWaitObsOnly = false;
+            if (!_mainWindowInitialized)
+                return;
+
+            App.SaveMatchmakingWaitObsOnlyEnabled(false);
+            if (_matchmakingWaitOverlayEnabled && _rejoinProxy.IsRunning)
+                EnsureGameNetworkStatsOverlay();
+            PublishObsOverlaySnapshot();
+            UpdateRejoinFixUi();
+            StatsSetStatus("Matchmaking Wait is visible in-game and in OBS.");
+        }
+
+        private void SessionStatsObsOnlyToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            _sessionStatsObsOnly = true;
+            if (!_mainWindowInitialized)
+                return;
+
+            App.SaveSessionStatsObsOnlyEnabled(true);
+            CloseComponentOverlay(ref _sessionStatsOverlay);
+            EnsureOverlaySourceServer(logStatus: false);
+            PublishObsOverlaySnapshot();
+            UpdateRejoinFixUi();
+            StatsSetStatus("Session Stats and medals are now OBS-only.");
+        }
+
+        private void SessionStatsObsOnlyToggle_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _sessionStatsObsOnly = false;
+            if (!_mainWindowInitialized)
+                return;
+
+            App.SaveSessionStatsObsOnlyEnabled(false);
+            if (_obsBrowserOverlaySessionStatsEnabled && _rejoinProxy.IsRunning)
+                EnsureGameNetworkStatsOverlay();
+            PublishObsOverlaySnapshot();
+            UpdateRejoinFixUi();
+            StatsSetStatus("Session Stats and medals are visible in-game and in OBS.");
+        }
+
         private void StatsObsSessionStatsToggle_Checked(object sender, RoutedEventArgs e)
         {
             _obsBrowserOverlaySessionStatsEnabled = true;
             App.SaveObsBrowserOverlaySessionStatsEnabled(true);
+            if (_mainWindowInitialized && _rejoinProxy.IsRunning)
+                EnsureGameNetworkStatsOverlay();
             PublishObsOverlaySnapshot();
+            UpdateRejoinFixUi();
         }
 
         private void StatsObsSessionStatsToggle_Unchecked(object sender, RoutedEventArgs e)
         {
             _obsBrowserOverlaySessionStatsEnabled = false;
             App.SaveObsBrowserOverlaySessionStatsEnabled(false);
+            CloseComponentOverlay(ref _sessionStatsOverlay);
             PublishObsOverlaySnapshot();
+            UpdateRejoinFixUi();
         }
 
         private void StatsHwAuthBtn_Click(object sender, RoutedEventArgs e)
@@ -5503,8 +5986,12 @@ try {{
 
             try
             {
-                Clipboard.SetText(_obsOverlayServer.Url);
-                StatsSetStatus($"OBS overlay URL copied: {_obsOverlayServer.Url}");
+                string urls = string.Join(Environment.NewLine,
+                    $"Network: {_obsOverlayServer.ComponentUrl("network", "obs")}",
+                    $"Wait: {_obsOverlayServer.ComponentUrl("wait", "obs")}",
+                    $"Session: {_obsOverlayServer.ComponentUrl("session", "obs")}");
+                Clipboard.SetText(urls);
+                StatsSetStatus("Three independent OBS overlay URLs copied.");
             }
             catch (Exception ex)
             {
@@ -5516,7 +6003,9 @@ try {{
         {
             StatsObsOverlayToggle.Content = "OBS BROWSER OVERLAY";
             StatsObsOverlayUrlLabel.Text = _obsBrowserOverlayEnabled
-                ? _obsOverlayServer.Url
+                ? $"NETWORK  {_obsOverlayServer.ComponentUrl("network", "obs")}\n" +
+                  $"WAIT     {_obsOverlayServer.ComponentUrl("wait", "obs")}\n" +
+                  $"SESSION  {_obsOverlayServer.ComponentUrl("session", "obs")}"
                 : "";
             StatsObsOverlayUrlLabel.Visibility = _obsBrowserOverlayEnabled
                 ? Visibility.Visible
@@ -5528,10 +6017,17 @@ try {{
 
         private void PublishObsOverlaySnapshot()
         {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(
+                    PublishObsOverlaySnapshot,
+                    System.Windows.Threading.DispatcherPriority.Background);
+                return;
+            }
+
             var snapshot = BuildObsOverlaySnapshot();
 
-            if ((_networkStatsOverlayEnabled || _matchmakingWaitOverlayEnabled) && _gameNetworkStatsOverlay is not null)
-                _gameNetworkStatsOverlay.UpdateSessionStats(snapshot);
+            foreach (var overlay in AllGameOverlays()) overlay.UpdateSessionStats(snapshot);
 
             if (_obsOverlayServer.IsRunning)
                 _obsOverlayServer.Update(snapshot);
@@ -5539,8 +6035,10 @@ try {{
 
         private ObsOverlaySnapshot BuildObsOverlaySnapshot()
         {
-            int wins, losses, games;
+            int wins, losses, games, bestSpree;
             long kills, deaths;
+            Dictionary<string, int> medals;
+            ObsPostGameRecap? recap;
             lock (_statsLock)
             {
                 wins = _statsSession.Wins;
@@ -5548,6 +6046,9 @@ try {{
                 games = _statsSession.GamesPlayed;
                 kills = _statsSession.Kills;
                 deaths = _statsSession.Deaths;
+                bestSpree = _statsSession.BestSpree;
+                medals = new Dictionary<string, int>(_statsSession.MultikillCounts, StringComparer.OrdinalIgnoreCase);
+                recap = _postGameRecap;
             }
 
             double kd = deaths > 0 ? (double)kills / deaths : kills;
@@ -5593,10 +6094,25 @@ try {{
                 Kills: kills,
                 Deaths: deaths,
                 SessionKd: kd.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                PostGameRecap: recap,
+                BestSpree: bestSpree,
+                DoubleKills: medals.GetValueOrDefault("Double Kill"),
+                TripleKills: medals.GetValueOrDefault("Triple Kill"),
+                Overkills: medals.GetValueOrDefault("Overkill"),
+                Killtaculars: medals.GetValueOrDefault("Killtacular"),
+                Killtrocities: medals.GetValueOrDefault("Killtrocity"),
+                Killimanjaros: medals.GetValueOrDefault("Killimanjaro"),
+                Killtastrophes: medals.GetValueOrDefault("Killtastrophe"),
+                Killpocalypses: medals.GetValueOrDefault("Killpocalypse"),
+                Killionaires: medals.GetValueOrDefault("Killionaire"),
                 OverlayLeftRatio: _lastOverlayRelativePlacement.X,
                 OverlayTopRatio: _lastOverlayRelativePlacement.Y,
                 OverlayWidthRatio: _lastOverlayRelativePlacement.Width,
-                OverlayHeightRatio: _lastOverlayRelativePlacement.Height);
+                OverlayHeightRatio: _lastOverlayRelativePlacement.Height,
+                OverlayPlacements: _componentOverlayRelativePlacements.ToDictionary(
+                    pair => pair.Key,
+                    pair => new ObsOverlayPlacement(pair.Value.X, pair.Value.Y, pair.Value.Width, pair.Value.Height),
+                    StringComparer.OrdinalIgnoreCase));
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -5605,6 +6121,19 @@ try {{
 
         private void StatsPopulationRefresh_Click(object sender, RoutedEventArgs e) =>
             _ = StatsRefreshMatchmakingPopulationAsync();
+
+        private void StatsPopulationGraph_Click(object sender, RoutedEventArgs e)
+        {
+            var graph = new PopulationHistoryWindow(_statsPopulationHistory) { Owner = this };
+            graph.ShowDialog();
+        }
+
+        private async void PopulationHistoryTimer_Tick(object? sender, EventArgs e)
+        {
+            // This timer deliberately runs for the lifetime of the app, independently
+            // of matchmaking, so an idle session continues building graph history.
+            await StatsRefreshMatchmakingPopulationAsync();
+        }
 
         private async void MatchmakingPopulationTimer_Tick(object? sender, EventArgs e)
         {
@@ -5660,7 +6189,7 @@ try {{
             try
             {
                 _lastFullPopulationRefreshUtc = DateTimeOffset.UtcNow;
-                var hoppers = PlaylistsTab.GetMatchmakingHoppers();
+                var hoppers = EnsurePlaylistsTab().GetMatchmakingHoppers();
                 if (hoppers.Count == 0)
                 {
                     StatsPopulationStatusLabel.Text = "No hopper names were found in MCC's playlist XML.";
@@ -5686,6 +6215,17 @@ try {{
                     }
                 });
                 var results = await Task.WhenAll(tasks);
+
+                var capturedAt = DateTimeOffset.Now;
+                foreach (var item in results.Where(x =>
+                    string.IsNullOrWhiteSpace(x.Result.Error) && x.Result.Population.HasValue))
+                {
+                    _statsPopulationHistory.Add(new MatchmakingPopulationSample(
+                        capturedAt,
+                        item.Hopper.HopperName,
+                        item.Hopper.DisplayName,
+                        item.Result.Population!.Value));
+                }
 
                 _statsPopulationRows.Clear();
                 foreach (var item in results
@@ -5720,7 +6260,13 @@ try {{
             string gt = StatsGamertagBox.Text.Trim();
             if (string.IsNullOrWhiteSpace(gt)) return;
             lock (_statsLock) { _statsGamertag = gt; _statsSession.Reset(); }
-            try { File.WriteAllText(StatsSettingsFile, gt); } catch { }
+            App.SavePlayerGamertag(gt);
+            try
+            {
+                Directory.CreateDirectory(App.ToolboxDataRoot);
+                File.WriteAllText(StatsSettingsFile, gt);
+            }
+            catch { }
             StatsRefreshSessionUI();
             StatsSetStatus("Fetching stats…");
             _ = StatsFetchStats(gt);
@@ -5743,26 +6289,15 @@ try {{
             }
         }
 
-        private Task<bool> StatsTrySilentTokenRefreshAsync()
-        {
-            string gt; lock (_statsLock) { gt = _statsGamertag; }
-            return Dispatcher.InvokeAsync(() =>
-            {
-                try
-                {
-                    var win = new StatsAuthWindow(gt, silent: true);
-                    bool ok = win.ShowDialog() == true && !string.IsNullOrEmpty(win.CapturedToken);
-                    if (ok) StatsApplyCapturedToken(win.CapturedToken!);
-                    return ok;
-                }
-                catch { return false; }
-            }).Task;
-        }
-
         // ── UI helpers ────────────────────────────────────────────────────────
 
-        private void StatsSetStatus(string msg) =>
-            Dispatcher.InvokeAsync(() => StatsStatusLabel.Text = msg);
+        private void StatsSetStatus(string msg)
+        {
+            if (Dispatcher.CheckAccess())
+                StatsStatusLabel.Text = msg;
+            else
+                _ = Dispatcher.InvokeAsync(() => StatsStatusLabel.Text = msg);
+        }
 
         private void StatsUpdateHwStatus()
         {
@@ -5786,23 +6321,58 @@ try {{
 
         private void StatsRefreshSessionUI()
         {
-            int wins, losses, games; long kills, deaths;
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(StatsRefreshSessionUI);
+                return;
+            }
+
+            int wins, losses, games, bestSpree, longestWinStreak;
+            long kills, deaths;
+            double bestGameKd;
+            string bestGameScore;
+            Dictionary<string, int> medals;
             lock (_statsLock)
             {
                 wins = _statsSession.Wins; losses = _statsSession.Losses;
                 games = _statsSession.GamesPlayed;
                 kills = _statsSession.Kills; deaths = _statsSession.Deaths;
+                bestSpree = _statsSession.BestSpree;
+                longestWinStreak = _statsSession.LongestWinStreak;
+                bestGameKd = _statsSession.BestGameKd;
+                bestGameScore = _statsSession.BestGameScore;
+                medals = new Dictionary<string, int>(_statsSession.MultikillCounts, StringComparer.OrdinalIgnoreCase);
             }
             double kdr = deaths > 0 ? (double)kills / deaths : kills;
-            Dispatcher.InvokeAsync(() =>
-            {
-                StatsWinsLabel.Text       = $"{wins}W";
-                StatsLossesLabel.Text     = $"{losses}L";
-                StatsGamesLabel.Text      = $"{games} game{(games == 1 ? "" : "s")}";
-                StatsSessionKdLabel.Text  = kdr.ToString("F2");
-                StatsSessionKillsLabel.Text = $"{kills:N0}K";
-                StatsSessionDeathsLabel.Text = $"{deaths:N0}D";
-            });
+            double winRate = games > 0 ? (double)wins / games * 100 : 0;
+
+            StatsWinsLabel.Text       = $"{wins}W";
+            StatsLossesLabel.Text     = $"{losses}L";
+            StatsGamesLabel.Text      = $"{games} game{(games == 1 ? "" : "s")}";
+            StatsSessionKdLabel.Text  = kdr.ToString("F2");
+            StatsSessionKillsLabel.Text = $"{kills:N0}K";
+            StatsSessionDeathsLabel.Text = $"{deaths:N0}D";
+
+            StatsDashboardRecord.Text = $"{wins}W–{losses}L";
+            StatsDashboardWinRate.Text = games > 0 ? $"{winRate:F0}%" : "—";
+            StatsDashboardKd.Text = games > 0 ? kdr.ToString("F2") : "—";
+            StatsDashboardKills.Text = kills.ToString("N0");
+            StatsDashboardDeaths.Text = deaths.ToString("N0");
+            StatsDashboardBestSpree.Text = bestSpree.ToString();
+            StatsDashboardBestGame.Text = string.IsNullOrEmpty(bestGameScore) ? "—" : bestGameScore;
+            StatsDashboardBestKd.Text = games > 0 ? bestGameKd.ToString("F2") : "—";
+            StatsDashboardWinStreak.Text = longestWinStreak.ToString();
+
+            StatsMedalDouble.Text = medals.GetValueOrDefault("Double Kill").ToString();
+            StatsMedalTriple.Text = medals.GetValueOrDefault("Triple Kill").ToString();
+            StatsMedalOverkill.Text = medals.GetValueOrDefault("Overkill").ToString();
+            StatsMedalKilltacular.Text = medals.GetValueOrDefault("Killtacular").ToString();
+            StatsMedalKilltrocity.Text = medals.GetValueOrDefault("Killtrocity").ToString();
+            StatsMedalKillimanjaro.Text = medals.GetValueOrDefault("Killimanjaro").ToString();
+            StatsMedalKilltastrophe.Text = medals.GetValueOrDefault("Killtastrophe").ToString();
+            StatsMedalKillpocalypse.Text = medals.GetValueOrDefault("Killpocalypse").ToString();
+            StatsMedalKillionaire.Text = medals.GetValueOrDefault("Killionaire").ToString();
+
             PublishObsOverlaySnapshot();
         }
 
@@ -6275,7 +6845,8 @@ try {{
         {
             while (true)
             {
-                try { StatsCheckForNewFile(); } catch { }
+                try { StatsCheckForNewFile(); }
+                catch (Exception ex) { StatsSetStatus($"Stat tracker error: {ex.Message}"); }
                 await Task.Delay(1000);
             }
         }
@@ -6287,8 +6858,13 @@ try {{
             if (f == null) return;
             string sig = StatsSig(f);
             bool changed;
-            lock (_statsLock) { changed = sig != _statsLastFileSig; if (changed) _statsLastFileSig = sig; }
-            if (changed) StatsProcessFile(f.FullName);
+            lock (_statsLock) { changed = sig != _statsLastFileSig; }
+            if (changed && StatsTryProcessFile(f.FullName))
+            {
+                // Do not acknowledge MCC's file until it has been parsed completely.
+                // MCC writes this XML progressively, so an early read can be incomplete.
+                lock (_statsLock) { _statsLastFileSig = sig; }
+            }
         }
 
         private static FileInfo? StatsLatestCarnageFile() =>
@@ -6300,7 +6876,20 @@ try {{
         private static string StatsSig(FileInfo f) =>
             $"{f.FullName}|{f.Length}|{f.LastWriteTime.Ticks}";
 
-        private void StatsProcessFile(string path, bool countTowardSession = true)
+        private bool StatsTryProcessFile(string path, bool countTowardSession = true)
+        {
+            try
+            {
+                return StatsProcessFile(path, countTowardSession);
+            }
+            catch (Exception ex)
+            {
+                StatsSetStatus($"Could not load {Path.GetFileName(path)}: {ex.Message}");
+                return false;
+            }
+        }
+
+        private bool StatsProcessFile(string path, bool countTowardSession = true)
         {
             XDocument? doc = null;
             for (int i = 0; i < 10; i++)
@@ -6313,7 +6902,11 @@ try {{
                 }
                 catch { Thread.Sleep(300); }
             }
-            if (doc == null) return;
+            if (doc == null)
+            {
+                StatsSetStatus($"Waiting for {Path.GetFileName(path)} to finish writing…");
+                return false;
+            }
 
             string? gId = doc.Descendants("GameUniqueId")
                 .Select(e =>
@@ -6323,10 +6916,22 @@ try {{
                 })
                 .FirstOrDefault(v => !string.IsNullOrEmpty(v));
 
-            if (string.IsNullOrEmpty(gId)) return;
+            if (string.IsNullOrEmpty(gId))
+            {
+                StatsSetStatus($"Waiting for {Path.GetFileName(path)} game ID…");
+                return false;
+            }
 
             var players = doc.Descendants("Player").ToList();
+            if (players.Count == 0)
+            {
+                StatsSetStatus($"Waiting for {Path.GetFileName(path)} player stats…");
+                return false;
+            }
             bool triggerLobby = false;
+            bool alreadyLogged = false;
+            bool playerFound = false;
+            string trackedGamertag = "";
 
             lock (_statsLock)
             {
@@ -6342,23 +6947,109 @@ try {{
                     .Select(StatsClonePlayerRow)
                     .ToList();
                 _statsLastGameServerText = _statsCurrentLobbyServerText;
-                if (countTowardSession && !_statsSession.ProcessedGameIds.Contains(gId))
+                trackedGamertag = _statsGamertag.Trim();
+                alreadyLogged = _statsSession.ProcessedGameIds.Contains(gId);
+                if (countTowardSession && !alreadyLogged)
                 {
                     var me = players.FirstOrDefault(p =>
-                        p.Attribute("mGamertagText")?.Value
-                         .Equals(_statsGamertag, StringComparison.OrdinalIgnoreCase) == true);
+                        string.Equals(
+                            p.Attribute("mGamertagText")?.Value?.Trim(),
+                            trackedGamertag,
+                            StringComparison.OrdinalIgnoreCase));
 
                     if (me != null)
                     {
+                        playerFound = true;
                         int.TryParse(me.Attribute("mStanding")?.Value, out int standing);
                         long.TryParse(me.Attribute("mKills")?.Value,   out long k);
                         long.TryParse(me.Attribute("mDeaths")?.Value,  out long d);
+                        int.TryParse(me.Attribute("mMostKillsInARow")?.Value, out int spree);
+                        var gameMedals = StatsReadMultikillCounts(me);
+                        string highestMultikill = StatsHighestMultikill(gameMedals);
+                        bool won = standing == 0;
+                        long previousKills = _statsSession.Kills;
+                        long previousDeaths = _statsSession.Deaths;
+                        int previousBestSpree = _statsSession.BestSpree;
+                        var previousMedals = new Dictionary<string, int>(
+                            _statsSession.MultikillCounts,
+                            StringComparer.OrdinalIgnoreCase);
 
                         _statsSession.Kills += k;
                         _statsSession.Deaths += d;
                         _statsSession.GamesPlayed++;
                         _statsSession.ProcessedGameIds.Add(gId);
-                        if (standing == 0) _statsSession.Wins++; else _statsSession.Losses++;
+                        if (won)
+                        {
+                            _statsSession.Wins++;
+                            _statsSession.CurrentWinStreak++;
+                            _statsSession.LongestWinStreak = Math.Max(
+                                _statsSession.LongestWinStreak,
+                                _statsSession.CurrentWinStreak);
+                        }
+                        else
+                        {
+                            _statsSession.Losses++;
+                            _statsSession.CurrentWinStreak = 0;
+                        }
+
+                        _statsSession.BestSpree = Math.Max(_statsSession.BestSpree, spree);
+                        double gameKd = d > 0 ? (double)k / d : k;
+                        if (gameKd > _statsSession.BestGameKd)
+                        {
+                            _statsSession.BestGameKd = gameKd;
+                            _statsSession.BestGameScore = $"{k}–{d}";
+                        }
+
+                        foreach (var medal in StatsMultikillMedals)
+                            _statsSession.MultikillCounts[medal.Name] += gameMedals.GetValueOrDefault(medal.Name);
+
+                        double previousSessionKd = previousDeaths > 0
+                            ? (double)previousKills / previousDeaths
+                            : previousKills;
+                        double newSessionKd = _statsSession.Deaths > 0
+                            ? (double)_statsSession.Kills / _statsSession.Deaths
+                            : _statsSession.Kills;
+                        var deltas = StatsMultikillMedals
+                            .Where(m => gameMedals.GetValueOrDefault(m.Name) > 0)
+                            .Select(m => new ObsMedalDelta(
+                                m.Name,
+                                previousMedals.GetValueOrDefault(m.Name),
+                                _statsSession.MultikillCounts.GetValueOrDefault(m.Name),
+                                gameMedals.GetValueOrDefault(m.Name)))
+                            .ToList();
+                        if (deltas.Count > 4)
+                        {
+                            var featured = deltas.Last();
+                            deltas = deltas.Take(3).ToList();
+                            if (!deltas.Any(d => d.Name == featured.Name)) deltas.Add(featured);
+                        }
+                        var capturedAt = DateTimeOffset.UtcNow;
+                        _postGameRecap = new ObsPostGameRecap(
+                            Won: won,
+                            Kills: k,
+                            Deaths: d,
+                            GameKd: gameKd.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                            PreviousSessionKd: previousSessionKd.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                            SessionKd: newSessionKd.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                            BestSpree: spree,
+                            IsNewBestSpree: spree > previousBestSpree,
+                            FeaturedMedal: highestMultikill,
+                            MedalDeltas: deltas,
+                            CapturedAtUtc: capturedAt,
+                            ExpiresAtUtc: capturedAt.AddSeconds(10));
+
+                        var gameRow = new StatsSessionGameRow
+                        {
+                            Game = _statsSession.GamesPlayed,
+                            Result = won ? "WIN" : "LOSS",
+                            KillsDeaths = $"{k}–{d}",
+                            KD = gameKd.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                            BestSpree = spree,
+                            HighestMultikill = highestMultikill,
+                            HighestMultikillIcon = StatsMultikillMedals
+                                .FirstOrDefault(m => m.Name == highestMultikill)?.ResourcePath ?? ""
+                        };
+                        Dispatcher.InvokeAsync(() => _statsSessionGames.Insert(0, gameRow));
 
                         StatsSetStatus($"Game logged — K:{k}  D:{d}  Standing:{standing}");
                         triggerLobby = _statsAutoPullLobby;
@@ -6371,7 +7062,45 @@ try {{
             Dispatcher.InvokeAsync(() => StatsLastGameServerLabel.Text = _statsLastGameServerText);
             if (!countTowardSession)
                 StatsSetStatus($"Loaded last game: {Path.GetFileName(path)}");
+            else if (alreadyLogged)
+                StatsSetStatus($"Last game is already logged: {Path.GetFileName(path)}");
+            else if (!playerFound)
+            {
+                string available = string.Join(", ", players
+                    .Select(p => p.Attribute("mGamertagText")?.Value?.Trim())
+                    .Where(name => !string.IsNullOrWhiteSpace(name)));
+                StatsSetStatus(string.IsNullOrWhiteSpace(trackedGamertag)
+                    ? "Set and apply your gamertag before loading the last game."
+                    : $"Gamertag '{trackedGamertag}' was not in the report. Players: {available}");
+                return false;
+            }
             if (triggerLobby) _ = StatsFetchLobbyStats();
+            return true;
+        }
+
+        private static Dictionary<string, int> StatsReadMultikillCounts(XElement player)
+        {
+            var byId = player.Descendants("Medal")
+                .Select(e => new
+                {
+                    Id = ParseInt(e.Attribute("mId")?.Value),
+                    Count = ParseInt(e.Attribute("mCount")?.Value)
+                })
+                .GroupBy(x => x.Id)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.Count));
+
+            return StatsMultikillMedals.ToDictionary(
+                medal => medal.Name,
+                medal => byId.GetValueOrDefault(medal.CarnageId),
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static string StatsHighestMultikill(IReadOnlyDictionary<string, int> counts)
+        {
+            for (int i = StatsMultikillMedals.Length - 1; i >= 0; i--)
+                if (counts.GetValueOrDefault(StatsMultikillMedals[i].Name) > 0)
+                    return StatsMultikillMedals[i].Name;
+            return "—";
         }
 
         private static List<StatsPlayerRow> StatsMatchLobbyRowsToPlayers(
@@ -6418,18 +7147,9 @@ try {{
                 {
                     lock (_statsLock) { _statsHwTokenExpired = true; }
                     StatsUpdateHwStatus();
-                    StatsSetStatus("HW token expired — attempting silent refresh…");
-                    bool refreshed = await StatsTrySilentTokenRefreshAsync();
-                    if (refreshed)
-                    {
-                        string newToken; lock (_statsLock) { newToken = _statsSpartanToken; }
-                        var (s2, _) = await StatsFetchHaloWaypointStats(gt, newToken);
-                        if (s2) return;
-                    }
-                    else
-                    {
-                        StatsSetStatus("Silent refresh failed — connect Halo Waypoint again.");
-                    }
+                    // Never create WebView2 from an automatic stats refresh. Starting
+                    // the auth browser can block WPF input for many seconds.
+                    StatsSetStatus("HW token expired — connect Halo Waypoint again.");
                 }
             }
 
@@ -6815,6 +7535,7 @@ try {{
 
         private void StatsLoadGamertag()
         {
+            _statsGamertag = App.LoadPlayerGamertag();
             if (File.Exists(StatsSettingsFile))
                 try { _statsGamertag = File.ReadAllText(StatsSettingsFile).Trim(); } catch { }
         }
@@ -6832,7 +7553,12 @@ try {{
 
         private void StatsSaveToken(string token)
         {
-            try { File.WriteAllText(StatsTokenFile, token); } catch { }
+            try
+            {
+                Directory.CreateDirectory(App.ToolboxDataRoot);
+                File.WriteAllText(StatsTokenFile, token);
+            }
+            catch { }
         }
 
         private void StatsLoadPersistentCache()
@@ -6859,7 +7585,12 @@ try {{
                     _statsCacheOrder.Enqueue(gt);
                 }
                 _statsPersistentCache[gt] = new StatsCachedPlayer { KD = kd, Totals = totals, Added = DateTime.Now };
-                try { File.WriteAllText(StatsCacheFile, JsonSerializer.Serialize(_statsPersistentCache)); } catch { }
+                try
+                {
+                    Directory.CreateDirectory(App.ToolboxDataRoot);
+                    File.WriteAllText(StatsCacheFile, JsonSerializer.Serialize(_statsPersistentCache));
+                }
+                catch { }
             }
         }
     }
@@ -6966,6 +7697,12 @@ try {{
             _ => "HIGH"
         };
     }
+
+    public sealed record MatchmakingPopulationSample(
+        DateTimeOffset CapturedAt,
+        string HopperName,
+        string DisplayName,
+        int Population);
 
     // Stats Tab — Player row (lobby ListView)
     // ------------------------------------------
@@ -7100,13 +7837,40 @@ try {{
         public int  GamesPlayed { get; set; }
         public long Kills       { get; set; }
         public long Deaths      { get; set; }
+        public int BestSpree { get; set; }
+        public double BestGameKd { get; set; }
+        public string BestGameScore { get; set; } = "";
+        public int CurrentWinStreak { get; set; }
+        public int LongestWinStreak { get; set; }
+        public Dictionary<string, int> MultikillCounts { get; } = new(
+            MainWindow.StatsMultikillMedals.ToDictionary(m => m.Name, _ => 0),
+            StringComparer.OrdinalIgnoreCase);
         public HashSet<string> ProcessedGameIds { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public void Reset()
         {
             Wins = 0; Losses = 0; GamesPlayed = 0; Kills = 0; Deaths = 0;
+            BestSpree = 0; BestGameKd = 0; BestGameScore = "";
+            CurrentWinStreak = 0; LongestWinStreak = 0;
+            foreach (var key in MultikillCounts.Keys.ToList()) MultikillCounts[key] = 0;
             ProcessedGameIds.Clear();
         }
+    }
+
+    internal sealed record StatsMedalDefinition(string Name, int CarnageId, string ResourcePath);
+
+    class StatsSessionGameRow
+    {
+        public int Game { get; init; }
+        public string Result { get; init; } = "";
+        public string KillsDeaths { get; init; } = "";
+        public string KD { get; init; } = "";
+        public int BestSpree { get; init; }
+        public string HighestMultikill { get; init; } = "";
+        public string HighestMultikillIcon { get; init; } = "";
+        public Brush ResultColor => Result == "WIN"
+            ? new SolidColorBrush(Color.FromRgb(0x39, 0xFF, 0x14))
+            : new SolidColorBrush(Color.FromRgb(0xFF, 0x2D, 0x55));
     }
 
     // ------------------------------------------
