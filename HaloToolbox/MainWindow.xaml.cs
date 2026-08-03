@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -93,9 +93,9 @@ namespace HaloToolbox
         private static readonly string StatsWatchPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low",
             @"MCC\Temporary");
-        private const string StatsSettingsFile = "stats_gamertag.txt";
-        private const string StatsCacheFile    = "stats_cache.json";
-        private const string StatsTokenFile    = "stats_token.txt";
+        private static readonly string StatsSettingsFile = App.StatsGamertagPath;
+        private static readonly string StatsCacheFile    = App.StatsCachePath;
+        private static readonly string StatsTokenFile    = App.StatsTokenPath;
 
         // ── Stats Tab — mutable state (always access under _statsLock) ───────
         private readonly object _statsLock = new();
@@ -179,6 +179,13 @@ namespace HaloToolbox
         private NetworkTrafficSnapshot? _lastNetworkTrafficSnapshot;
         private ObsPostGameRecap? _postGameRecap;
         private Task? _supportSessionCheckTask;
+        private Microsoft.Web.WebView2.Wpf.WebView2? _hiddenCookieChecker;
+        private Mods? _modsTab;
+        private Theater? _theaterTab;
+        private Playlists? _playlistsTab;
+        private string _playlistsMccPath = App.DefaultMccPath;
+        private bool _firstRenderInitializationQueued;
+        private bool _statsInitialized;
         private Rect _lastOverlayRelativePlacement = new(0, 0, 1280.0 / 1920.0, 170.0 / 1080.0);
         private readonly Dictionary<string, Rect> _componentOverlayRelativePlacements = new(StringComparer.OrdinalIgnoreCase);
         private GameServerInfo? _lastNetworkStatsRelayServer;
@@ -347,11 +354,22 @@ namespace HaloToolbox
                 Interval = TimeSpan.FromMinutes(1)
             };
             _populationHistoryTimer.Tick += PopulationHistoryTimer_Tick;
-            _populationHistoryTimer.Start();
             RestoreMainWindowPlacement();
             LoadSectionVisibility();
             _lastMainTab = MainTabs.SelectedItem as TabItem;
             MainTabs.SelectionChanged += MainTabs_SelectionChanged;
+            if (App.LoadSetupPreference("OpenLastSection", true))
+            {
+                string lastSection = App.LoadLastMainSection();
+                var savedTab = MainTabs.Items
+                    .OfType<TabItem>()
+                    .FirstOrDefault(tab => tab.Name == lastSection && tab.Visibility == Visibility.Visible);
+                if (savedTab is not null)
+                {
+                    MainTabs.SelectedItem = savedTab;
+                    _lastMainTab = savedTab;
+                }
+            }
             _networkStatsOverlayEnabled = App.LoadGameNetworkStatsOverlayEnabled();
             ChkNetworkStatsOverlay.IsChecked = _networkStatsOverlayEnabled;
             _matchmakingWaitOverlayEnabled = App.LoadMatchmakingWaitOverlayEnabled();
@@ -364,33 +382,11 @@ namespace HaloToolbox
                 ChkRejoinFixFirewallMatchmaking,
                 string.Equals(savedRejoinFirewallMode, "Matchmaking", StringComparison.OrdinalIgnoreCase));
             TxtMccPath.Text = App.LoadMccInstallationPath();
-            PlaylistsTab.SetMccInstallationPath(TxtMccPath.Text);
+            _playlistsMccPath = TxtMccPath.Text;
             TxtMccPath.TextChanged += TxtMccPath_TextChanged;
             MapList.ItemsSource = _maps;
             AppendLog("[INFO]", "Halo MCC Toolbox started. Made by The FFA Panda.", "#00C8FF");
-
-            // Load maps asynchronously in background after window renders
-            Loaded += async (_, _) =>
-            {
-                ThemeToggleBtn.Content = App.IsDarkTheme ? "☾" : "☀";
-
-                // Load maps asynchronously so UI isn't blocked
-                string mccPath = TxtMccPath.Text.Trim();
-                var defaultMapsPath = Path.Combine(mccPath, "halo3", "maps");
-                if (Directory.Exists(defaultMapsPath))
-                {
-                    AppendLog("[INFO]", "Loading maps in background...", "#4A5A6A");
-                    await Task.Run(() => LoadMaps(mccPath));
-                }
-
-                // Start stats monitoring loop after UI is fully initialized
-                _ = Task.Run(StatsMonitorLoop);
-            };
-
-            // Initialize the Stats tab (lobby monitor)
-            StatsInitialize();
-            StatsPopulationList.ItemsSource = _statsPopulationRows;
-            _ = StatsRefreshMatchmakingPopulationAsync();
+            ContentRendered += MainWindow_ContentRendered;
             _statsAutoPullLobby = App.LoadStatsAutoLobbyEnabled();
             StatsAutoToggle.IsChecked = _statsAutoPullLobby;
             StatsAutoToggle.Content = _statsAutoPullLobby ? "AUTO: ON" : "AUTO: OFF";
@@ -466,7 +462,7 @@ namespace HaloToolbox
                 {
                     _smartMatchWaitEstimate = estimate;
                     _smartMatchHopperPopulation = null;
-                    _smartMatchHopperDisplayName = PlaylistsTab.GetMatchmakingHoppers()
+                    _smartMatchHopperDisplayName = EnsurePlaylistsTab().GetMatchmakingHoppers()
                         .FirstOrDefault(x => x.HopperName.Equals(
                             estimate.HopperName,
                             StringComparison.OrdinalIgnoreCase))?.DisplayName
@@ -511,7 +507,8 @@ namespace HaloToolbox
                 Dispatcher.InvokeAsync(() => AppendLog("[NET]", status, "#4A5A6A"));
             Closed += (_, _) =>
             {
-                ModsTab.Dispose();
+                DisposeHiddenCookieChecker();
+                _modsTab?.Dispose();
                 StopRejoinCrashWatcher();
                 _gameServerConnectionMonitor.Dispose();
                 _networkStatsMonitor.Dispose();
@@ -541,6 +538,109 @@ namespace HaloToolbox
             Dispatcher.InvokeAsync(SynchronizeStartupFirewallStateAsync);
             Dispatcher.InvokeAsync(StartPendingRejoinFixAfterElevationAsync);
 
+        }
+
+        private void MainWindow_ContentRendered(object? sender, EventArgs e)
+        {
+            if (_firstRenderInitializationQueued)
+                return;
+
+            _firstRenderInitializationQueued = true;
+            ContentRendered -= MainWindow_ContentRendered;
+
+            // Input and rendering have higher dispatcher priority than these callbacks,
+            // so the first window can be dragged immediately while startup work is
+            // divided into small, independently scheduled pieces.
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(InitializeDeferredUiState));
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(StartDeferredBackgroundWork));
+        }
+
+        private void InitializeDeferredUiState()
+        {
+            ThemeToggleBtn.Content = App.IsDarkTheme ? "☾" : "☀";
+            EnsureStatsInitialized();
+            _populationHistoryTimer.Start();
+        }
+
+        private void StartDeferredBackgroundWork()
+        {
+            string mccPath = TxtMccPath.Text.Trim();
+            var defaultMapsPath = Path.Combine(mccPath, "halo3", "maps");
+            if (Directory.Exists(defaultMapsPath))
+            {
+                AppendLog("[INFO]", "Loading maps in background...", "#4A5A6A");
+                _ = Task.Run(() => LoadMaps(mccPath));
+            }
+
+            _ = Task.Run(StatsMonitorLoop);
+            _ = RefreshPopulationAfterFirstInputAsync();
+        }
+
+        private async Task RefreshPopulationAfterFirstInputAsync()
+        {
+            // Keep the initial dispatcher free long enough for the first drag/click.
+            await Task.Delay(1000);
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                return;
+
+            await StatsRefreshMatchmakingPopulationAsync();
+        }
+
+        private void EnsureStatsInitialized()
+        {
+            if (_statsInitialized)
+                return;
+
+            _statsInitialized = true;
+            StatsInitialize();
+            StatsPopulationList.ItemsSource = _statsPopulationRows;
+        }
+
+        private Mods EnsureModsTab()
+        {
+            if (_modsTab is not null)
+                return _modsTab;
+
+            _modsTab = new Mods();
+            ModsHost.Content = _modsTab;
+            return _modsTab;
+        }
+
+        private Theater EnsureTheaterTab()
+        {
+            if (_theaterTab is not null)
+                return _theaterTab;
+
+            _theaterTab = new Theater();
+            TheaterHost.Content = _theaterTab;
+            return _theaterTab;
+        }
+
+        private Playlists EnsurePlaylistsTab()
+        {
+            if (_playlistsTab is not null)
+                return _playlistsTab;
+
+            _playlistsTab = new Playlists();
+            _playlistsTab.SetMccInstallationPath(_playlistsMccPath);
+            PlaylistsHost.Content = _playlistsTab;
+            return _playlistsTab;
+        }
+
+        private void EnsureSelectedSectionContent(TabItem selectedTab)
+        {
+            if (ReferenceEquals(selectedTab, H3ModsSection))
+                EnsureModsTab();
+            else if (ReferenceEquals(selectedTab, TheaterSection))
+                EnsureTheaterTab();
+            else if (ReferenceEquals(selectedTab, PlaylistsSection))
+                EnsurePlaylistsTab();
+            else if (ReferenceEquals(selectedTab, StatsSection))
+                EnsureStatsInitialized();
         }
 
         // ------------------------------------------
@@ -637,12 +737,15 @@ namespace HaloToolbox
 
             // WebView2 profile startup can briefly occupy the WPF UI thread. Keep it
             // out of the application launch path and initialize it only when needed.
-            if (ReferenceEquals(selectedTab, ReportSection))
+            if (_mainWindowInitialized && ReferenceEquals(selectedTab, ReportSection))
                 _ = EnsureSupportSessionCheckedAsync();
 
             if (!ReferenceEquals(selectedTab, H3ModsSection) || IsRunningAsAdministrator())
             {
+                EnsureSelectedSectionContent(selectedTab);
                 _lastMainTab = selectedTab;
+                if (App.LoadSetupPreference("OpenLastSection", true))
+                    App.SaveLastMainSection(selectedTab.Name);
                 return;
             }
 
@@ -651,7 +754,7 @@ namespace HaloToolbox
             MainTabs.SelectedItem = _lastMainTab ?? ToolsSection;
             _restoringMainTabSelection = false;
 
-            var result = MessageBox.Show(
+            var result = ToolboxDialog.Show(
                 "Mods requires the Toolbox to run as Administrator.\n\nRelaunch as Administrator now?",
                 "Mods -- Halo MCC Toolbox",
                 MessageBoxButton.YesNo,
@@ -672,7 +775,7 @@ namespace HaloToolbox
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Could not relaunch the Toolbox as Administrator.\n\n{ex.Message}",
                     "Mods -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -1065,8 +1168,6 @@ namespace HaloToolbox
 
         private void EnsureGameNetworkStatsOverlay()
         {
-            EnsureOverlaySourceServer(logStatus: false);
-
             if (_networkStatsOverlayEnabled && !_networkStatsObsOnly && _gameNetworkStatsOverlay is null)
                 _gameNetworkStatsOverlay = CreateComponentOverlay("network");
             else if ((!_networkStatsOverlayEnabled || _networkStatsObsOnly) && _gameNetworkStatsOverlay is not null)
@@ -1093,8 +1194,12 @@ namespace HaloToolbox
 
         private GameNetworkStatsOverlayWindow CreateComponentOverlay(string component)
         {
-            var overlay = new GameNetworkStatsOverlayWindow(component) { Owner = this };
-            overlay.SetOverlaySource(_obsOverlayServer.ComponentUrl(component));
+            var overlay = new GameNetworkStatsOverlayWindow(
+                component,
+                App.LoadGameOverlayVisualStyle(component))
+            {
+                Owner = this
+            };
             overlay.RelativePlacementChanged += (_, placement) =>
                 ComponentOverlay_RelativePlacementChanged(component, placement);
             overlay.Closed += (_, _) =>
@@ -1252,6 +1357,9 @@ namespace HaloToolbox
         private void BtnNetworkStatsOverlayMove_Click(object sender, RoutedEventArgs e)
         {
             _networkStatsOverlayMoveEnabled = !_networkStatsOverlayMoveEnabled;
+            if (_networkStatsOverlayMoveEnabled)
+                EnsureGameNetworkStatsOverlay();
+
             foreach (var overlay in AllGameOverlays()) overlay.SetMoveMode(_networkStatsOverlayMoveEnabled);
             BtnNetworkStatsOverlayMove.Content = _networkStatsOverlayMoveEnabled
                 ? "FINISH"
@@ -1262,6 +1370,9 @@ namespace HaloToolbox
                     ? "Overlay drag mode enabled. Drag the overlay, then finish repositioning."
                     : "Overlay drag mode disabled; overlay is click-through.",
                 _networkStatsOverlayMoveEnabled ? "#00C8FF" : "#C8D8E8");
+
+            if (!_networkStatsOverlayMoveEnabled && !_rejoinProxy.IsRunning)
+                CloseGameNetworkStatsOverlay();
         }
 
         private void BtnClearLog_Click(object sender, RoutedEventArgs e)
@@ -1612,7 +1723,7 @@ namespace HaloToolbox
                     Dispatcher.Invoke(() =>
                     {
                         SetStatus("Diagnostics ZIP created.", "#39FF14");
-                        var open = MessageBox.Show(
+                        var open = ToolboxDialog.Show(
                             $"Diagnostics ZIP created.\n\nSaved to:\n{zipPath}\n\nOpen containing folder?",
                             "Logs Exported -- Halo MCC Toolbox",
                             MessageBoxButton.YesNo,
@@ -1628,7 +1739,7 @@ namespace HaloToolbox
                     Dispatcher.Invoke(() =>
                     {
                         SetStatus("Failed to export diagnostics logs.", "#FF2D55");
-                        MessageBox.Show($"Failed to export logs:\n\n{ex.Message}",
+                        ToolboxDialog.Show($"Failed to export logs:\n\n{ex.Message}",
                             "Error -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Error);
                     });
                 }
@@ -1641,7 +1752,7 @@ namespace HaloToolbox
 
         private async void BtnRemoveToolboxTraces_Click(object sender, RoutedEventArgs e)
         {
-            var confirm = MessageBox.Show(
+            var confirm = ToolboxDialog.Show(
                 "This will remove Halo MCC Toolbox data from this PC:\n\n" +
                 "- Toolbox Local/Roaming AppData, including WebView2 logins and Rejoin Fix files\n" +
                 "- Toolbox registry settings\n" +
@@ -1670,7 +1781,7 @@ namespace HaloToolbox
                 AppendLog("[DONE]", "Toolbox trace cleanup complete. Restart the app to recreate fresh settings.", "#39FF14");
                 SetStatus("Toolbox traces removed.", "#39FF14");
 
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     "Halo MCC Toolbox traces were removed.\n\nRestart the app if you want to keep using it with fresh settings.",
                     "Toolbox Traces Removed -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -1680,7 +1791,7 @@ namespace HaloToolbox
             {
                 AppendLog("[ERROR]", $"Toolbox trace cleanup failed: {ex.Message}", "#FF2D55");
                 SetStatus("Toolbox trace cleanup failed.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Toolbox trace cleanup failed:\n\n{ex.Message}",
                     "Cleanup Failed -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -1810,14 +1921,40 @@ exit 0";
 
         private void DisposeHiddenCookieChecker()
         {
+            var checker = _hiddenCookieChecker;
+            if (checker is null)
+                return;
+
+            _hiddenCookieChecker = null;
             try
             {
-                HiddenCookieChecker.Dispose();
+                MainRootGrid.Children.Remove(checker);
+                checker.Dispose();
             }
             catch (Exception ex)
             {
                 AppendLog("[WARN]", $"Could not release WebView2 before cleanup: {ex.Message}", "#FF6A00");
             }
+        }
+
+        private Microsoft.Web.WebView2.Wpf.WebView2 EnsureHiddenCookieChecker()
+        {
+            if (_hiddenCookieChecker is not null)
+                return _hiddenCookieChecker;
+
+            // Keep WebView2 out of the startup visual tree. Constructing it from XAML
+            // can initialize Edge while the main window is rendering and block input.
+            var checker = new Microsoft.Web.WebView2.Wpf.WebView2
+            {
+                Width = 0,
+                Height = 0,
+                IsHitTestVisible = false,
+                Focusable = false
+            };
+            Grid.SetRowSpan(checker, 3);
+            MainRootGrid.Children.Add(checker);
+            _hiddenCookieChecker = checker;
+            return checker;
         }
 
         private bool ClearToolboxWinInetProxyIfPresent()
@@ -2100,7 +2237,7 @@ exit 0";
         // ------------------------------------------
         private void BtnCleanCreds_Click(object sender, RoutedEventArgs e)
         {
-            var result = MessageBox.Show(
+            var result = ToolboxDialog.Show(
                 "This will delete your stored Xbox Live credentials and MCC webcache files.\n\nMake sure MCC is closed before continuing.\n\nProceed?",
                 "Confirm -- Halo MCC Toolbox",
                 MessageBoxButton.YesNo,
@@ -2206,7 +2343,7 @@ exit 0";
                     AppendLog("[DONE]", "Cleanup complete! Restart MCC and sign in again.", "#39FF14");
                     SetStatus("Cleanup complete.", "#39FF14");
                     Dispatcher.Invoke(() =>
-                        MessageBox.Show("Cleanup complete!\n\nXBL credentials and webcache have been cleared.\nRestart Halo MCC and sign in again.",
+                        ToolboxDialog.Show("Cleanup complete!\n\nXBL credentials and webcache have been cleared.\nRestart Halo MCC and sign in again.",
                             "Done -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Information));
                 }
                 catch (Exception ex)
@@ -2256,12 +2393,12 @@ echo All tasks complete.
                           $"{eacInMcc}\n\n" +
                           "Make sure your MCC installation path is set correctly.";
                 AppendLog("[ERROR]", "EasyAntiCheat_EOS_Setup.exe not found.", "#FF2D55");
-                MessageBox.Show(msg, "EAC Not Found -- Halo MCC Toolbox",
+                ToolboxDialog.Show(msg, "EAC Not Found -- Halo MCC Toolbox",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            var confirm = MessageBox.Show(
+            var confirm = ToolboxDialog.Show(
                 "This will launch the EasyAntiCheat EOS setup tool.\n\n" +
                 "When it opens:\n" +
                 "  1. Click  \"Repair Service\"\n" +
@@ -2297,7 +2434,7 @@ echo All tasks complete.
             {
                 AppendLog("[ERROR]", $"Failed to launch EAC setup: {ex.Message}", "#FF2D55");
                 SetStatus("Failed to launch EAC setup.", "#FF2D55");
-                MessageBox.Show($"Could not launch EasyAntiCheat EOS setup:\n\n{ex.Message}",
+                ToolboxDialog.Show($"Could not launch EasyAntiCheat EOS setup:\n\n{ex.Message}",
                     "Error -- Halo MCC Toolbox", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -2315,7 +2452,7 @@ echo All tasks complete.
             if (isMccRunning)
             {
                 AppendLog("[AUDIO]", "Repair blocked because MCC is running.", "#FF6A00");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     "Close Halo: The Master Chief Collection before running this fix.",
                     "MCC Is Running -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -2331,7 +2468,7 @@ echo All tasks complete.
             if (!File.Exists(settingsPath))
             {
                 AppendLog("[ERROR]", $"MCC settings file not found: {settingsPath}", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"MCC's settings file was not found:\n\n{settingsPath}\n\nLaunch MCC once, close it, and try again.",
                     "Settings Not Found -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -2339,7 +2476,7 @@ echo All tasks complete.
                 return;
             }
 
-            var confirm = MessageBox.Show(
+            var confirm = ToolboxDialog.Show(
                 "This will back up MCC's settings and clear its saved audio output device. " +
                 "MCC will detect the current Windows output device the next time it launches.\n\n" +
                 "No other MCC settings will be changed.\n\nProceed?",
@@ -2377,7 +2514,7 @@ echo All tasks complete.
                 {
                     AppendLog("[AUDIO]", "MCC audio output device is already reset.", "#39FF14");
                     SetStatus("Audio device setting is already reset.", "#39FF14");
-                    MessageBox.Show(
+                    ToolboxDialog.Show(
                         "MCC's saved audio output device is already cleared. No changes were needed.",
                         "Repair Audio Devices -- Halo MCC Toolbox",
                         MessageBoxButton.OK,
@@ -2399,7 +2536,7 @@ echo All tasks complete.
                 AppendLog("[AUDIO]", "Cleared MCC's saved audio output device.", "#39FF14");
                 AppendLog("[BACKUP]", backupPath, "#4A5A6A");
                 SetStatus("MCC audio devices repaired.", "#39FF14");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     "Audio device repair complete.\n\nLaunch MCC to test the fix.",
                     "Done -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -2409,7 +2546,7 @@ echo All tasks complete.
             {
                 AppendLog("[ERROR]", $"Audio device repair failed: {ex.Message}", "#FF2D55");
                 SetStatus("Audio device repair failed.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Could not repair MCC's audio device setting:\n\n{ex.Message}",
                     "Error -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -2630,9 +2767,10 @@ echo All tasks complete.
                 (_matchmakingWaitOverlayEnabled && !_matchmakingWaitObsOnly) ||
                 (_obsBrowserOverlaySessionStatsEnabled && !_sessionStatsObsOnly);
             BtnNetworkStatsOverlayMove.Visibility =
-                hasPlayerVisibleOverlay && isRunning
+                hasPlayerVisibleOverlay
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            BtnNetworkStatsOverlayMove.IsEnabled = hasPlayerVisibleOverlay;
 
             if (isRunning && _rejoinWinHttpManualNeeded)
             {
@@ -2956,7 +3094,7 @@ echo All tasks complete.
             if (!IsRunningAsAdministrator())
             {
                 ChkSteamFirewallAuto.IsChecked = false;
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     "Auto mode needs the Toolbox to run as Administrator so it can toggle MCC firewall rules without interrupting matchmaking.\n\nThe Toolbox will relaunch as Administrator now.",
                     "MCC P2P Firewall Auto -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -3519,7 +3657,7 @@ echo All tasks complete.
             {
                 AppendLog("[ERROR]", $"MCC P2P firewall fix failed: {ex.Message}", "#FF2D55");
                 SetStatus("MCC P2P firewall fix failed.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"MCC P2P Firewall Fix could not be changed:\n\n{ex.Message}",
                     "MCC P2P Firewall Fix -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -4140,7 +4278,7 @@ try {{
             {
                 if (!IsRunningAsAdministrator())
                 {
-                    MessageBox.Show(
+                    ToolboxDialog.Show(
                         $"{requestedFeature} needs Advanced Features. The Toolbox will relaunch as Administrator and start them automatically.\n\nIf MCC is currently open, restart MCC afterward so traffic capture can take effect.",
                         "Advanced Features -- Halo MCC Toolbox",
                         MessageBoxButton.OK,
@@ -4165,7 +4303,7 @@ try {{
                 RejoinFixDiagnostics.Error("proxy", $"Automatic service activation for {requestedFeature} failed: {ex.Message}");
                 AppendLog("[ERROR]", $"Advanced Features failed: {ex.Message}", "#FF2D55");
                 SetStatus("Advanced Features failed to start.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Advanced Features could not start:\n\n{ex.Message}",
                     "Advanced Features -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -4192,7 +4330,7 @@ try {{
                 RejoinFixDiagnostics.Error("proxy", $"Automatic activation after elevation failed: {ex.Message}");
                 AppendLog("[ERROR]", $"Rejoin Fix failed: {ex.Message}", "#FF2D55");
                 SetStatus("Rejoin Fix failed to start.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Rejoin Fix could not start:\n\n{ex.Message}",
                     "Rejoin Fix -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -4234,7 +4372,7 @@ try {{
                 {
                     if (!IsRunningAsAdministrator())
                     {
-                        MessageBox.Show(
+                        ToolboxDialog.Show(
                             "Advanced Features need the Toolbox to run as Administrator so live MCC features can use the system proxy and firewall settings.\n\nIf MCC is currently open, restart it afterward so traffic capture can take effect.\n\nThe Toolbox will relaunch as Administrator now.",
                             "Advanced Features -- Halo MCC Toolbox",
                             MessageBoxButton.OK,
@@ -4258,7 +4396,7 @@ try {{
                 RejoinFixDiagnostics.Error("proxy", $"Activation failed: {ex.Message}");
                 AppendLog("[ERROR]", $"Rejoin Fix failed: {ex.Message}", "#FF2D55");
                 SetStatus("Rejoin Fix failed to start.", "#FF2D55");
-                MessageBox.Show(
+                ToolboxDialog.Show(
                     $"Rejoin Fix could not start:\n\n{ex.Message}",
                     "Rejoin Fix -- Halo MCC Toolbox",
                     MessageBoxButton.OK,
@@ -4303,7 +4441,8 @@ try {{
 
         private void TxtMccPath_TextChanged(object sender, TextChangedEventArgs e)
         {
-            PlaylistsTab.SetMccInstallationPath(TxtMccPath.Text);
+            _playlistsMccPath = TxtMccPath.Text;
+            _playlistsTab?.SetMccInstallationPath(_playlistsMccPath);
             App.SaveMccInstallationPath(TxtMccPath.Text);
         }
 
@@ -4311,7 +4450,8 @@ try {{
         {
             var mccPath = TxtMccPath.Text.Trim();
             App.SaveMccInstallationPath(mccPath);
-            PlaylistsTab.SetMccInstallationPath(mccPath);
+            _playlistsMccPath = mccPath;
+            _playlistsTab?.SetMccInstallationPath(mccPath);
         }
 
         private void LoadMaps(string mccPath)
@@ -4460,7 +4600,7 @@ try {{
 
         private void ShowNoMapsLoadedMessage()
         {
-            MessageBox.Show("No maps loaded. Load your maps first.", "Halo MCC Toolbox",
+            ToolboxDialog.Show("No maps loaded. Load your maps first.", "Halo MCC Toolbox",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
@@ -4599,7 +4739,7 @@ try {{
 
             if (!Directory.Exists(tempDir))
             {
-                MessageBox.Show($"MCC Temporary folder not found:\n{tempDir}",
+                ToolboxDialog.Show($"MCC Temporary folder not found:\n{tempDir}",
                     "Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -4709,7 +4849,7 @@ try {{
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to parse carnage report:\n\n{ex.Message}\n\nPath: {xmlPath}",
+                ToolboxDialog.Show($"Failed to parse carnage report:\n\n{ex.Message}\n\nPath: {xmlPath}",
                     "Parse Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 AppendLog("[ERROR]", $"Carnage parse failed: {ex.Message}", "#FF2D55");
             }
@@ -4806,8 +4946,9 @@ try {{
         ///   1. login.live.com  — look for RPSSecAuth / MSPAuth (MS Account "stay signed in")
         ///   2. support.halowaypoint.com — look for Zendesk session / auth cookies
         ///
-        /// The hidden WebView2 (HiddenCookieChecker) shares the same CoreWebView2Environment
-        /// as HaloReportWindow so it reads from the same on-disk cookie store.
+        /// The hidden WebView2 is created lazily and shares the same CoreWebView2Environment
+        /// as HaloReportWindow so it reads from the same on-disk cookie store. It must not
+        /// be declared in MainWindow.xaml because that can block the first render on Edge.
         /// </summary>
         private async Task CheckSupportSessionAsync()
         {
@@ -4822,10 +4963,11 @@ try {{
             {
                 // Initialize the hidden WebView2 with the shared persistent environment.
                 // EnsureCoreWebView2Async is idempotent — safe to call multiple times.
+                var checker = EnsureHiddenCookieChecker();
                 var env = await WebViewEnvironmentManager.GetOrCreateAsync();
-                await HiddenCookieChecker.EnsureCoreWebView2Async(env);
+                await checker.EnsureCoreWebView2Async(env);
 
-                var mgr = HiddenCookieChecker.CoreWebView2.CookieManager;
+                var mgr = checker.CoreWebView2.CookieManager;
 
                 // ── Signal 1: Microsoft Account "Stay signed in" cookies ──────────────
                 // RPSSecAuth and MSPAuth are the persistent auth cookies set by
@@ -4918,7 +5060,7 @@ try {{
             var suspect = _players.FirstOrDefault(p => p.IsSelected);
             if (suspect == null)
             {
-                MessageBox.Show("Please select the cheating player on the scoreboard first.",
+                ToolboxDialog.Show("Please select the cheating player on the scoreboard first.",
                     "No Player Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -4929,7 +5071,7 @@ try {{
 
             if (CboCheatType.SelectedIndex < 0)
             {
-                MessageBox.Show("Please select a cheat type.", "Missing Info",
+                ToolboxDialog.Show("Please select a cheat type.", "Missing Info",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -5062,7 +5204,7 @@ try {{
                         TxtReportStatus.Text       = $"Report built -- {theaterFiles.Length} theater file(s), {sizeTxt}.";
                         TxtReportStatus.Foreground = Brush("#39FF14");
 
-                        var open = MessageBox.Show(
+                        var open = ToolboxDialog.Show(
                             $"Report ZIP created!\n\n" +
                             $"  Suspect   : {suspect.Gamertag}\n" +
                             $"  Game      : {selectedGame}\n" +
@@ -5086,7 +5228,7 @@ try {{
                     {
                         TxtReportStatus.Text       = $"Failed: {ex.Message}";
                         TxtReportStatus.Foreground = Brush("#FF2D55");
-                        MessageBox.Show($"Failed to build report:\n\n{ex.Message}",
+                        ToolboxDialog.Show($"Failed to build report:\n\n{ex.Message}",
                             "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                     });
                 }
@@ -5107,13 +5249,13 @@ try {{
             var suspect = _players.FirstOrDefault(p => p.IsSelected);
             if (suspect == null)
             {
-                MessageBox.Show("Please select the cheating player on the scoreboard first.",
+                ToolboxDialog.Show("Please select the cheating player on the scoreboard first.",
                     "No Player Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             if (CboCheatType.SelectedIndex < 0)
             {
-                MessageBox.Show("Please select a cheat type first.",
+                ToolboxDialog.Show("Please select a cheat type first.",
                     "Missing Info", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -5210,7 +5352,7 @@ try {{
                 return;
 
             StatsSetStatus($"Loading last game: {file.Name}");
-            Task.Run(() => StatsProcessFile(file.FullName, countTowardSession: false));
+            Task.Run(() => StatsTryProcessFile(file.FullName, countTowardSession: false));
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -5264,13 +5406,28 @@ try {{
         private void StatsScanBtn_Click(object sender, RoutedEventArgs e)
             => _ = StatsFetchLobbyStats();
 
-        private void StatsLastGameBtn_Click(object sender, RoutedEventArgs e)
+        private async void StatsLastGameBtn_Click(object sender, RoutedEventArgs e)
         {
             if (!Directory.Exists(StatsWatchPath)) { StatsSetStatus("MCC folder not found."); return; }
             var f = StatsLatestCarnageFile();
             if (f == null) { StatsSetStatus("No carnage report found."); return; }
+
+            StatsLastGameBtn.IsEnabled = false;
+            StatsLastGameBtn.Content = "↻ LOADING...";
             StatsSetStatus($"Loading {f.Name}…");
-            Task.Run(() => StatsProcessFile(f.FullName));
+            try
+            {
+                await Task.Run(() => StatsTryProcessFile(f.FullName));
+            }
+            catch (Exception ex)
+            {
+                StatsSetStatus($"Could not load {f.Name}: {ex.Message}");
+            }
+            finally
+            {
+                StatsLastGameBtn.Content = "↺ LAST GAME";
+                StatsLastGameBtn.IsEnabled = true;
+            }
         }
 
         private void StatsAutoToggle_Checked(object sender, RoutedEventArgs e)
@@ -5860,6 +6017,14 @@ try {{
 
         private void PublishObsOverlaySnapshot()
         {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(
+                    PublishObsOverlaySnapshot,
+                    System.Windows.Threading.DispatcherPriority.Background);
+                return;
+            }
+
             var snapshot = BuildObsOverlaySnapshot();
 
             foreach (var overlay in AllGameOverlays()) overlay.UpdateSessionStats(snapshot);
@@ -6024,7 +6189,7 @@ try {{
             try
             {
                 _lastFullPopulationRefreshUtc = DateTimeOffset.UtcNow;
-                var hoppers = PlaylistsTab.GetMatchmakingHoppers();
+                var hoppers = EnsurePlaylistsTab().GetMatchmakingHoppers();
                 if (hoppers.Count == 0)
                 {
                     StatsPopulationStatusLabel.Text = "No hopper names were found in MCC's playlist XML.";
@@ -6095,7 +6260,13 @@ try {{
             string gt = StatsGamertagBox.Text.Trim();
             if (string.IsNullOrWhiteSpace(gt)) return;
             lock (_statsLock) { _statsGamertag = gt; _statsSession.Reset(); }
-            try { File.WriteAllText(StatsSettingsFile, gt); } catch { }
+            App.SavePlayerGamertag(gt);
+            try
+            {
+                Directory.CreateDirectory(App.ToolboxDataRoot);
+                File.WriteAllText(StatsSettingsFile, gt);
+            }
+            catch { }
             StatsRefreshSessionUI();
             StatsSetStatus("Fetching stats…");
             _ = StatsFetchStats(gt);
@@ -6118,26 +6289,15 @@ try {{
             }
         }
 
-        private Task<bool> StatsTrySilentTokenRefreshAsync()
-        {
-            string gt; lock (_statsLock) { gt = _statsGamertag; }
-            return Dispatcher.InvokeAsync(() =>
-            {
-                try
-                {
-                    var win = new StatsAuthWindow(gt, silent: true);
-                    bool ok = win.ShowDialog() == true && !string.IsNullOrEmpty(win.CapturedToken);
-                    if (ok) StatsApplyCapturedToken(win.CapturedToken!);
-                    return ok;
-                }
-                catch { return false; }
-            }).Task;
-        }
-
         // ── UI helpers ────────────────────────────────────────────────────────
 
-        private void StatsSetStatus(string msg) =>
-            Dispatcher.InvokeAsync(() => StatsStatusLabel.Text = msg);
+        private void StatsSetStatus(string msg)
+        {
+            if (Dispatcher.CheckAccess())
+                StatsStatusLabel.Text = msg;
+            else
+                _ = Dispatcher.InvokeAsync(() => StatsStatusLabel.Text = msg);
+        }
 
         private void StatsUpdateHwStatus()
         {
@@ -6161,6 +6321,12 @@ try {{
 
         private void StatsRefreshSessionUI()
         {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(StatsRefreshSessionUI);
+                return;
+            }
+
             int wins, losses, games, bestSpree, longestWinStreak;
             long kills, deaths;
             double bestGameKd;
@@ -6179,35 +6345,34 @@ try {{
             }
             double kdr = deaths > 0 ? (double)kills / deaths : kills;
             double winRate = games > 0 ? (double)wins / games * 100 : 0;
-            Dispatcher.InvokeAsync(() =>
-            {
-                StatsWinsLabel.Text       = $"{wins}W";
-                StatsLossesLabel.Text     = $"{losses}L";
-                StatsGamesLabel.Text      = $"{games} game{(games == 1 ? "" : "s")}";
-                StatsSessionKdLabel.Text  = kdr.ToString("F2");
-                StatsSessionKillsLabel.Text = $"{kills:N0}K";
-                StatsSessionDeathsLabel.Text = $"{deaths:N0}D";
 
-                StatsDashboardRecord.Text = $"{wins}W–{losses}L";
-                StatsDashboardWinRate.Text = games > 0 ? $"{winRate:F0}%" : "—";
-                StatsDashboardKd.Text = games > 0 ? kdr.ToString("F2") : "—";
-                StatsDashboardKills.Text = kills.ToString("N0");
-                StatsDashboardDeaths.Text = deaths.ToString("N0");
-                StatsDashboardBestSpree.Text = bestSpree.ToString();
-                StatsDashboardBestGame.Text = string.IsNullOrEmpty(bestGameScore) ? "—" : bestGameScore;
-                StatsDashboardBestKd.Text = games > 0 ? bestGameKd.ToString("F2") : "—";
-                StatsDashboardWinStreak.Text = longestWinStreak.ToString();
+            StatsWinsLabel.Text       = $"{wins}W";
+            StatsLossesLabel.Text     = $"{losses}L";
+            StatsGamesLabel.Text      = $"{games} game{(games == 1 ? "" : "s")}";
+            StatsSessionKdLabel.Text  = kdr.ToString("F2");
+            StatsSessionKillsLabel.Text = $"{kills:N0}K";
+            StatsSessionDeathsLabel.Text = $"{deaths:N0}D";
 
-                StatsMedalDouble.Text = medals.GetValueOrDefault("Double Kill").ToString();
-                StatsMedalTriple.Text = medals.GetValueOrDefault("Triple Kill").ToString();
-                StatsMedalOverkill.Text = medals.GetValueOrDefault("Overkill").ToString();
-                StatsMedalKilltacular.Text = medals.GetValueOrDefault("Killtacular").ToString();
-                StatsMedalKilltrocity.Text = medals.GetValueOrDefault("Killtrocity").ToString();
-                StatsMedalKillimanjaro.Text = medals.GetValueOrDefault("Killimanjaro").ToString();
-                StatsMedalKilltastrophe.Text = medals.GetValueOrDefault("Killtastrophe").ToString();
-                StatsMedalKillpocalypse.Text = medals.GetValueOrDefault("Killpocalypse").ToString();
-                StatsMedalKillionaire.Text = medals.GetValueOrDefault("Killionaire").ToString();
-            });
+            StatsDashboardRecord.Text = $"{wins}W–{losses}L";
+            StatsDashboardWinRate.Text = games > 0 ? $"{winRate:F0}%" : "—";
+            StatsDashboardKd.Text = games > 0 ? kdr.ToString("F2") : "—";
+            StatsDashboardKills.Text = kills.ToString("N0");
+            StatsDashboardDeaths.Text = deaths.ToString("N0");
+            StatsDashboardBestSpree.Text = bestSpree.ToString();
+            StatsDashboardBestGame.Text = string.IsNullOrEmpty(bestGameScore) ? "—" : bestGameScore;
+            StatsDashboardBestKd.Text = games > 0 ? bestGameKd.ToString("F2") : "—";
+            StatsDashboardWinStreak.Text = longestWinStreak.ToString();
+
+            StatsMedalDouble.Text = medals.GetValueOrDefault("Double Kill").ToString();
+            StatsMedalTriple.Text = medals.GetValueOrDefault("Triple Kill").ToString();
+            StatsMedalOverkill.Text = medals.GetValueOrDefault("Overkill").ToString();
+            StatsMedalKilltacular.Text = medals.GetValueOrDefault("Killtacular").ToString();
+            StatsMedalKilltrocity.Text = medals.GetValueOrDefault("Killtrocity").ToString();
+            StatsMedalKillimanjaro.Text = medals.GetValueOrDefault("Killimanjaro").ToString();
+            StatsMedalKilltastrophe.Text = medals.GetValueOrDefault("Killtastrophe").ToString();
+            StatsMedalKillpocalypse.Text = medals.GetValueOrDefault("Killpocalypse").ToString();
+            StatsMedalKillionaire.Text = medals.GetValueOrDefault("Killionaire").ToString();
+
             PublishObsOverlaySnapshot();
         }
 
@@ -6680,7 +6845,8 @@ try {{
         {
             while (true)
             {
-                try { StatsCheckForNewFile(); } catch { }
+                try { StatsCheckForNewFile(); }
+                catch (Exception ex) { StatsSetStatus($"Stat tracker error: {ex.Message}"); }
                 await Task.Delay(1000);
             }
         }
@@ -6692,8 +6858,13 @@ try {{
             if (f == null) return;
             string sig = StatsSig(f);
             bool changed;
-            lock (_statsLock) { changed = sig != _statsLastFileSig; if (changed) _statsLastFileSig = sig; }
-            if (changed) StatsProcessFile(f.FullName);
+            lock (_statsLock) { changed = sig != _statsLastFileSig; }
+            if (changed && StatsTryProcessFile(f.FullName))
+            {
+                // Do not acknowledge MCC's file until it has been parsed completely.
+                // MCC writes this XML progressively, so an early read can be incomplete.
+                lock (_statsLock) { _statsLastFileSig = sig; }
+            }
         }
 
         private static FileInfo? StatsLatestCarnageFile() =>
@@ -6705,7 +6876,20 @@ try {{
         private static string StatsSig(FileInfo f) =>
             $"{f.FullName}|{f.Length}|{f.LastWriteTime.Ticks}";
 
-        private void StatsProcessFile(string path, bool countTowardSession = true)
+        private bool StatsTryProcessFile(string path, bool countTowardSession = true)
+        {
+            try
+            {
+                return StatsProcessFile(path, countTowardSession);
+            }
+            catch (Exception ex)
+            {
+                StatsSetStatus($"Could not load {Path.GetFileName(path)}: {ex.Message}");
+                return false;
+            }
+        }
+
+        private bool StatsProcessFile(string path, bool countTowardSession = true)
         {
             XDocument? doc = null;
             for (int i = 0; i < 10; i++)
@@ -6718,7 +6902,11 @@ try {{
                 }
                 catch { Thread.Sleep(300); }
             }
-            if (doc == null) return;
+            if (doc == null)
+            {
+                StatsSetStatus($"Waiting for {Path.GetFileName(path)} to finish writing…");
+                return false;
+            }
 
             string? gId = doc.Descendants("GameUniqueId")
                 .Select(e =>
@@ -6728,10 +6916,22 @@ try {{
                 })
                 .FirstOrDefault(v => !string.IsNullOrEmpty(v));
 
-            if (string.IsNullOrEmpty(gId)) return;
+            if (string.IsNullOrEmpty(gId))
+            {
+                StatsSetStatus($"Waiting for {Path.GetFileName(path)} game ID…");
+                return false;
+            }
 
             var players = doc.Descendants("Player").ToList();
+            if (players.Count == 0)
+            {
+                StatsSetStatus($"Waiting for {Path.GetFileName(path)} player stats…");
+                return false;
+            }
             bool triggerLobby = false;
+            bool alreadyLogged = false;
+            bool playerFound = false;
+            string trackedGamertag = "";
 
             lock (_statsLock)
             {
@@ -6747,14 +6947,19 @@ try {{
                     .Select(StatsClonePlayerRow)
                     .ToList();
                 _statsLastGameServerText = _statsCurrentLobbyServerText;
-                if (countTowardSession && !_statsSession.ProcessedGameIds.Contains(gId))
+                trackedGamertag = _statsGamertag.Trim();
+                alreadyLogged = _statsSession.ProcessedGameIds.Contains(gId);
+                if (countTowardSession && !alreadyLogged)
                 {
                     var me = players.FirstOrDefault(p =>
-                        p.Attribute("mGamertagText")?.Value
-                         .Equals(_statsGamertag, StringComparison.OrdinalIgnoreCase) == true);
+                        string.Equals(
+                            p.Attribute("mGamertagText")?.Value?.Trim(),
+                            trackedGamertag,
+                            StringComparison.OrdinalIgnoreCase));
 
                     if (me != null)
                     {
+                        playerFound = true;
                         int.TryParse(me.Attribute("mStanding")?.Value, out int standing);
                         long.TryParse(me.Attribute("mKills")?.Value,   out long k);
                         long.TryParse(me.Attribute("mDeaths")?.Value,  out long d);
@@ -6857,7 +7062,20 @@ try {{
             Dispatcher.InvokeAsync(() => StatsLastGameServerLabel.Text = _statsLastGameServerText);
             if (!countTowardSession)
                 StatsSetStatus($"Loaded last game: {Path.GetFileName(path)}");
+            else if (alreadyLogged)
+                StatsSetStatus($"Last game is already logged: {Path.GetFileName(path)}");
+            else if (!playerFound)
+            {
+                string available = string.Join(", ", players
+                    .Select(p => p.Attribute("mGamertagText")?.Value?.Trim())
+                    .Where(name => !string.IsNullOrWhiteSpace(name)));
+                StatsSetStatus(string.IsNullOrWhiteSpace(trackedGamertag)
+                    ? "Set and apply your gamertag before loading the last game."
+                    : $"Gamertag '{trackedGamertag}' was not in the report. Players: {available}");
+                return false;
+            }
             if (triggerLobby) _ = StatsFetchLobbyStats();
+            return true;
         }
 
         private static Dictionary<string, int> StatsReadMultikillCounts(XElement player)
@@ -6929,18 +7147,9 @@ try {{
                 {
                     lock (_statsLock) { _statsHwTokenExpired = true; }
                     StatsUpdateHwStatus();
-                    StatsSetStatus("HW token expired — attempting silent refresh…");
-                    bool refreshed = await StatsTrySilentTokenRefreshAsync();
-                    if (refreshed)
-                    {
-                        string newToken; lock (_statsLock) { newToken = _statsSpartanToken; }
-                        var (s2, _) = await StatsFetchHaloWaypointStats(gt, newToken);
-                        if (s2) return;
-                    }
-                    else
-                    {
-                        StatsSetStatus("Silent refresh failed — connect Halo Waypoint again.");
-                    }
+                    // Never create WebView2 from an automatic stats refresh. Starting
+                    // the auth browser can block WPF input for many seconds.
+                    StatsSetStatus("HW token expired — connect Halo Waypoint again.");
                 }
             }
 
@@ -7326,6 +7535,7 @@ try {{
 
         private void StatsLoadGamertag()
         {
+            _statsGamertag = App.LoadPlayerGamertag();
             if (File.Exists(StatsSettingsFile))
                 try { _statsGamertag = File.ReadAllText(StatsSettingsFile).Trim(); } catch { }
         }
@@ -7343,7 +7553,12 @@ try {{
 
         private void StatsSaveToken(string token)
         {
-            try { File.WriteAllText(StatsTokenFile, token); } catch { }
+            try
+            {
+                Directory.CreateDirectory(App.ToolboxDataRoot);
+                File.WriteAllText(StatsTokenFile, token);
+            }
+            catch { }
         }
 
         private void StatsLoadPersistentCache()
@@ -7370,7 +7585,12 @@ try {{
                     _statsCacheOrder.Enqueue(gt);
                 }
                 _statsPersistentCache[gt] = new StatsCachedPlayer { KD = kd, Totals = totals, Added = DateTime.Now };
-                try { File.WriteAllText(StatsCacheFile, JsonSerializer.Serialize(_statsPersistentCache)); } catch { }
+                try
+                {
+                    Directory.CreateDirectory(App.ToolboxDataRoot);
+                    File.WriteAllText(StatsCacheFile, JsonSerializer.Serialize(_statsPersistentCache));
+                }
+                catch { }
             }
         }
     }

@@ -54,7 +54,7 @@ public partial class BanCheckerWindow : Window
         catch (Exception ex)
         {
             StatusText.Text = "Check failed";
-            MessageBox.Show(this, ex.Message, "Ban Checker Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            ToolboxDialog.Show(this, ex.Message, "Ban Checker Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {

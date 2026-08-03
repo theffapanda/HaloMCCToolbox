@@ -57,7 +57,7 @@ public partial class PopulationHistoryWindow : Window
     {
         if (_samples.Count == 0)
         {
-            MessageBox.Show(this, "There are no population samples to export yet.", "Population Export",
+            ToolboxDialog.Show(this, "There are no population samples to export yet.", "Population Export",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }

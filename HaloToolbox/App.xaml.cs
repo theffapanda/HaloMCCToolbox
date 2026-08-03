@@ -1,5 +1,8 @@
 using System;
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.Win32;
@@ -14,6 +17,12 @@ namespace HaloToolbox
 
         public static bool IsDarkTheme => _isDark;
         public static string DefaultMccPath => DefaultMccInstallationPath;
+        public static string ToolboxDataRoot => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HaloMCCToolbox");
+        public static string StatsGamertagPath => Path.Combine(ToolboxDataRoot, "stats_gamertag.txt");
+        public static string StatsTokenPath => Path.Combine(ToolboxDataRoot, "stats_token.txt");
+        public static string StatsCachePath => Path.Combine(ToolboxDataRoot, "stats_cache.json");
         public readonly record struct WindowPlacement(double Left, double Top, double Width, double Height, bool IsMaximized);
 
         public static bool LoadMainSectionVisible(string sectionName)
@@ -58,6 +67,37 @@ namespace HaloToolbox
             {
                 using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
                 key.SetValue("GameNetworkStatsOverlay", enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        internal static GameOverlayVisualStyle LoadGameOverlayVisualStyle(string component)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                string valueName = $"GameOverlayVisualStyle.{component}";
+                string? savedStyle = key?.GetValue(valueName) as string
+                    ?? key?.GetValue("GameOverlayVisualStyle") as string;
+                return string.Equals(
+                    savedStyle,
+                    nameof(GameOverlayVisualStyle.Modern),
+                    StringComparison.OrdinalIgnoreCase)
+                    ? GameOverlayVisualStyle.Modern
+                    : GameOverlayVisualStyle.Classic;
+            }
+            catch
+            {
+                return GameOverlayVisualStyle.Classic;
+            }
+        }
+
+        internal static void SaveGameOverlayVisualStyle(string component, GameOverlayVisualStyle style)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue($"GameOverlayVisualStyle.{component}", style.ToString());
             }
             catch { }
         }
@@ -295,7 +335,7 @@ namespace HaloToolbox
             {
                 try
                 {
-                    MessageBox.Show(
+                    ToolboxDialog.Show(
                         $"The app hit an unexpected error:\n\n{args.Exception.Message}",
                         "Halo MCC Toolbox",
                         MessageBoxButton.OK,
@@ -309,7 +349,7 @@ namespace HaloToolbox
                 {
                     try
                     {
-                        MessageBox.Show(
+                        ToolboxDialog.Show(
                             $"A fatal error occurred:\n\n{ex.Message}",
                             "Halo MCC Toolbox",
                             MessageBoxButton.OK,
@@ -319,6 +359,57 @@ namespace HaloToolbox
                 }
             };
             LoadSavedTheme();
+
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            if (NeedsFirstLaunchSetup())
+            {
+                var setup = new FirstRunSetupWindow();
+                if (setup.ShowDialog() != true)
+                {
+                    Shutdown();
+                    return;
+                }
+            }
+
+            var mainWindow = new MainWindow();
+            MainWindow = mainWindow;
+            mainWindow.Show();
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
+        }
+
+        protected override void OnExit(ExitEventArgs e)
+        {
+            CleanupRetiredOverlayWebViewData();
+            base.OnExit(e);
+        }
+
+        private static void CleanupRetiredOverlayWebViewData()
+        {
+            try
+            {
+                int currentProcessId = Environment.ProcessId;
+                bool anotherToolboxIsRunning = Process
+                    .GetProcessesByName("HaloMCCToolbox")
+                    .Any(process =>
+                    {
+                        try { return process.Id != currentProcessId && !process.HasExited; }
+                        catch { return true; }
+                        finally { process.Dispose(); }
+                    });
+                if (anotherToolboxIsRunning)
+                    return;
+
+                string retiredFolder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "HaloMCCToolbox",
+                    "OverlayWebView2");
+                if (Directory.Exists(retiredFolder))
+                    Directory.Delete(retiredFolder, recursive: true);
+            }
+            catch
+            {
+                // Old Chromium cache cleanup is best-effort and never blocks startup.
+            }
         }
 
         public static void ToggleTheme()
@@ -375,6 +466,148 @@ namespace HaloToolbox
             }
             catch { }
         }
+
+        public static bool HasSavedMccInstallationPath()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return !string.IsNullOrWhiteSpace(key?.GetValue("MccInstallationPath") as string);
+            }
+            catch { return false; }
+        }
+
+        public static bool IsValidMccInstallationPath(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                return false;
+
+            return Directory.Exists(Path.Combine(path, "halo3", "maps")) &&
+                   (File.Exists(Path.Combine(path, "MCC", "Binaries", "Win64", "MCC-Win64-Shipping.exe")) ||
+                    File.Exists(Path.Combine(path, "mcclauncher.exe")));
+        }
+
+        public static string FindMccInstallationPath()
+        {
+            var candidates = new List<string>();
+            if (HasSavedMccInstallationPath())
+                candidates.Add(LoadMccInstallationPath());
+            candidates.Add(DefaultMccInstallationPath);
+
+            try
+            {
+                using var steamKey = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
+                var steamPath = steamKey?.GetValue("SteamPath") as string;
+                if (!string.IsNullOrWhiteSpace(steamPath))
+                {
+                    candidates.Add(Path.Combine(steamPath, "steamapps", "common", "Halo The Master Chief Collection"));
+                    var libraries = Path.Combine(steamPath, "steamapps", "libraryfolders.vdf");
+                    if (File.Exists(libraries))
+                    {
+                        foreach (Match match in Regex.Matches(
+                            File.ReadAllText(libraries),
+                            "\"path\"\\s+\"([^\"]+)\"",
+                            RegexOptions.IgnoreCase))
+                        {
+                            var library = match.Groups[1].Value.Replace(@"\\", @"\");
+                            candidates.Add(Path.Combine(library, "steamapps", "common", "Halo The Master Chief Collection"));
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return candidates
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(IsValidMccInstallationPath)
+                ?? LoadMccInstallationPath();
+        }
+
+        public static string LoadPlayerGamertag()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return key?.GetValue("PlayerGamertag") as string ?? "";
+            }
+            catch { return ""; }
+        }
+
+        public static void SavePlayerGamertag(string gamertag)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("PlayerGamertag", gamertag.Trim());
+            }
+            catch { }
+        }
+
+        public static bool LoadFirstLaunchSetupCompleted()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return (key?.GetValue("FirstLaunchSetupCompleted") as string) == "Yes";
+            }
+            catch { return false; }
+        }
+
+        public static void SaveFirstLaunchSetupCompleted()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("FirstLaunchSetupCompleted", "Yes");
+            }
+            catch { }
+        }
+
+        public static void SaveSetupPreference(string name, bool enabled)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue($"SetupPreference.{name}", enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        public static bool LoadSetupPreference(string name, bool defaultValue = false)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                var value = key?.GetValue($"SetupPreference.{name}") as string;
+                return value is null ? defaultValue : value == "Enabled";
+            }
+            catch { return defaultValue; }
+        }
+
+        public static string LoadLastMainSection()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return key?.GetValue("LastMainSection") as string ?? "";
+            }
+            catch { return ""; }
+        }
+
+        public static void SaveLastMainSection(string sectionName)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("LastMainSection", sectionName);
+            }
+            catch { }
+        }
+
+        public static bool NeedsFirstLaunchSetup() =>
+            !LoadFirstLaunchSetupCompleted() ||
+            !HasSavedMccInstallationPath() ||
+            !IsValidMccInstallationPath(LoadMccInstallationPath());
 
         public static string LoadDownpatchWorkspacePath()
         {

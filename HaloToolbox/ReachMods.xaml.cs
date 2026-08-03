@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO;
+using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -8,6 +10,7 @@ namespace HaloToolbox;
 
 public partial class ReachMods : UserControl, IDisposable
 {
+    private const string BloomHookResourceName = "HaloToolbox.Native.ReachBloomHook.dll";
     private readonly ReachBloomSession _session = new();
     private readonly DispatcherTimer _timer;
     private bool _updatingToggle;
@@ -49,7 +52,7 @@ public partial class ReachMods : UserControl, IDisposable
         SetDetail("Arming the Reach lighting hook…", false);
         try
         {
-            var payload = System.IO.Path.Combine(AppContext.BaseDirectory, "Native", "ReachBloomHook.dll");
+            var payload = EnsureBloomHookPayload();
             await Task.Run(() => _session.ConnectOrInject(process, payload));
             SetDetail("Hook armed. Load Halo: Reach, then use the lighting toggle at any time.", false);
             RefreshStatus();
@@ -62,6 +65,44 @@ public partial class ReachMods : UserControl, IDisposable
         {
             BtnArm.IsEnabled = true;
         }
+    }
+
+    private static string EnsureBloomHookPayload()
+    {
+        using var stream = typeof(ReachMods).Assembly.GetManifestResourceStream(BloomHookResourceName)
+            ?? throw new InvalidOperationException("The embedded Reach bloom hook is missing.");
+        using var buffer = new MemoryStream();
+        stream.CopyTo(buffer);
+        var payloadBytes = buffer.ToArray();
+        var payloadHash = Convert.ToHexString(SHA256.HashData(payloadBytes))[..16];
+
+        var payloadDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HaloMCCToolbox",
+            "Native",
+            payloadHash);
+        Directory.CreateDirectory(payloadDirectory);
+
+        var payloadPath = Path.Combine(payloadDirectory, "ReachBloomHook.dll");
+        if (File.Exists(payloadPath)
+            && File.ReadAllBytes(payloadPath).AsSpan().SequenceEqual(payloadBytes))
+        {
+            return payloadPath;
+        }
+
+        var temporaryPath = payloadPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllBytes(temporaryPath, payloadBytes);
+            File.Move(temporaryPath, payloadPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+                File.Delete(temporaryPath);
+        }
+
+        return payloadPath;
     }
 
     private void ChkDisableBloom_Changed(object sender, RoutedEventArgs e)

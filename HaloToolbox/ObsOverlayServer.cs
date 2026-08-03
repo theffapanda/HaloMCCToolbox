@@ -27,10 +27,13 @@ internal sealed class ObsOverlayServer : IDisposable
     private Task? _listenTask;
     private ObsOverlaySnapshot _snapshot = ObsOverlaySnapshot.Empty;
 
-    public string Url => $"http://127.0.0.1:{Port}/overlay/?mode=obs&v={OverlayVersion}";
-    public string GameOverlayUrl => $"http://127.0.0.1:{Port}/overlay/?mode=game&v={OverlayVersion}";
+    // Keep browser-source URLs stable. OverlayVersion is an implementation
+    // detail exposed by /health.json, not part of a user's permanent OBS link.
+    // Dynamic overlay responses already use no-cache headers.
+    public string Url => $"http://127.0.0.1:{Port}/overlay/?mode=obs";
+    public string GameOverlayUrl => $"http://127.0.0.1:{Port}/overlay/?mode=game";
     public string ComponentUrl(string component, string mode = "game") =>
-        $"http://127.0.0.1:{Port}/overlay/?mode={mode}&component={component}&v={OverlayVersion}";
+        $"http://127.0.0.1:{Port}/overlay/?mode={mode}&component={component}";
     public bool IsRunning => _listener is not null && _cts is { IsCancellationRequested: false };
 
     public void Start()

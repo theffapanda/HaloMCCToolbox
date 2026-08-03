@@ -14,6 +14,10 @@
     <PublishSingleFile>false</PublishSingleFile>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
@@ -21,12 +25,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Data\playlist-rotations.csv">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="Native\ReachBloomHook.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <EmbeddedResource Include="Data\playlist-rotations.csv"
+                      LogicalName="HaloToolbox.Data.playlist-rotations.csv" />
+    <EmbeddedResource Include="Native\ReachBloomHook.dll"
+                      LogicalName="HaloToolbox.Native.ReachBloomHook.dll" />
   </ItemGroup>
 
   <ItemGroup>
@@ -36,24 +38,39 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <PortableZipPath>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\HaloMCCToolbox-Portable.zip'))</PortableZipPath>
-    <PortableZipTempDir>$(BaseIntermediateOutputPath)portable-zip\</PortableZipTempDir>
+    <GenerateStandaloneOnReleaseBuild Condition="'$(GenerateStandaloneOnReleaseBuild)' == ''">true</GenerateStandaloneOnReleaseBuild>
+    <StandaloneRuntimeIdentifier>win-x64</StandaloneRuntimeIdentifier>
+    <StandalonePublishIntermediateDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)standalone-publish\$(Configuration)\'))</StandalonePublishIntermediateDir>
+    <StandaloneOutputDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\bin\Standalone\'))</StandaloneOutputDir>
   </PropertyGroup>
 
-  <Target Name="CreatePortableZip" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
-    <ItemGroup>
-      <PortableZipFiles Include="$(TargetDir)**\*"
-                        Exclude="$(TargetDir)HaloMCCToolbox-Portable.zip;$(TargetDir)stats_token.txt" />
-    </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <UpToDateCheckOutput Include="$(StandaloneOutputDir)$(AssemblyName).exe" />
+  </ItemGroup>
 
-    <Delete Files="$(TargetDir)HaloMCCToolbox-Portable.zip" ContinueOnError="true" />
-    <RemoveDir Directories="$(PortableZipTempDir)" />
-    <MakeDir Directories="$(PortableZipTempDir)" />
-    <Copy SourceFiles="@(PortableZipFiles)"
-          DestinationFiles="@(PortableZipFiles->'$(PortableZipTempDir)%(RecursiveDir)%(Filename)%(Extension)')" />
-    <Delete Files="$(PortableZipPath)" ContinueOnError="true" />
-    <ZipDirectory SourceDirectory="$(PortableZipTempDir)" DestinationFile="$(PortableZipPath)" Overwrite="true" />
-    <RemoveDir Directories="$(PortableZipTempDir)" />
+  <Target Name="BuildStandaloneExecutable"
+          AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Release'
+                     and '$(GenerateStandaloneOnReleaseBuild)' == 'true'
+                     and '$(DesignTimeBuild)' != 'true'">
+    <RemoveDir Directories="$(StandalonePublishIntermediateDir)" />
+    <MakeDir Directories="$(StandalonePublishIntermediateDir)" />
+
+    <MSBuild Projects="$(MSBuildProjectFullPath)"
+             Targets="Publish"
+             BuildInParallel="false"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(StandaloneRuntimeIdentifier);SelfContained=true;PublishSingleFile=true;IncludeNativeLibrariesForSelfExtract=true;EnableCompressionInSingleFile=true;PublishTrimmed=false;PublishReadyToRun=false;DebugType=None;DebugSymbols=false;PublishDir=$(StandalonePublishIntermediateDir);GenerateStandaloneOnReleaseBuild=false" />
+
+    <Error Condition="!Exists('$(StandalonePublishIntermediateDir)$(AssemblyName).exe')"
+           Text="Standalone publish did not produce $(AssemblyName).exe." />
+
+    <MakeDir Directories="$(StandaloneOutputDir)" />
+    <Copy SourceFiles="$(StandalonePublishIntermediateDir)$(AssemblyName).exe"
+          DestinationFiles="$(StandaloneOutputDir)$(AssemblyName).exe" />
+    <RemoveDir Directories="$(StandalonePublishIntermediateDir)" />
+
+    <Message Importance="high"
+             Text="Standalone executable: $(StandaloneOutputDir)$(AssemblyName).exe" />
   </Target>
 
 </Project>

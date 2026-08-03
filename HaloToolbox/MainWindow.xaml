@@ -3,7 +3,6 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:HaloToolbox"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Icon="Resources/halo_toolbox_whiteicon.ico"
         Title="Halo MCC Toolbox — The FFA Panda"
         Height="1024" Width="1012"
@@ -137,7 +136,7 @@
             ClipToBounds="True">
 
         <!-- Scanlines overlay -->
-        <Grid>
+        <Grid x:Name="MainRootGrid">
             <Grid.RowDefinitions>
                 <RowDefinition Height="42"/>
                 <RowDefinition Height="*"/>
@@ -1169,7 +1168,13 @@
 
                 <!-- ═══ TAB 2: MODS ═══ -->
                 <TabItem x:Name="H3ModsSection" Header="🔧  MODS" Style="{StaticResource DarkTabItem}">
-                    <local:Mods x:Name="ModsTab"/>
+                    <ContentControl x:Name="ModsHost">
+                        <TextBlock Text="Mods load when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
                 </TabItem>
 
                 <!-- ═══ TAB 2: LOG ═══ -->
@@ -2241,12 +2246,24 @@
 
                 <!-- ═══ TAB 4: THEATER ═══ -->
                 <TabItem x:Name="TheaterSection" Header="🎬  THEATER" Style="{StaticResource DarkTabItem}">
-                    <local:Theater x:Name="TheaterTab"/>
+                    <ContentControl x:Name="TheaterHost">
+                        <TextBlock Text="Theater loads when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
                 </TabItem>
 
                 <!-- ═══ TAB 5: PLAYLISTS ═══ -->
                 <TabItem x:Name="PlaylistsSection" Header="🗂  PLAYLISTS" Style="{StaticResource DarkTabItem}">
-                    <local:Playlists x:Name="PlaylistsTab"/>
+                    <ContentControl x:Name="PlaylistsHost">
+                        <TextBlock Text="Playlists load when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
                 </TabItem>
 
                 <!-- ═══ TAB 6: ABOUT ═══ -->
@@ -2573,14 +2590,6 @@
                                VerticalAlignment="Center"/>
                 </Grid>
             </Border>
-
-            <!-- Hidden WebView2 — shares the persistent cookie environment with HaloReportWindow.
-                 Used only for CheckSupportSessionAsync(); never navigated or rendered. -->
-            <wv2:WebView2 x:Name="HiddenCookieChecker"
-                          Grid.RowSpan="3"
-                          Width="0" Height="0"
-                          IsHitTestVisible="False"
-                          Focusable="False"/>
 
             <!-- Scanline overlay -->
             <Rectangle Grid.RowSpan="3"
