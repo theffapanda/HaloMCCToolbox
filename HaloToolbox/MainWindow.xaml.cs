@@ -102,11 +102,14 @@ namespace HaloToolbox
         private string _statsGamertag = "";
         private StatsSessionStats _statsSession = new();
         private readonly ObservableCollection<StatsSessionGameRow> _statsSessionGames = new();
+        private readonly ObservableCollection<StatsSessionPlayerHistoryRow> _statsSessionPlayers = new();
+        private readonly Dictionary<string, StatsSessionPlayerAggregate> _statsSessionPlayerHistory = new(StringComparer.OrdinalIgnoreCase);
         private List<XElement> _statsLastPlayers = new();
         private string _statsLastFileSig = "";
         private bool _statsAutoPullLobby = true;
         private string _statsSpartanToken = "";
         private bool _statsHwTokenExpired = false;
+        private Task<string?>? _statsWaypointRefreshTask;
         private bool _statsCurrentLobbyScanRunning = false;
         private string _statsCurrentLobbyServerText = "";
         private string _statsLastGameServerText = "";
@@ -5322,6 +5325,7 @@ try {{
             StatsCurrentLobbyList.ItemsSource = _statsCurrentLobbyRows;
             StatsLobbyList.ItemsSource = _statsLobbyRows;
             StatsSessionTimelineList.ItemsSource = _statsSessionGames;
+            StatsSessionPlayersList.ItemsSource = _statsSessionPlayers;
             StatsShowLobbyView();
 
             StatsLoadGamertag();
@@ -5337,6 +5341,9 @@ try {{
                 _ = StatsFetchStats(_statsGamertag);
                 if (!string.IsNullOrEmpty(_statsSpartanToken))
                     _ = StatsFetchRecentStatsAsync(_statsGamertag, _statsSpartanToken);
+                _ = StatsRefreshWaypointTokenOnStartupAsync(
+                    _statsGamertag,
+                    refreshStatsAfterCapture: string.IsNullOrEmpty(_statsSpartanToken));
             }
 
             StatsLoadLastGameOnStartup();
@@ -5375,8 +5382,19 @@ try {{
 
         private void StatsResetBtn_Click(object sender, RoutedEventArgs e)
         {
-            lock (_statsLock) { _statsSession.Reset(); _postGameRecap = null; }
-            Dispatcher.Invoke(() => _statsSessionGames.Clear());
+            lock (_statsLock)
+            {
+                _statsSession.Reset();
+                _statsSessionPlayerHistory.Clear();
+                _postGameRecap = null;
+            }
+            Dispatcher.Invoke(() =>
+            {
+                _statsSessionGames.Clear();
+                _statsSessionPlayers.Clear();
+                StatsSessionGameCountLabel.Text = "0";
+                StatsSessionPlayerCountLabel.Text = "0";
+            });
             StatsRefreshSessionUI();
             StatsSetStatus("Session reset.");
         }
@@ -5384,6 +5402,22 @@ try {{
         private void StatsLobbyView_Click(object sender, RoutedEventArgs e) => StatsShowLobbyView();
 
         private void StatsSessionView_Click(object sender, RoutedEventArgs e) => StatsShowSessionView();
+
+        private void StatsSessionGamesTab_Click(object sender, RoutedEventArgs e)
+        {
+            StatsSessionGamesPanel.Visibility = Visibility.Visible;
+            StatsSessionPlayersPanel.Visibility = Visibility.Collapsed;
+            StatsSessionGamesTab.IsChecked = true;
+            StatsSessionPlayersTab.IsChecked = false;
+        }
+
+        private void StatsSessionPlayersTab_Click(object sender, RoutedEventArgs e)
+        {
+            StatsSessionGamesPanel.Visibility = Visibility.Collapsed;
+            StatsSessionPlayersPanel.Visibility = Visibility.Visible;
+            StatsSessionGamesTab.IsChecked = false;
+            StatsSessionPlayersTab.IsChecked = true;
+        }
 
         private void StatsShowLobbyView()
         {
@@ -6289,6 +6323,89 @@ try {{
             }
         }
 
+        private async Task StatsRefreshWaypointTokenOnStartupAsync(
+            string gamertag,
+            bool refreshStatsAfterCapture)
+        {
+            string? token = await StatsRefreshWaypointTokenSilentlyAsync();
+            if (string.IsNullOrWhiteSpace(token) || !refreshStatsAfterCapture)
+                return;
+
+            await StatsFetchStats(gamertag);
+            _ = StatsFetchRecentStatsAsync(gamertag, token);
+        }
+
+        private Task<string?> StatsRefreshWaypointTokenSilentlyAsync()
+        {
+            lock (_statsLock)
+            {
+                if (_statsWaypointRefreshTask is { IsCompleted: false })
+                    return _statsWaypointRefreshTask;
+
+                if (string.IsNullOrWhiteSpace(_statsGamertag))
+                    return Task.FromResult<string?>(null);
+
+                Task<string?> refreshTask = StatsRunSilentWaypointRefreshAsync(_statsGamertag);
+                _statsWaypointRefreshTask = refreshTask;
+                _ = refreshTask.ContinueWith(
+                    _ =>
+                    {
+                        lock (_statsLock)
+                        {
+                            if (ReferenceEquals(_statsWaypointRefreshTask, refreshTask))
+                                _statsWaypointRefreshTask = null;
+                        }
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                return refreshTask;
+            }
+        }
+
+        private async Task<string?> StatsRunSilentWaypointRefreshAsync(string gamertag)
+        {
+            string? token = await StatsCaptureWaypointTokenSilentlyAsync(gamertag);
+            if (string.IsNullOrWhiteSpace(token))
+                return null;
+
+            lock (_statsLock)
+            {
+                _statsSpartanToken = token;
+                _statsHwTokenExpired = false;
+            }
+            StatsSaveToken(token);
+            StatsUpdateHwStatus();
+            StatsSetStatus("Halo Waypoint authentication refreshed.");
+            return token;
+        }
+
+        private Task<string?> StatsCaptureWaypointTokenSilentlyAsync(string gamertag)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                return Dispatcher
+                    .InvokeAsync(() => StatsCaptureWaypointTokenSilentlyAsync(gamertag))
+                    .Task
+                    .Unwrap();
+            }
+
+            var completion = new TaskCompletionSource<string?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                var window = new StatsAuthWindow(gamertag, silent: true) { Owner = this };
+                window.Closed += (_, _) => completion.TrySetResult(window.CapturedToken);
+                window.Show();
+            }
+            catch
+            {
+                completion.TrySetResult(null);
+            }
+
+            return completion.Task;
+        }
+
         // ── UI helpers ────────────────────────────────────────────────────────
 
         private void StatsSetStatus(string msg)
@@ -7038,6 +7155,12 @@ try {{
                             CapturedAtUtc: capturedAt,
                             ExpiresAtUtc: capturedAt.AddSeconds(10));
 
+                        var sessionPlayerRows = StatsCaptureSessionLobby(
+                            players,
+                            me,
+                            _statsSession.GamesPlayed,
+                            won);
+                        var lobbyTeams = StatsBuildSessionLobbyTeams(sessionPlayerRows.LobbyPlayers);
                         var gameRow = new StatsSessionGameRow
                         {
                             Game = _statsSession.GamesPlayed,
@@ -7047,9 +7170,22 @@ try {{
                             BestSpree = spree,
                             HighestMultikill = highestMultikill,
                             HighestMultikillIcon = StatsMultikillMedals
-                                .FirstOrDefault(m => m.Name == highestMultikill)?.ResourcePath ?? ""
+                                .FirstOrDefault(m => m.Name == highestMultikill)?.ResourcePath ?? "",
+                            PlayedAt = File.GetLastWriteTime(path).ToString("h:mm tt"),
+                            LobbyPlayerCount = sessionPlayerRows.LobbyPlayers.Count,
+                            LobbyColumnCount = Math.Clamp(lobbyTeams.Count, 1, 2),
+                            LobbyTeams = lobbyTeams,
+                            IsExpanded = _statsSession.GamesPlayed == 1
                         };
-                        Dispatcher.InvokeAsync(() => _statsSessionGames.Insert(0, gameRow));
+                        Dispatcher.InvokeAsync(() =>
+                        {
+                            _statsSessionGames.Insert(0, gameRow);
+                            _statsSessionPlayers.Clear();
+                            foreach (var playerRow in sessionPlayerRows.PlayerHistory)
+                                _statsSessionPlayers.Add(playerRow);
+                            StatsSessionGameCountLabel.Text = _statsSessionGames.Count.ToString();
+                            StatsSessionPlayerCountLabel.Text = _statsSessionPlayers.Count.ToString();
+                        });
 
                         StatsSetStatus($"Game logged — K:{k}  D:{d}  Standing:{standing}");
                         triggerLobby = _statsAutoPullLobby;
@@ -7076,6 +7212,146 @@ try {{
             }
             if (triggerLobby) _ = StatsFetchLobbyStats();
             return true;
+        }
+
+        private (List<StatsSessionLobbyPlayerRow> LobbyPlayers, List<StatsSessionPlayerHistoryRow> PlayerHistory)
+            StatsCaptureSessionLobby(
+                IReadOnlyList<XElement> players,
+                XElement me,
+                int gameNumber,
+                bool won)
+        {
+            string TeamOf(XElement player) =>
+                player.Attribute("mTeamIndex")?.Value ??
+                player.Attribute("mTeamId")?.Value ??
+                "0";
+
+            string myGamertag = me.Attribute("mGamertagText")?.Value?.Trim() ?? "";
+            string myXuid = StatsNormalizeXuid(me.Attribute("mXboxUserId")?.Value ?? "");
+            string myTeam = TeamOf(me);
+            bool isFfa = players.Select(TeamOf).Distinct(StringComparer.OrdinalIgnoreCase).Count() <= 1;
+            var lobbyPlayers = new List<StatsSessionLobbyPlayerRow>(players.Count);
+
+            foreach (var player in players
+                .OrderBy(TeamOf)
+                .ThenBy(p => int.TryParse(p.Attribute("mStanding")?.Value, out int standing) ? standing : 99))
+            {
+                string gamertag = player.Attribute("mGamertagText")?.Value?.Trim() ?? "Unknown";
+                string xuid = StatsNormalizeXuid(player.Attribute("mXboxUserId")?.Value ?? "");
+                string team = TeamOf(player);
+                bool isMe = (!string.IsNullOrWhiteSpace(myXuid) && xuid.Equals(myXuid, StringComparison.OrdinalIgnoreCase)) ||
+                            gamertag.Equals(myGamertag, StringComparison.OrdinalIgnoreCase);
+                bool isTeammate = !isMe && !isFfa && team.Equals(myTeam, StringComparison.OrdinalIgnoreCase);
+                int encounters = 0;
+
+                if (!isMe)
+                {
+                    string playerKey = !string.IsNullOrWhiteSpace(xuid)
+                        ? $"xuid:{xuid}"
+                        : $"gt:{gamertag}";
+                    if (!_statsSessionPlayerHistory.TryGetValue(playerKey, out var aggregate))
+                    {
+                        aggregate = new StatsSessionPlayerAggregate
+                        {
+                            Gamertag = gamertag,
+                            Xuid = xuid
+                        };
+                        _statsSessionPlayerHistory[playerKey] = aggregate;
+                    }
+
+                    aggregate.Gamertag = gamertag;
+                    aggregate.LastGame = gameNumber;
+                    aggregate.LastSeen = DateTime.Now;
+                    aggregate.Matches++;
+                    if (won) aggregate.Wins++; else aggregate.Losses++;
+                    aggregate.WasTeammate |= isTeammate;
+                    aggregate.WasOpponent |= !isTeammate;
+                    aggregate.Kills += ParseInt(player.Attribute("mKills")?.Value);
+                    aggregate.Deaths += ParseInt(player.Attribute("mDeaths")?.Value);
+                    encounters = aggregate.Matches;
+                }
+
+                lobbyPlayers.Add(new StatsSessionLobbyPlayerRow
+                {
+                    Gamertag = gamertag,
+                    TeamKey = isFfa ? "FFA" : team,
+                    IsMe = isMe,
+                    Kills = ParseInt(player.Attribute("mKills")?.Value),
+                    Deaths = ParseInt(player.Attribute("mDeaths")?.Value),
+                    Assists = ParseInt(player.Attribute("mAssists")?.Value),
+                    EncounterLabel = isMe ? "YOU" : encounters <= 1 ? "NEW" : $"{encounters}×"
+                });
+            }
+
+            var history = _statsSessionPlayerHistory.Values
+                .OrderByDescending(player => player.LastGame)
+                .ThenByDescending(player => player.Matches)
+                .ThenBy(player => player.Gamertag, StringComparer.OrdinalIgnoreCase)
+                .Select(player => new StatsSessionPlayerHistoryRow
+                {
+                    Gamertag = player.Gamertag,
+                    LastSeen = $"GAME {player.LastGame}  {player.LastSeen:h:mm tt}",
+                    Encounter = player.WasTeammate && player.WasOpponent
+                        ? "BOTH"
+                        : player.WasTeammate ? "TEAMMATE" : "OPPONENT",
+                    Matches = player.Matches,
+                    Record = $"{player.Wins}W–{player.Losses}L",
+                    AverageKD = (player.Deaths > 0 ? (double)player.Kills / player.Deaths : player.Kills)
+                        .ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
+                })
+                .ToList();
+
+            return (lobbyPlayers, history);
+        }
+
+        private static List<StatsSessionLobbyTeamRow> StatsBuildSessionLobbyTeams(
+            IReadOnlyList<StatsSessionLobbyPlayerRow> lobbyPlayers)
+        {
+            return lobbyPlayers
+                .GroupBy(player => player.TeamKey, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => StatsSessionTeamSort(group.Key))
+                .Select(group => new StatsSessionLobbyTeamRow
+                {
+                    TeamName = StatsSessionTeamName(group.Key),
+                    TeamColor = StatsSessionTeamColor(group.Key),
+                    Players = group.ToList()
+                })
+                .ToList();
+        }
+
+        private static int StatsSessionTeamSort(string team) => team.ToUpperInvariant() switch
+        {
+            "0" => 0,
+            "1" => 1,
+            "2" => 2,
+            "3" => 3,
+            "FFA" => 0,
+            _ => 9
+        };
+
+        private static string StatsSessionTeamName(string team) => team.ToUpperInvariant() switch
+        {
+            "0" => "RED TEAM",
+            "1" => "BLUE TEAM",
+            "2" => "GREEN TEAM",
+            "3" => "YELLOW TEAM",
+            "FFA" => "FFA LOBBY",
+            _ => $"TEAM {team}"
+        };
+
+        private static Brush StatsSessionTeamColor(string team)
+        {
+            Color color = team.ToUpperInvariant() switch
+            {
+                "0" => Color.FromRgb(0xFF, 0x2D, 0x55),
+                "1" => Color.FromRgb(0x00, 0xC8, 0xFF),
+                "2" => Color.FromRgb(0x39, 0xFF, 0x14),
+                "3" => Color.FromRgb(0xFF, 0xD6, 0x0A),
+                _ => Color.FromRgb(0x00, 0xC8, 0xFF)
+            };
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
         }
 
         private static Dictionary<string, int> StatsReadMultikillCounts(XElement player)
@@ -7145,11 +7421,30 @@ try {{
 
                 if (unauthorized)
                 {
+                    string currentToken;
+                    lock (_statsLock) { currentToken = _statsSpartanToken; }
+
+                    string? refreshedToken = !string.IsNullOrWhiteSpace(currentToken) &&
+                                             !string.Equals(currentToken, token, StringComparison.Ordinal)
+                        ? currentToken
+                        : await StatsRefreshWaypointTokenSilentlyAsync();
+                    if (!string.IsNullOrWhiteSpace(refreshedToken))
+                    {
+                        var retry = await StatsFetchHaloWaypointStats(gt, refreshedToken);
+                        if (retry.success)
+                        {
+                            _ = StatsFetchRecentStatsAsync(gt, refreshedToken);
+                            return;
+                        }
+                        unauthorized = retry.unauthorized;
+                    }
+                }
+
+                if (unauthorized)
+                {
                     lock (_statsLock) { _statsHwTokenExpired = true; }
                     StatsUpdateHwStatus();
-                    // Never create WebView2 from an automatic stats refresh. Starting
-                    // the auth browser can block WPF input for many seconds.
-                    StatsSetStatus("HW token expired — connect Halo Waypoint again.");
+                    StatsSetStatus("HW token expired and could not refresh silently — reconnect Halo Waypoint.");
                 }
             }
 
@@ -7167,7 +7462,7 @@ try {{
 
                 var resp = await StatsHttp.SendAsync(req);
 
-                if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                if (resp.StatusCode == HttpStatusCode.Unauthorized)
                     return (false, true);
 
                 if (!resp.IsSuccessStatusCode)
@@ -7868,9 +8163,80 @@ try {{
         public int BestSpree { get; init; }
         public string HighestMultikill { get; init; } = "";
         public string HighestMultikillIcon { get; init; } = "";
+        public string PlayedAt { get; init; } = "";
+        public int LobbyPlayerCount { get; init; }
+        public int LobbyColumnCount { get; init; } = 1;
+        public List<StatsSessionLobbyTeamRow> LobbyTeams { get; init; } = new();
+        public bool IsExpanded { get; set; }
         public Brush ResultColor => Result == "WIN"
             ? new SolidColorBrush(Color.FromRgb(0x39, 0xFF, 0x14))
             : new SolidColorBrush(Color.FromRgb(0xFF, 0x2D, 0x55));
+    }
+
+    class StatsSessionLobbyTeamRow
+    {
+        public string TeamName { get; init; } = "";
+        public Brush TeamColor { get; init; } = Brushes.Transparent;
+        public List<StatsSessionLobbyPlayerRow> Players { get; init; } = new();
+        public string PlayerCountText => $"{Players.Count} PLAYERS";
+    }
+
+    class StatsSessionLobbyPlayerRow
+    {
+        public string Gamertag { get; init; } = "";
+        public string TeamKey { get; init; } = "";
+        public bool IsMe { get; init; }
+        public int Kills { get; init; }
+        public int Deaths { get; init; }
+        public int Assists { get; init; }
+        public string EncounterLabel { get; init; } = "NEW";
+        public Brush PlayerColor => IsMe
+            ? new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0xFF))
+            : new SolidColorBrush(Color.FromRgb(0xD8, 0xE6, 0xEC));
+        public Brush EncounterColor => EncounterLabel switch
+        {
+            "YOU" => new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0xFF)),
+            "NEW" => new SolidColorBrush(Color.FromRgb(0x5D, 0x76, 0x84)),
+            _ => new SolidColorBrush(Color.FromRgb(0xD6, 0xB7, 0x4A))
+        };
+    }
+
+    class StatsSessionPlayerHistoryRow
+    {
+        public string Gamertag { get; init; } = "";
+        public string LastSeen { get; init; } = "";
+        public string Encounter { get; init; } = "";
+        public int Matches { get; init; }
+        public string Record { get; init; } = "";
+        public string AverageKD { get; init; } = "";
+        public Brush EncounterColor => Encounter switch
+        {
+            "TEAMMATE" => new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0xFF)),
+            "OPPONENT" => new SolidColorBrush(Color.FromRgb(0xFF, 0x2D, 0x55)),
+            _ => new SolidColorBrush(Color.FromRgb(0xD6, 0xB7, 0x4A))
+        };
+        public Brush KdColor => double.TryParse(
+                AverageKD,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out double kd) && kd >= 1
+            ? new SolidColorBrush(Color.FromRgb(0x39, 0xFF, 0x14))
+            : new SolidColorBrush(Color.FromRgb(0xFF, 0x2D, 0x55));
+    }
+
+    class StatsSessionPlayerAggregate
+    {
+        public string Gamertag { get; set; } = "";
+        public string Xuid { get; init; } = "";
+        public int LastGame { get; set; }
+        public DateTime LastSeen { get; set; }
+        public int Matches { get; set; }
+        public int Wins { get; set; }
+        public int Losses { get; set; }
+        public long Kills { get; set; }
+        public long Deaths { get; set; }
+        public bool WasTeammate { get; set; }
+        public bool WasOpponent { get; set; }
     }
 
     // ------------------------------------------

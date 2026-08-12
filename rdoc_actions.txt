@@ -1,5 +1,0 @@
-8839|ID3D11DeviceContext::Draw()
-8856|ID3D11DeviceContext::Draw()
-8869|ID3D11DeviceContext::Draw()
-9036|ID3D11DeviceContext::Draw()
-9054|ID3D11DeviceContext::Draw()

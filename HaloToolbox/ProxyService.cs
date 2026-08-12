@@ -67,6 +67,8 @@ public class ProxyService : IDisposable
     private readonly object _smartMatchAuthLock = new();
     private Dictionary<string, string> _smartMatchRequestHeaders = new(StringComparer.OrdinalIgnoreCase);
     private string _smartMatchServiceConfigId = "";
+    private DateTimeOffset _smartMatchAuthCapturedAtUtc;
+    private string _smartMatchAuthSourceHost = "";
     private string _latestBanSpartanToken = "";
     private DateTimeOffset _latestBanSpartanTokenCapturedAtUtc;
     private string _latestBanSpartanTokenSourceHost = "";
@@ -105,24 +107,20 @@ public class ProxyService : IDisposable
     private const bool EnableSyntheticMatchRecovery = true;
     private string? _cachedInjectedMatchBody;
     private string _cachedInjectedMatchEtag = "";
-    // Exact pre-crash match document retained for the narrow case where MPSD
-    // removes the player before the restarted client can read it back.
-    private string? _lastAuthoritativeMatchBody;
-    private string? _savedCrashRestoreMatchBody;
 
     // Cached session body from INJECT[Member] — used to fake PUT responses
 
-    // When true, the next PUT {"members":{"me":null}} to CascadeMatchmaking is
-    // rewritten to a harmless touch {"members":{"me":{}}} so the player stays
-    // in the session on MPSD.  MCC's rejoin prompt (Dec 2022 update) checks
-    // session membership when the user queues for matchmaking — blocking the
-    // leave keeps that check valid.  One-shot: cleared after the first block.
+    // When true, PUT {"members":{"me":null}} to CascadeMatchmaking is blocked
+    // so the player stays in the session on MPSD. MCC's rejoin prompt checks
+    // session membership when the user queues for matchmaking, so protection
+    // remains active for the entire restore window.
     private bool _blockMatchLeave;
 
     // Ghost session mode: when enabled, fake MPSD responses so MCC thinks it's in
     // the session, while we simultaneously sync with real MPSD in the background.
     // Allows rejoin prompt to appear and function even if MCC temporarily lost session
-    // membership. Disabled when background sync completes successfully.
+    // membership. It remains enabled for the restore window even when the
+    // independent background MPSD sync succeeds or fails.
     private bool _ghostSessionMode = false;
     private SavedHandleInfo? _ghostSession = null;
     private readonly object _ghostSessionSyncLock = new();
@@ -139,6 +137,7 @@ public class ProxyService : IDisposable
     private string _restoreConnectionGuid = "";
     private string _restoreSubscriptionId = "";
     private List<string> _restoreChangeTypes = new();
+    private int _restoreObservedSquadMemberCount;
     private Dictionary<string, string> _restoreMpsdRequestHeaders = new(StringComparer.OrdinalIgnoreCase);
 
     private sealed record SynchronizedMatchSnapshot(string Body, string ETag);
@@ -169,6 +168,215 @@ public class ProxyService : IDisposable
         _lastSquadState = LoadPersistedSquadState();
         _lastSquadHandle = LoadPersistedHandle();
         LoadPersistedBanSpartanToken();
+        if (!LoadPersistedSmartMatchAuthorization())
+            TryMigratePersistedSmartMatchAuthorization();
+    }
+
+    private void CaptureSmartMatchAuthorization(
+        IReadOnlyDictionary<string, string> headers,
+        string serviceConfigId,
+        string sourceHost,
+        DateTimeOffset capturedAtUtc)
+    {
+        if (!headers.TryGetValue("Authorization", out string? authorization) ||
+            string.IsNullOrWhiteSpace(authorization) ||
+            !authorization.StartsWith("XBL3.0 ", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Dictionary<string, string> reusableHeaders = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Authorization"] = authorization,
+        };
+        if (headers.TryGetValue("Accept-Language", out string? acceptLanguage) &&
+            !string.IsNullOrWhiteSpace(acceptLanguage))
+        {
+            reusableHeaders["Accept-Language"] = acceptLanguage;
+        }
+        if (headers.TryGetValue("User-Agent", out string? userAgent) &&
+            !string.IsNullOrWhiteSpace(userAgent))
+        {
+            reusableHeaders["User-Agent"] = userAgent;
+        }
+
+        bool changed;
+        string scid;
+        lock (_smartMatchAuthLock)
+        {
+            scid = string.IsNullOrWhiteSpace(serviceConfigId)
+                ? _smartMatchServiceConfigId
+                : serviceConfigId;
+            _smartMatchRequestHeaders.TryGetValue("Authorization", out string? existingAuthorization);
+            changed = !string.Equals(existingAuthorization, authorization, StringComparison.Ordinal) ||
+                      !string.Equals(_smartMatchServiceConfigId, scid, StringComparison.OrdinalIgnoreCase);
+
+            _smartMatchRequestHeaders = reusableHeaders;
+            _smartMatchServiceConfigId = scid;
+            _smartMatchAuthCapturedAtUtc = capturedAtUtc;
+            _smartMatchAuthSourceHost = sourceHost;
+        }
+
+        if (changed && !string.IsNullOrWhiteSpace(scid))
+            PersistSmartMatchAuthorization(authorization, reusableHeaders, scid, capturedAtUtc, sourceHost);
+    }
+
+    private void PersistSmartMatchAuthorization(
+        string authorization,
+        IReadOnlyDictionary<string, string> headers,
+        string serviceConfigId,
+        DateTimeOffset capturedAtUtc,
+        string sourceHost)
+    {
+        try
+        {
+            RejoinFixPaths.EnsureRootDirectory();
+            var payload = new PersistedSmartMatchAuthorization
+            {
+                ProtectedAuthorization = Convert.ToBase64String(ProtectedData.Protect(
+                    Encoding.UTF8.GetBytes(authorization),
+                    optionalEntropy: null,
+                    DataProtectionScope.CurrentUser)),
+                ServiceConfigId = serviceConfigId,
+                CapturedAtUtc = capturedAtUtc,
+                SourceHost = sourceHost,
+                AcceptLanguage = headers.TryGetValue("Accept-Language", out string? acceptLanguage)
+                    ? acceptLanguage
+                    : "",
+                UserAgent = headers.TryGetValue("User-Agent", out string? userAgent)
+                    ? userAgent
+                    : "",
+            };
+            File.WriteAllText(
+                RejoinFixPaths.SmartMatchAuthFile,
+                JsonSerializer.Serialize(payload));
+            RejoinFixDiagnostics.Info("smartmatch", $"Saved encrypted population authorization from {sourceHost}.");
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("smartmatch", $"Failed to persist encrypted population authorization: {ex.Message}");
+        }
+    }
+
+    private bool LoadPersistedSmartMatchAuthorization()
+    {
+        try
+        {
+            if (!File.Exists(RejoinFixPaths.SmartMatchAuthFile))
+                return false;
+
+            var payload = JsonSerializer.Deserialize<PersistedSmartMatchAuthorization>(
+                File.ReadAllText(RejoinFixPaths.SmartMatchAuthFile));
+            if (payload is null ||
+                string.IsNullOrWhiteSpace(payload.ProtectedAuthorization) ||
+                string.IsNullOrWhiteSpace(payload.ServiceConfigId))
+            {
+                return false;
+            }
+
+            string authorization = Encoding.UTF8.GetString(ProtectedData.Unprotect(
+                Convert.FromBase64String(payload.ProtectedAuthorization),
+                optionalEntropy: null,
+                DataProtectionScope.CurrentUser));
+            if (string.IsNullOrWhiteSpace(authorization) ||
+                !authorization.StartsWith("XBL3.0 ", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Authorization"] = authorization,
+            };
+            if (!string.IsNullOrWhiteSpace(payload.AcceptLanguage))
+                headers["Accept-Language"] = payload.AcceptLanguage;
+            if (!string.IsNullOrWhiteSpace(payload.UserAgent))
+                headers["User-Agent"] = payload.UserAgent;
+
+            lock (_smartMatchAuthLock)
+            {
+                _smartMatchRequestHeaders = headers;
+                _smartMatchServiceConfigId = payload.ServiceConfigId;
+                _smartMatchAuthCapturedAtUtc = payload.CapturedAtUtc;
+                _smartMatchAuthSourceHost = payload.SourceHost;
+            }
+
+            RejoinFixDiagnostics.Info("smartmatch", "Loaded encrypted population authorization from disk.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            try { File.Delete(RejoinFixPaths.SmartMatchAuthFile); } catch { }
+            RejoinFixDiagnostics.Warn("smartmatch", $"Discarded unreadable population authorization: {ex.Message}");
+            return false;
+        }
+    }
+
+    private void TryMigratePersistedSmartMatchAuthorization()
+    {
+        var candidates = new List<SavedHandleInfo>();
+        if (_lastSquadHandle is not null)
+            candidates.Add(_lastSquadHandle);
+
+        try
+        {
+            if (File.Exists(RejoinFixPaths.LastMatchSessionFile))
+            {
+                var match = JsonSerializer.Deserialize<SavedHandleInfo>(
+                    File.ReadAllText(RejoinFixPaths.LastMatchSessionFile));
+                if (match is not null)
+                    candidates.Add(match);
+            }
+        }
+        catch (Exception ex)
+        {
+            RejoinFixDiagnostics.Warn("smartmatch", $"Could not inspect saved match authorization: {ex.Message}");
+        }
+
+        SavedHandleInfo? candidate = candidates
+            .Where(x => !string.IsNullOrWhiteSpace(x.Scid) && x.RequestHeaders.ContainsKey("Authorization"))
+            .OrderByDescending(x => x.SavedAt)
+            .FirstOrDefault();
+        if (candidate is null)
+            return;
+
+        CaptureSmartMatchAuthorization(
+            candidate.RequestHeaders,
+            candidate.Scid,
+            "saved Xbox session",
+            new DateTimeOffset(DateTime.SpecifyKind(candidate.SavedAt, DateTimeKind.Utc)));
+        RejoinFixDiagnostics.Info("smartmatch", "Migrated saved Xbox session authorization into the encrypted population cache.");
+    }
+
+    private void ClearPersistedSmartMatchAuthorization(string? expectedAuthorization = null)
+    {
+        lock (_smartMatchAuthLock)
+        {
+            _smartMatchRequestHeaders.TryGetValue("Authorization", out string? currentAuthorization);
+            if (!string.IsNullOrWhiteSpace(expectedAuthorization) &&
+                !string.Equals(expectedAuthorization, currentAuthorization, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _smartMatchRequestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _smartMatchServiceConfigId = "";
+            _smartMatchAuthCapturedAtUtc = default;
+            _smartMatchAuthSourceHost = "";
+        }
+
+        try { File.Delete(RejoinFixPaths.SmartMatchAuthFile); } catch { }
+        RejoinFixDiagnostics.Warn("smartmatch", "Discarded expired population authorization after HTTP 401.");
+    }
+
+    private sealed class PersistedSmartMatchAuthorization
+    {
+        public string ProtectedAuthorization { get; set; } = "";
+        public string ServiceConfigId { get; set; } = "";
+        public DateTimeOffset CapturedAtUtc { get; set; }
+        public string SourceHost { get; set; } = "";
+        public string AcceptLanguage { get; set; } = "";
+        public string UserAgent { get; set; } = "";
     }
 
     public void CaptureBanSpartanToken(string token, DateTimeOffset capturedAtUtc, string sourceHost)
@@ -394,7 +602,6 @@ public class ProxyService : IDisposable
         _jitPutDone = false;
         _cachedInjectedMatchBody = null;
         _cachedInjectedMatchEtag = "";
-        _savedCrashRestoreMatchBody = null;
         _blockMatchLeave = true;
 
         // RACE CONDITION FIX: Accept matchSession parameter from caller (MainWindow)
@@ -418,8 +625,6 @@ public class ProxyService : IDisposable
                 _playerXuid = _lastMatchSession.PlayerXuid;
             }
 
-            CaptureCrashRestoreMatchBodySnapshot();
-
             _ghostSessionMode = true;
             _ghostSession = _lastMatchSession;
             _ghostSessionSyncSuccess = false;
@@ -440,45 +645,6 @@ public class ProxyService : IDisposable
         OnCrashRestorePendingChanged?.Invoke(this, true);
     }
 
-    private void CaptureCrashRestoreMatchBodySnapshot()
-    {
-        _savedCrashRestoreMatchBody = null;
-
-        try
-        {
-            string playerXuid = !string.IsNullOrWhiteSpace(_playerXuid)
-                ? _playerXuid
-                : _lastMatchSession?.PlayerXuid ?? "";
-
-            string? body = _lastAuthoritativeMatchBody;
-            if (string.IsNullOrWhiteSpace(body))
-            {
-                string path = RejoinFixPaths.LastMatchmakingSessionDocumentFile;
-                if (!File.Exists(path))
-                    return;
-                body = File.ReadAllText(path);
-            }
-
-            if (string.IsNullOrWhiteSpace(playerXuid) ||
-                !MatchRosterContainsPlayer(body, playerXuid))
-            {
-                RejoinFixDiagnostics.Warn(
-                    "restore",
-                    "No pre-crash matchmaking body containing the saved player was available for fallback member recovery.");
-                return;
-            }
-
-            _savedCrashRestoreMatchBody = body;
-            RejoinFixDiagnostics.Info(
-                "restore",
-                $"Captured pre-crash authoritative match body for fallback roster recovery (xuid={playerXuid}).");
-        }
-        catch (Exception ex)
-        {
-            RejoinFixDiagnostics.Warn("restore", $"Failed to capture pre-crash match body for fallback recovery: {ex.Message}");
-        }
-    }
-
     public void ClearGhostSessionMode()
     {
         CancelGhostSessionSync();
@@ -489,30 +655,6 @@ public class ProxyService : IDisposable
         _ghostSessionOriginalSubscriptionId = "";
         _ghostSessionGuidUpgraded = false;
         ResetRestoreIdentityLatch();
-    }
-
-    /// <summary>
-    /// Completes one crash-rejoin transaction after MCC has received a valid
-    /// current PlayFab game-server assignment.  Keep the saved match reference
-    /// and match-leave protection, but release the transaction-scoped restore
-    /// state so a later quit/rejoin starts from a fresh generation.
-    /// </summary>
-    private void CompleteCrashRestoreAfterLiveAssignment()
-    {
-        if (!_pendingCrashRestore)
-            return;
-
-        _pendingCrashRestore = false;
-        _pendingCrashRestoreStartedAt = DateTime.MinValue;
-        ClearGhostSessionMode();
-        _cachedInjectedMatchBody = null;
-        _cachedInjectedMatchEtag = "";
-        _savedCrashRestoreMatchBody = null;
-
-        RejoinFixDiagnostics.Info(
-            "restore",
-            "Completed crash-rejoin transaction after accepting the current live PlayFab assignment; cleared transaction-scoped restore state for the next rejoin.");
-        OnCrashRestorePendingChanged?.Invoke(this, false);
     }
 
     public bool IsGhostSessionActive() => _ghostSessionMode;
@@ -860,16 +1002,18 @@ public class ProxyService : IDisposable
             RequestBody    = "",
         };
 
-        if (req.RequestUri.Host.EndsWith("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase))
+        if (req.RequestUri.Host.EndsWith("xboxlive.com", StringComparison.OrdinalIgnoreCase))
         {
             var segments = req.RequestUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
             int serviceConfigsIndex = Array.FindIndex(segments, x => x.Equals("serviceconfigs", StringComparison.OrdinalIgnoreCase));
-            lock (_smartMatchAuthLock)
-            {
-                _smartMatchRequestHeaders = new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase);
-                if (serviceConfigsIndex >= 0 && serviceConfigsIndex + 1 < segments.Length)
-                    _smartMatchServiceConfigId = segments[serviceConfigsIndex + 1];
-            }
+            string serviceConfigId = serviceConfigsIndex >= 0 && serviceConfigsIndex + 1 < segments.Length
+                ? segments[serviceConfigsIndex + 1]
+                : "";
+            CaptureSmartMatchAuthorization(
+                headers,
+                serviceConfigId,
+                req.RequestUri.Host,
+                DateTimeOffset.UtcNow);
         }
 
         // Safely capture request body for /handles endpoints (rejoin handle observation)
@@ -2384,8 +2528,6 @@ public class ProxyService : IDisposable
         _blockMatchLeave = false;
         _cachedInjectedMatchBody = null;
         _cachedInjectedMatchEtag = "";
-        _lastAuthoritativeMatchBody = null;
-        _savedCrashRestoreMatchBody = null;
         ClearGhostSessionMode();  // Also clear ghost mode when clearing saved session
         RejoinFixDiagnostics.Info("capture", "Cleared saved match-session state.");
         OnCrashRestorePendingChanged?.Invoke(this, false);
@@ -2806,13 +2948,6 @@ public class ProxyService : IDisposable
             resp.HasBody)
         {
             string body = await e.GetResponseBodyAsString();
-            if (!_pendingCrashRestore && MatchRosterContainsPlayer(body, _playerXuid))
-            {
-                // Keep an in-memory copy while the live match is healthy. The
-                // disk capture can later be overwritten by MPSD's removal
-                // response before the process watcher arms restore.
-                _lastAuthoritativeMatchBody = body;
-            }
             // Match GETs remain passive during restore.  The known-working
             // implementation lets MCC consume the real service body while the
             // replacement identity is synchronized in the background; a failed
@@ -2839,7 +2974,7 @@ public class ProxyService : IDisposable
                 {
                     RejoinFixDiagnostics.Warn(
                         "restore",
-                        "Fallback member recovery refused because the pre-crash squad membercount is unknown; refusing to guess solo for a party-capable restore.");
+                        "Fallback member recovery refused because the complete first post-restart squad identity has not supplied an observed member count; refusing to guess solo.");
                 }
             }
         }
@@ -3131,11 +3266,11 @@ public class ProxyService : IDisposable
                             ResponseBody = $"{(changedServer ? "UPDATED" : "REFRESHED")} live server: {serverInfo.ServerShort}",
                         });
 
-                        // RequestParty is the final documented live authority
-                        // in the rejoin chain.  Once MCC has received it, do
-                        // not carry the prior restore generation into a later
-                        // quit/rejoin attempt.
-                        CompleteCrashRestoreAfterLiveAssignment();
+                        // RequestParty is the final documented live authority,
+                        // but receiving the assignment is not proof that MCC has
+                        // connected to it. Keep the restore window, local match
+                        // PUT handling, and leave protection active until the
+                        // normal explicit clear or restore timeout.
                         return;
                     }
                 }
@@ -3341,7 +3476,7 @@ public class ProxyService : IDisposable
         }
 
         if (string.IsNullOrWhiteSpace(scid) || headers.Count == 0)
-            return new HopperPopulationResult(hopperName, null, null, "Start a matchmaking search to authorize population data.");
+            return new HopperPopulationResult(hopperName, null, null, "Launch MCC once to authorize population data.");
 
         string url = $"https://smartmatch.xboxlive.com/serviceconfigs/{Uri.EscapeDataString(scid)}/hoppers/{Uri.EscapeDataString(hopperName)}/stats";
         try
@@ -3364,6 +3499,12 @@ public class ProxyService : IDisposable
             string body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    headers.TryGetValue("Authorization", out string? attemptedAuthorization);
+                    ClearPersistedSmartMatchAuthorization(attemptedAuthorization);
+                }
+
                 string detail = body.Length > 180 ? body[..180] + "…" : body;
                 return new HopperPopulationResult(
                     hopperName,
@@ -3724,6 +3865,12 @@ public class ProxyService : IDisposable
 
     private int GetObservedSquadMemberCountForRestore()
     {
+        // The first post-restart squad write owns the complete live identity
+        // generation, including party size. Never combine its GUID/subscription
+        // with a pre-crash member count.
+        if (_pendingCrashRestore)
+            return _restoreIdentityLatched ? _restoreObservedSquadMemberCount : 0;
+
         if (_ghostSession?.ObservedSquadMemberCount > 0)
             return _ghostSession.ObservedSquadMemberCount;
 
@@ -3745,7 +3892,36 @@ public class ProxyService : IDisposable
         _restoreConnectionGuid = "";
         _restoreSubscriptionId = "";
         _restoreChangeTypes = new List<string>();
+        _restoreObservedSquadMemberCount = 0;
         _restoreMpsdRequestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static int ReadObservedSquadMemberCount(string requestBody)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(requestBody);
+            var root = document.RootElement;
+
+            if (root.TryGetProperty("membersInfo", out var membersInfo) &&
+                membersInfo.TryGetProperty("count", out var countElement) &&
+                countElement.TryGetInt32(out int memberCount) &&
+                memberCount > 0)
+            {
+                return memberCount;
+            }
+
+            if (root.TryGetProperty("members", out var members) &&
+                members.ValueKind == JsonValueKind.Object)
+            {
+                return members.EnumerateObject().Count();
+            }
+        }
+        catch
+        {
+        }
+
+        return 0;
     }
 
     private void TryUpgradeGhostSessionConnectionIdentity(
@@ -3770,17 +3946,51 @@ public class ProxyService : IDisposable
         if (string.IsNullOrWhiteSpace(squadSessionName))
             return;
 
+        int observedSquadMemberCount = ReadObservedSquadMemberCount(requestBody);
+
         if (!_restoreIdentityLatched)
         {
+            bool isSavedPreCrashSquad =
+                !string.IsNullOrWhiteSpace(_ghostSession.ObservedSquadSessionName) &&
+                string.Equals(
+                    _ghostSession.ObservedSquadSessionName,
+                    squadSessionName,
+                    StringComparison.OrdinalIgnoreCase);
+            bool isPreCrashConnectionGuid =
+                !string.IsNullOrWhiteSpace(_ghostSessionOriginalConnectionGuid) &&
+                string.Equals(
+                    _ghostSessionOriginalConnectionGuid,
+                    newGuid,
+                    StringComparison.OrdinalIgnoreCase);
+            if (isSavedPreCrashSquad || isPreCrashConnectionGuid)
+            {
+                RejoinFixDiagnostics.Warn(
+                    "identity",
+                    $"Ignored stale post-restart squad write source {squadSessionName[..Math.Min(13, squadSessionName.Length)]}... guid={newGuid}; waiting for a fresh squad session and connection GUID.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(newSubscriptionId) ||
+                newChangeTypes.Count == 0 ||
+                observedSquadMemberCount <= 0 ||
+                !requestHeaders.ContainsKey("Authorization"))
+            {
+                RejoinFixDiagnostics.Warn(
+                    "identity",
+                    $"Ignored incomplete post-restart squad identity source {squadSessionName[..Math.Min(13, squadSessionName.Length)]}... guid={newGuid} subscription={ShortIdentityValue(newSubscriptionId)} changeTypes={FormatChangeTypes(newChangeTypes)} membercount={FormatRestoreMemberCount(observedSquadMemberCount)} authorization={(requestHeaders.ContainsKey("Authorization") ? "present" : "missing")}; waiting for one complete live identity write.");
+                return;
+            }
+
             _restoreIdentityLatched = true;
             _restoreIdentitySquadSessionName = squadSessionName;
             _restoreConnectionGuid = newGuid;
             _restoreSubscriptionId = newSubscriptionId;
             _restoreChangeTypes = new List<string>(newChangeTypes);
+            _restoreObservedSquadMemberCount = observedSquadMemberCount;
             _restoreMpsdRequestHeaders = new Dictionary<string, string>(requestHeaders, StringComparer.OrdinalIgnoreCase);
             RejoinFixDiagnostics.Info(
                 "identity",
-                $"Latched first post-restart squad identity source {squadSessionName[..Math.Min(13, squadSessionName.Length)]}... guid={newGuid} subscription={ShortIdentityValue(newSubscriptionId)} changeTypes={FormatChangeTypes(newChangeTypes)} with current MPSD authorization context.");
+                $"Latched first post-restart squad identity source {squadSessionName[..Math.Min(13, squadSessionName.Length)]}... guid={newGuid} subscription={ShortIdentityValue(newSubscriptionId)} changeTypes={FormatChangeTypes(newChangeTypes)} membercount={FormatRestoreMemberCount(observedSquadMemberCount)} with current MPSD authorization context.");
         }
         else
         {
@@ -3793,28 +4003,28 @@ public class ProxyService : IDisposable
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(_restoreSubscriptionId) && !string.IsNullOrWhiteSpace(newSubscriptionId))
-            {
-                _restoreSubscriptionId = newSubscriptionId;
-                _restoreChangeTypes = new List<string>(newChangeTypes);
-            }
-            else if (!string.IsNullOrWhiteSpace(newSubscriptionId) &&
-                     !string.Equals(_restoreSubscriptionId, newSubscriptionId, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(newSubscriptionId) &&
+                !string.Equals(_restoreSubscriptionId, newSubscriptionId, StringComparison.OrdinalIgnoreCase))
             {
                 RejoinFixDiagnostics.Warn(
                     "identity",
                     $"Ignored later RTA subscription {ShortIdentityValue(newSubscriptionId)} for the latched squad identity; using {ShortIdentityValue(_restoreSubscriptionId)}.");
                 return;
             }
-            else if (_restoreChangeTypes.Count == 0 && newChangeTypes.Count > 0)
-            {
-                _restoreChangeTypes = new List<string>(newChangeTypes);
-            }
-            else if (newChangeTypes.Count > 0 && !ChangeTypesMatch(_restoreChangeTypes, newChangeTypes))
+            if (newChangeTypes.Count > 0 && !ChangeTypesMatch(_restoreChangeTypes, newChangeTypes))
             {
                 RejoinFixDiagnostics.Warn(
                     "identity",
                     $"Ignored later RTA changeTypes={FormatChangeTypes(newChangeTypes)}; using latched changeTypes={FormatChangeTypes(_restoreChangeTypes)}.");
+                return;
+            }
+
+            if (observedSquadMemberCount > 0 &&
+                _restoreObservedSquadMemberCount != observedSquadMemberCount)
+            {
+                RejoinFixDiagnostics.Warn(
+                    "identity",
+                    $"Ignored later squad membercount={observedSquadMemberCount}; using first post-restart membercount={_restoreObservedSquadMemberCount}.");
                 return;
             }
         }
@@ -3822,12 +4032,14 @@ public class ProxyService : IDisposable
         _ghostSession.ConnectionGuid = _restoreConnectionGuid;
         _ghostSession.SubscriptionId = _restoreSubscriptionId;
         _ghostSession.ChangeTypes = new List<string>(_restoreChangeTypes);
+        _ghostSession.ObservedSquadMemberCount = _restoreObservedSquadMemberCount;
         if (_lastMatchSession is not null &&
             string.Equals(_lastMatchSession.SessionName, _ghostSession.SessionName, StringComparison.OrdinalIgnoreCase))
         {
             _lastMatchSession.ConnectionGuid = _restoreConnectionGuid;
             _lastMatchSession.SubscriptionId = _restoreSubscriptionId;
             _lastMatchSession.ChangeTypes = new List<string>(_restoreChangeTypes);
+            _lastMatchSession.ObservedSquadMemberCount = _restoreObservedSquadMemberCount;
             PersistSavedMatchSessionSnapshot(_lastMatchSession);
         }
 
@@ -3838,7 +4050,8 @@ public class ProxyService : IDisposable
         bool completeIdentityCaptured =
             _ghostSessionGuidUpgraded &&
             !string.IsNullOrWhiteSpace(_restoreSubscriptionId) &&
-            _restoreChangeTypes.Count > 0;
+            _restoreChangeTypes.Count > 0 &&
+            _restoreObservedSquadMemberCount > 0;
 
         if (completeIdentityCaptured)
         {
@@ -3847,7 +4060,7 @@ public class ProxyService : IDisposable
             {
                 RejoinFixDiagnostics.Warn(
                     "restore",
-                    "Blocked MPSD sync because no authoritative pre-crash squad membercount was captured; refusing to default the restore to solo.");
+                    "Blocked MPSD sync because the first post-restart squad write did not supply an observed member count; refusing to default the restore to solo.");
                 return;
             }
 
@@ -4273,105 +4486,6 @@ public class ProxyService : IDisposable
         {
             return false;
         }
-    }
-
-    /// <summary>
-    /// Rebuilds the missing member from the authoritative pre-crash roster.
-    /// A minimal synthetic member omits matchmakingResult/ticket/team metadata
-    /// that MCC uses to validate the match, so only live identity fields are
-    /// overlaid on the saved member record.
-    /// </summary>
-    private string? BuildFallbackMemberFromSavedRoster(
-        int memberIndex,
-        int nextIndex,
-        string connectionGuid,
-        string subscriptionId,
-        IReadOnlyList<string> changeTypes,
-        int restoreMemberCount)
-    {
-        if (string.IsNullOrWhiteSpace(_savedCrashRestoreMatchBody) ||
-            string.IsNullOrWhiteSpace(_playerXuid))
-        {
-            return null;
-        }
-
-        try
-        {
-            if (JsonNode.Parse(_savedCrashRestoreMatchBody) is not JsonObject root ||
-                root["members"] is not JsonObject members)
-            {
-                return null;
-            }
-
-            foreach (var (_, sourceNode) in members)
-            {
-                if (sourceNode is not JsonObject sourceMember ||
-                    !string.Equals(
-                        sourceMember["constants"]?["system"]?["xuid"]?.GetValue<string>(),
-                        _playerXuid,
-                        StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (JsonNode.Parse(sourceMember.ToJsonString()) is not JsonObject member)
-                {
-                    return null;
-                }
-
-                member["next"] = nextIndex;
-                var constants = member["constants"] as JsonObject ?? new JsonObject();
-                var constantsSystem = constants["system"] as JsonObject ?? new JsonObject();
-                constantsSystem["xuid"] = _playerXuid;
-                constantsSystem["index"] = memberIndex;
-                constants["system"] = constantsSystem;
-                member["constants"] = constants;
-
-                var properties = member["properties"] as JsonObject ?? new JsonObject();
-                var system = properties["system"] as JsonObject ?? new JsonObject();
-                system["active"] = true;
-                system["connection"] = connectionGuid;
-                if (!string.IsNullOrWhiteSpace(subscriptionId))
-                {
-                    system["subscription"] = new JsonObject
-                    {
-                        ["id"] = subscriptionId,
-                        ["changeTypes"] = JsonSerializer.SerializeToNode(
-                            changeTypes.Count > 0 ? changeTypes : new[] { "everything" }),
-                    };
-                }
-                properties["system"] = system;
-
-                var custom = properties["custom"] as JsonObject ?? new JsonObject();
-                if (restoreMemberCount > 1)
-                {
-                    custom["membercount"] = restoreMemberCount;
-                }
-                else
-                {
-                    // Solo restore: membercount must be absent, not zero or one.
-                    custom.Remove("membercount");
-                }
-                if (custom.Count > 0)
-                {
-                    properties["custom"] = custom;
-                }
-                else
-                {
-                    properties.Remove("custom");
-                }
-                member["properties"] = properties;
-                return member.ToJsonString();
-            }
-        }
-        catch (Exception ex)
-        {
-            RejoinFixDiagnostics.Warn(
-                "restore",
-                $"Could not reconstruct the authoritative pre-crash member: {ex.Message}");
-        }
-
-        return null;
     }
 
     private static string BuildMatchIdentityPutBody(

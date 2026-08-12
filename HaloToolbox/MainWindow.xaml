@@ -1813,7 +1813,7 @@
                                                    FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
                                                    Foreground="{DynamicResource AccentBrush}"/>
                                         <TextBlock x:Name="StatsPopulationStatusLabel"
-                                                   Text="Start a matchmaking search once to authorize live hopper data."
+                                                   Text="Launch MCC once to authorize live hopper data."
                                                    FontFamily="Consolas" FontSize="9"
                                                    Foreground="{DynamicResource MutedBrush}"
                                                    Margin="0,3,0,0"/>
@@ -2214,19 +2214,171 @@
                                     </Grid>
 
                                     <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
-                                        <StackPanel>
-                                            <TextBlock Text="GAME TIMELINE" FontFamily="Consolas" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" Margin="12,8"/>
-                                            <ListView x:Name="StatsSessionTimelineList" MaxHeight="230" ScrollViewer.VerticalScrollBarVisibility="Auto">
-                                                <ListView.View><GridView>
-                                                    <GridViewColumn Header="GAME" Width="55" DisplayMemberBinding="{Binding Game}"/>
-                                                    <GridViewColumn Header="RESULT" Width="85"><GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Result}" Foreground="{Binding ResultColor}" FontFamily="Consolas" FontWeight="Bold" Padding="6,5"/></DataTemplate></GridViewColumn.CellTemplate></GridViewColumn>
-                                                    <GridViewColumn Header="K–D" Width="90" DisplayMemberBinding="{Binding KillsDeaths}"/>
-                                                    <GridViewColumn Header="K/D" Width="85" DisplayMemberBinding="{Binding KD}"/>
-                                                    <GridViewColumn Header="BEST SPREE" Width="105" DisplayMemberBinding="{Binding BestSpree}"/>
-                                                    <GridViewColumn Header="HIGHEST MULTIKILL" Width="190"><GridViewColumn.CellTemplate><DataTemplate><StackPanel Orientation="Horizontal"><Image Source="{Binding HighestMultikillIcon}" Width="26" Height="26" Margin="4,2,8,2"/><TextBlock Text="{Binding HighestMultikill}" FontFamily="Consolas" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/></StackPanel></DataTemplate></GridViewColumn.CellTemplate></GridViewColumn>
-                                                </GridView></ListView.View>
-                                            </ListView>
-                                        </StackPanel>
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <DockPanel Grid.Row="0" LastChildFill="True" Background="{DynamicResource PanelBrush}">
+                                                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                                                    <ToggleButton x:Name="StatsSessionGamesTab"
+                                                                  Style="{StaticResource StatsToggleBtn}"
+                                                                  IsChecked="True"
+                                                                  BorderThickness="0,0,1,0"
+                                                                  Click="StatsSessionGamesTab_Click">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="GAME TIMELINE"/>
+                                                            <Border BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" BorderThickness="1" Margin="8,0,0,0" Padding="4,0">
+                                                                <TextBlock x:Name="StatsSessionGameCountLabel" Text="0"/>
+                                                            </Border>
+                                                        </StackPanel>
+                                                    </ToggleButton>
+                                                    <ToggleButton x:Name="StatsSessionPlayersTab"
+                                                                  Style="{StaticResource StatsToggleBtn}"
+                                                                  BorderThickness="0,0,1,0"
+                                                                  Click="StatsSessionPlayersTab_Click">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="ALL PLAYERS"/>
+                                                            <Border BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" BorderThickness="1" Margin="8,0,0,0" Padding="4,0">
+                                                                <TextBlock x:Name="StatsSessionPlayerCountLabel" Text="0"/>
+                                                            </Border>
+                                                        </StackPanel>
+                                                    </ToggleButton>
+                                                </StackPanel>
+                                                <TextBlock Text="SELECT A GAME TO INSPECT ITS CAPTURED LOBBY"
+                                                           FontFamily="Consolas" FontSize="9"
+                                                           Foreground="{DynamicResource MutedBrush}"
+                                                           VerticalAlignment="Center" HorizontalAlignment="Right"
+                                                           Margin="10,0,12,0"/>
+                                            </DockPanel>
+
+                                            <Grid x:Name="StatsSessionGamesPanel" Grid.Row="1">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <Grid Grid.Row="0" Background="{DynamicResource SurfaceBrush}" Height="27">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="52"/>
+                                                        <ColumnDefinition Width="88"/>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="82"/>
+                                                        <ColumnDefinition Width="103"/>
+                                                        <ColumnDefinition Width="190"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="GAME" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                    <TextBlock Grid.Column="1" Text="RESULT" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                    <TextBlock Grid.Column="2" Text="K–D" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                    <TextBlock Grid.Column="3" Text="K/D" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                    <TextBlock Grid.Column="4" Text="BEST SPREE" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                    <TextBlock Grid.Column="5" Text="HIGHEST MULTIKILL" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                    <TextBlock Grid.Column="6" Text="LOBBY" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                </Grid>
+                                                <ScrollViewer Grid.Row="1" MaxHeight="420" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                                    <ItemsControl x:Name="StatsSessionTimelineList">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}"
+                                                                          BorderBrush="{DynamicResource BorderBrush}"
+                                                                          BorderThickness="0,0,0,1"
+                                                                          Background="{DynamicResource BgBrush}">
+                                                                    <Expander.Header>
+                                                                        <Grid MinHeight="38">
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="34"/>
+                                                                                <ColumnDefinition Width="88"/>
+                                                                                <ColumnDefinition Width="92"/>
+                                                                                <ColumnDefinition Width="82"/>
+                                                                                <ColumnDefinition Width="103"/>
+                                                                                <ColumnDefinition Width="190"/>
+                                                                                <ColumnDefinition Width="*"/>
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <TextBlock Grid.Column="0" Text="{Binding Game}" Margin="7,0" VerticalAlignment="Center" FontFamily="Consolas" Foreground="{DynamicResource TextBrush}"/>
+                                                                            <TextBlock Grid.Column="1" Text="{Binding Result}" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontWeight="Bold" Foreground="{Binding ResultColor}"/>
+                                                                            <TextBlock Grid.Column="2" Text="{Binding KillsDeaths}" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" Foreground="{DynamicResource TextBrush}"/>
+                                                                            <TextBlock Grid.Column="3" Text="{Binding KD}" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" Foreground="{DynamicResource TextBrush}"/>
+                                                                            <TextBlock Grid.Column="4" Text="{Binding BestSpree}" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" Foreground="{DynamicResource TextBrush}"/>
+                                                                            <StackPanel Grid.Column="5" Orientation="Horizontal" Margin="7,0">
+                                                                                <Image Source="{Binding HighestMultikillIcon}" Width="24" Height="24" Margin="0,0,7,0"/>
+                                                                                <TextBlock Text="{Binding HighestMultikill}" VerticalAlignment="Center" FontFamily="Consolas" Foreground="{DynamicResource TextBrush}"/>
+                                                                            </StackPanel>
+                                                                            <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0">
+                                                                                <TextBlock Text="{Binding LobbyPlayerCount}" Foreground="{DynamicResource AccentBrush}" FontFamily="Consolas"/>
+                                                                                <TextBlock Text=" PLAYERS  ·  " Foreground="{DynamicResource MutedBrush}" FontFamily="Consolas"/>
+                                                                                <TextBlock Text="{Binding PlayedAt}" Foreground="{DynamicResource MutedBrush}" FontFamily="Consolas"/>
+                                                                            </StackPanel>
+                                                                        </Grid>
+                                                                    </Expander.Header>
+                                                                    <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="8">
+                                                                        <ItemsControl ItemsSource="{Binding LobbyTeams}" Tag="{Binding LobbyColumnCount}">
+                                                                            <ItemsControl.ItemsPanel>
+                                                                                <ItemsPanelTemplate>
+                                                                                    <UniformGrid Columns="{Binding Tag, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+                                                                                </ItemsPanelTemplate>
+                                                                            </ItemsControl.ItemsPanel>
+                                                                            <ItemsControl.ItemTemplate>
+                                                                                <DataTemplate>
+                                                                                    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Background="{DynamicResource PanelBrush}" Margin="4">
+                                                                                        <StackPanel>
+                                                                                            <DockPanel Background="{DynamicResource BgBrush}" MinHeight="30" LastChildFill="True">
+                                                                                                <Border Width="4" Background="{Binding TeamColor}" DockPanel.Dock="Left"/>
+                                                                                                <TextBlock Text="{Binding TeamName}" Margin="9,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="10" FontWeight="SemiBold" Foreground="{Binding TeamColor}"/>
+                                                                                                <TextBlock Text="{Binding PlayerCountText}" Margin="9,0" VerticalAlignment="Center" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                                                            </DockPanel>
+                                                                                            <Grid Height="23" Background="{DynamicResource SurfaceBrush}">
+                                                                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="62"/><ColumnDefinition Width="42"/><ColumnDefinition Width="42"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+                                                                                                <TextBlock Grid.Column="0" Text="GAMERTAG" Margin="8,0" VerticalAlignment="Center" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}"/>
+                                                                                                <TextBlock Grid.Column="1" Text="MET" HorizontalAlignment="Center" VerticalAlignment="Center" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}"/>
+                                                                                                <TextBlock Grid.Column="2" Text="K" HorizontalAlignment="Center" VerticalAlignment="Center" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}"/>
+                                                                                                <TextBlock Grid.Column="3" Text="D" HorizontalAlignment="Center" VerticalAlignment="Center" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}"/>
+                                                                                                <TextBlock Grid.Column="4" Text="A" HorizontalAlignment="Center" VerticalAlignment="Center" FontFamily="Consolas" FontSize="8" Foreground="{DynamicResource MutedBrush}"/>
+                                                                                            </Grid>
+                                                                                            <ItemsControl ItemsSource="{Binding Players}">
+                                                                                                <ItemsControl.ItemTemplate>
+                                                                                                    <DataTemplate>
+                                                                                                        <Grid MinHeight="29">
+                                                                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="62"/><ColumnDefinition Width="42"/><ColumnDefinition Width="42"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+                                                                                                            <TextBlock Grid.Column="0" Text="{Binding Gamertag}" Margin="8,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" FontFamily="Consolas" FontSize="10" Foreground="{Binding PlayerColor}"/>
+                                                                                                            <Border Grid.Column="1" BorderBrush="{Binding EncounterColor}" BorderThickness="1" Padding="3,1" Margin="6,4" HorizontalAlignment="Center">
+                                                                                                                <TextBlock Text="{Binding EncounterLabel}" Foreground="{Binding EncounterColor}" FontFamily="Consolas" FontSize="8"/>
+                                                                                                            </Border>
+                                                                                                            <TextBlock Grid.Column="2" Text="{Binding Kills}" HorizontalAlignment="Center" VerticalAlignment="Center" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource TextBrush}"/>
+                                                                                                            <TextBlock Grid.Column="3" Text="{Binding Deaths}" HorizontalAlignment="Center" VerticalAlignment="Center" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource TextBrush}"/>
+                                                                                                            <TextBlock Grid.Column="4" Text="{Binding Assists}" HorizontalAlignment="Center" VerticalAlignment="Center" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource TextBrush}"/>
+                                                                                                        </Grid>
+                                                                                                    </DataTemplate>
+                                                                                                </ItemsControl.ItemTemplate>
+                                                                                            </ItemsControl>
+                                                                                        </StackPanel>
+                                                                                    </Border>
+                                                                                </DataTemplate>
+                                                                            </ItemsControl.ItemTemplate>
+                                                                        </ItemsControl>
+                                                                    </Border>
+                                                                </Expander>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </Grid>
+
+                                            <Grid x:Name="StatsSessionPlayersPanel" Grid.Row="1" Visibility="Collapsed">
+                                                <ListView x:Name="StatsSessionPlayersList" MaxHeight="420" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                                    <ListView.View>
+                                                        <GridView>
+                                                            <GridViewColumn Header="GAMERTAG" Width="220"><GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Gamertag}" FontFamily="Consolas" Foreground="{DynamicResource TextBrush}" Padding="6,4"/></DataTemplate></GridViewColumn.CellTemplate></GridViewColumn>
+                                                            <GridViewColumn Header="LAST SEEN" Width="125" DisplayMemberBinding="{Binding LastSeen}"/>
+                                                            <GridViewColumn Header="ENCOUNTER" Width="120"><GridViewColumn.CellTemplate><DataTemplate><StackPanel Orientation="Horizontal" Margin="6,0"><Ellipse Width="7" Height="7" Fill="{Binding EncounterColor}" Margin="0,0,7,0"/><TextBlock Text="{Binding Encounter}" Foreground="{DynamicResource TextBrush}" FontFamily="Consolas"/></StackPanel></DataTemplate></GridViewColumn.CellTemplate></GridViewColumn>
+                                                            <GridViewColumn Header="MATCHES" Width="90" DisplayMemberBinding="{Binding Matches}"/>
+                                                            <GridViewColumn Header="W–L" Width="90" DisplayMemberBinding="{Binding Record}"/>
+                                                            <GridViewColumn Header="AVG K/D" Width="100"><GridViewColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding AverageKD}" Foreground="{Binding KdColor}" FontFamily="Consolas" FontWeight="SemiBold" Padding="6,4"/></DataTemplate></GridViewColumn.CellTemplate></GridViewColumn>
+                                                        </GridView>
+                                                    </ListView.View>
+                                                </ListView>
+                                            </Grid>
+                                        </Grid>
                                     </Border>
                                 </StackPanel>
                             </ScrollViewer>

@@ -38,7 +38,14 @@ namespace HaloToolbox
 
             if (silent)
             {
-                WindowState   = WindowState.Minimized;
+                WindowStartupLocation = WindowStartupLocation.Manual;
+                WindowStyle = WindowStyle.None;
+                ResizeMode = ResizeMode.NoResize;
+                Width = 1;
+                Height = 1;
+                Left = -32000;
+                Top = -32000;
+                Opacity = 0;
                 ShowInTaskbar = false;
                 ShowActivated = false;
             }
@@ -74,7 +81,7 @@ namespace HaloToolbox
                     "https://mccapi.svc.halowaypoint.com/*",
                     CoreWebView2WebResourceContext.All);
 
-                Browser.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
+                Browser.CoreWebView2.WebResourceResponseReceived += OnWebResourceResponseReceived;
                 Browser.CoreWebView2.NavigationCompleted  += OnNavigationCompleted;
 
                 Browser.CoreWebView2.Navigate(ProfileUrl);
@@ -88,8 +95,7 @@ namespace HaloToolbox
                     StatusText.Text = $"WebView2 init failed: {ex.Message}";
                 else
                 {
-                    DialogResult = false;
-                    Close();
+                    CompleteAndClose(false);
                 }
             }
         }
@@ -98,15 +104,14 @@ namespace HaloToolbox
         {
             try
             {
-                await Task.Delay(15_000, cancellationToken);
+                await Task.Delay(30_000, cancellationToken);
                 if (!_captured && !_closing)
                 {
                     await Dispatcher.InvokeAsync(() =>
                     {
                         if (_closing)
                             return;
-                        DialogResult = false;
-                        Close();
+                        CompleteAndClose(false);
                     });
                 }
             }
@@ -126,7 +131,7 @@ namespace HaloToolbox
             {
                 if (Browser.CoreWebView2 is not null)
                 {
-                    Browser.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
+                    Browser.CoreWebView2.WebResourceResponseReceived -= OnWebResourceResponseReceived;
                     Browser.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
                 }
                 Browser.Dispose();
@@ -160,11 +165,13 @@ namespace HaloToolbox
             }
         }
 
-        private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+        private void OnWebResourceResponseReceived(object? sender, CoreWebView2WebResourceResponseReceivedEventArgs e)
         {
             if (_captured) return;
 
-            if (e.Request.Headers.Contains("x-343-authorization-spartan"))
+            int statusCode = e.Response.StatusCode;
+            if (statusCode is >= 200 and < 400 &&
+                e.Request.Headers.Contains("x-343-authorization-spartan"))
             {
                 string token = e.Request.Headers.GetHeader("x-343-authorization-spartan");
                 if (!string.IsNullOrWhiteSpace(token))
@@ -180,10 +187,23 @@ namespace HaloToolbox
                             StatusText.Text = "Token captured. Closing...";
                             await Task.Delay(1200);
                         }
-                        DialogResult = true;
-                        Close();
+                        CompleteAndClose(true);
                     });
                 }
+            }
+        }
+
+        private void CompleteAndClose(bool result)
+        {
+            try
+            {
+                // Setting DialogResult closes a modal window. Silent refreshes are
+                // modeless so the Toolbox remains responsive; those close directly.
+                DialogResult = result;
+            }
+            catch (InvalidOperationException)
+            {
+                Close();
             }
         }
     }

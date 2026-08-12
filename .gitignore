@@ -344,6 +344,10 @@ ASALocalRun/
 # Codex scratch workspace
 **/.codex_tmp/
 
+# Local RenderDoc investigation exports
+/rdoc_*.txt
+/reach_bloom_thumb.png
+
 # Local-only verified rejoin baseline (must never be published)
 /docs/REJOIN_WORKING_BASELINE.md
 

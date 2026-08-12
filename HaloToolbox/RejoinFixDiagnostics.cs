@@ -19,6 +19,7 @@ internal static class RejoinFixPaths
     public static string LastGameServerFile => Path.Combine(RootDirectory, "last-game-server.json");
     public static string LastMatchmakingPingsFile => Path.Combine(RootDirectory, "last-matchmaking-pings.json");
     public static string LastSmartMatchTicketFile => Path.Combine(RootDirectory, "last-smartmatch-ticket.json");
+    public static string SmartMatchAuthFile => Path.Combine(RootDirectory, "smartmatch-auth.dat");
     public static string LastMatchTicketSessionDocumentFile => Path.Combine(RootDirectory, "last-match-ticket-session-document.json");
     public static string LastMatchmakingSessionDocumentFile => Path.Combine(RootDirectory, "last-matchmaking-session-document.json");
     public static string BanSpartanTokenFile => Path.Combine(RootDirectory, "ban-spartan-token.dat");

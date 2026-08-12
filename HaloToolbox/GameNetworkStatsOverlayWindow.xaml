@@ -331,33 +331,30 @@
                                                 HorizontalAlignment="Stretch"/>
                     </Grid>
                 </Viewbox>
-                <Grid x:Name="SessionModernLayout" Visibility="Collapsed">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="235"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <TextBlock Text="SESSION"
-                                   Foreground="#00C8FF"
-                                   FontFamily="Consolas"
-                                   FontWeight="Bold"
-                                   FontSize="13"/>
-                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                            <TextBlock x:Name="SessionModernWinsText" Style="{StaticResource OverlayValue}" FontSize="20"/>
-                            <TextBlock x:Name="SessionModernLossesText" Style="{StaticResource OverlayValue}" FontSize="20" Margin="14,0,0,0"/>
+                <Viewbox x:Name="SessionModernLayout"
+                         Visibility="Collapsed"
+                         Stretch="Uniform"
+                         StretchDirection="Both"
+                         HorizontalAlignment="Stretch"
+                         VerticalAlignment="Stretch">
+                    <Grid Width="320" Height="135">
+                        <StackPanel>
+                            <TextBlock Text="SESSION"
+                                       Foreground="#00C8FF"
+                                       FontFamily="Consolas"
+                                       FontWeight="Bold"
+                                       FontSize="13"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                <TextBlock x:Name="SessionModernWinsText" Style="{StaticResource OverlayValue}" FontSize="20"/>
+                                <TextBlock x:Name="SessionModernLossesText" Style="{StaticResource OverlayValue}" FontSize="20" Margin="14,0,0,0"/>
+                            </StackPanel>
+                            <TextBlock x:Name="SessionModernGamesText" Style="{StaticResource OverlayLabel}" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="SessionModernKdText" Style="{StaticResource OverlayValue}" FontSize="18" Margin="0,10,0,0"/>
+                            <TextBlock x:Name="SessionModernKillsDeathsText" Style="{StaticResource OverlayLabel}" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="SessionModernBestSpreeText" Style="{StaticResource OverlayLabel}" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <TextBlock x:Name="SessionModernGamesText" Style="{StaticResource OverlayLabel}" Margin="0,2,0,0"/>
-                        <TextBlock x:Name="SessionModernKdText" Style="{StaticResource OverlayValue}" FontSize="18" Margin="0,10,0,0"/>
-                        <TextBlock x:Name="SessionModernKillsDeathsText" Style="{StaticResource OverlayLabel}" Margin="0,2,0,0"/>
-                        <TextBlock x:Name="SessionModernBestSpreeText" Style="{StaticResource OverlayLabel}" Margin="0,2,0,0"/>
-                    </StackPanel>
-                    <primitives:UniformGrid x:Name="SessionModernMedalsPanel"
-                                            Grid.Column="1"
-                                            Rows="1"
-                                            Columns="9"
-                                            VerticalAlignment="Stretch"
-                                            HorizontalAlignment="Stretch"/>
-                </Grid>
+                    </Grid>
+                </Viewbox>
                 </Grid>
             </Border>
 
