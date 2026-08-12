@@ -128,5 +128,19 @@ dotnet build HaloToolbox.sln -c Release
 **unit220** — testing
 
 Discord / Twitch / X: `theffapanda` · YouTube: `The FFA Panda`
+Also:
+Shoutout to the below projects which inspired various functionalities, I've learned more from your projects than I can document!
+
+H3 Dolly Cam:
+https://www.nexusmods.com/halothemasterchiefcollection/mods/1888?tab=files&file_id=6683
+
+Carnage Reporter:
+https://github.com/CYRiXplaysHalo/CarnageReporter
+
+Halo 3 Camera Tool:
+https://github.com/Krevil/Halo3CameraTool
+
+
+---
 
 BSD 3-Clause License — see [LICENSE.txt](LICENSE.txt).
