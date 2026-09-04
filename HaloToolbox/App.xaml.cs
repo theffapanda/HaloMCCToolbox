@@ -331,8 +331,29 @@ namespace HaloToolbox
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            if (ProxyService.TryGetProxyWatchdogOwnerPid(e.Args, out int proxyOwnerProcessId))
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                _ = RunProxyWatchdogAndShutdownAsync(proxyOwnerProcessId);
+                return;
+            }
+
+            var staleProxyRecovery = ToolboxWinInetProxy.RecoverStaleProxy();
+            if (staleProxyRecovery is StaleProxyRecoveryResult.RestoredSavedSettings or StaleProxyRecoveryResult.DisabledLegacyProxy)
+            {
+                RejoinFixDiagnostics.Warn(
+                    "proxy",
+                    $"Recovered stale Windows proxy settings during Toolbox startup ({staleProxyRecovery}).");
+            }
+
+            if (!ProxyService.TryRestoreWinHttpProxy())
+                RejoinFixDiagnostics.Warn("proxy", "A saved WinHTTP configuration still needs an elevated Toolbox launch to restore.");
+
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => RestoreOwnedProxySettings();
             DispatcherUnhandledException += (_, args) =>
             {
+                RestoreOwnedProxySettings();
                 try
                 {
                     ToolboxDialog.Show(
@@ -345,6 +366,7 @@ namespace HaloToolbox
             };
             AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             {
+                RestoreOwnedProxySettings();
                 if (args.ExceptionObject is Exception ex)
                 {
                     try
@@ -375,12 +397,36 @@ namespace HaloToolbox
             MainWindow = mainWindow;
             mainWindow.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
+
+            if (e.Args.Any(argument => argument.Equals("--vpn-connect", StringComparison.OrdinalIgnoreCase)))
+                Dispatcher.InvokeAsync(mainWindow.OpenVpnSectionAndConnectAsync);
         }
 
         protected override void OnExit(ExitEventArgs e)
         {
+            RestoreOwnedProxySettings();
             CleanupRetiredOverlayWebViewData();
             base.OnExit(e);
+        }
+
+        private async Task RunProxyWatchdogAndShutdownAsync(int ownerProcessId)
+        {
+            try
+            {
+                await ProxyService.RunProxyWatchdogAsync(ownerProcessId);
+            }
+            finally
+            {
+                Shutdown();
+            }
+        }
+
+        private static void RestoreOwnedProxySettings()
+        {
+            try { ToolboxWinInetProxy.RestoreForCurrentProcess(); }
+            catch { }
+            try { ToolboxWinHttpProxy.RestoreForOwner(Environment.ProcessId); }
+            catch { }
         }
 
         private static void CleanupRetiredOverlayWebViewData()
@@ -446,7 +492,9 @@ namespace HaloToolbox
             {
                 using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
                 var savedPath = key?.GetValue("MccInstallationPath") as string;
-                return string.IsNullOrWhiteSpace(savedPath) ? DefaultMccInstallationPath : savedPath;
+                return string.IsNullOrWhiteSpace(savedPath)
+                    ? DefaultMccInstallationPath
+                    : MccInstallationResolver.NormalizeRoot(savedPath);
             }
             catch
             {
@@ -462,7 +510,7 @@ namespace HaloToolbox
             try
             {
                 using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
-                key.SetValue("MccInstallationPath", path.Trim());
+                key.SetValue("MccInstallationPath", MccInstallationResolver.NormalizeRoot(path));
             }
             catch { }
         }
@@ -478,49 +526,24 @@ namespace HaloToolbox
         }
 
         public static bool IsValidMccInstallationPath(string? path)
-        {
-            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
-                return false;
+            => MccInstallationResolver.DetectKind(path) != MccInstallationKind.Unknown;
 
-            return Directory.Exists(Path.Combine(path, "halo3", "maps")) &&
-                   (File.Exists(Path.Combine(path, "MCC", "Binaries", "Win64", "MCC-Win64-Shipping.exe")) ||
-                    File.Exists(Path.Combine(path, "mcclauncher.exe")));
+        public static MccInstallationKind GetMccInstallationKind(string? path)
+            => MccInstallationResolver.DetectKind(path);
+
+        public static string GetMccInstallationLabel(string? path)
+            => MccInstallationResolver.Inspect(path)?.DisplayName ?? "NOT DETECTED";
+
+        public static IReadOnlyList<MccInstallationInfo> FindMccInstallations()
+        {
+            string? savedPath = HasSavedMccInstallationPath() ? LoadMccInstallationPath() : null;
+            return MccInstallationResolver.Discover(savedPath, DefaultMccInstallationPath);
         }
 
         public static string FindMccInstallationPath()
         {
-            var candidates = new List<string>();
-            if (HasSavedMccInstallationPath())
-                candidates.Add(LoadMccInstallationPath());
-            candidates.Add(DefaultMccInstallationPath);
-
-            try
-            {
-                using var steamKey = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
-                var steamPath = steamKey?.GetValue("SteamPath") as string;
-                if (!string.IsNullOrWhiteSpace(steamPath))
-                {
-                    candidates.Add(Path.Combine(steamPath, "steamapps", "common", "Halo The Master Chief Collection"));
-                    var libraries = Path.Combine(steamPath, "steamapps", "libraryfolders.vdf");
-                    if (File.Exists(libraries))
-                    {
-                        foreach (Match match in Regex.Matches(
-                            File.ReadAllText(libraries),
-                            "\"path\"\\s+\"([^\"]+)\"",
-                            RegexOptions.IgnoreCase))
-                        {
-                            var library = match.Groups[1].Value.Replace(@"\\", @"\");
-                            candidates.Add(Path.Combine(library, "steamapps", "common", "Halo The Master Chief Collection"));
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            return candidates
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault(IsValidMccInstallationPath)
-                ?? LoadMccInstallationPath();
+            return FindMccInstallations().FirstOrDefault()?.RootPath
+                ?? MccInstallationResolver.NormalizeRoot(LoadMccInstallationPath());
         }
 
         public static string LoadPlayerGamertag()
@@ -647,7 +670,7 @@ namespace HaloToolbox
             Set("SurfaceBrush",       "#080B0F");
             Set("BorderBrush",        "#1E2530");
             Set("TextBrush",          "#C8D8E8");
-            Set("MutedBrush",         "#4A5A6A");
+            Set("MutedBrush",         "#7A90A6");
             Set("SubtleBrush",        "#2A3A4A");
             Set("AccentBrush",        "#00C8FF");
             Set("GreenBrush",         "#39FF14");

@@ -189,7 +189,7 @@ public partial class GameNetworkStatsOverlayWindow : Window
     {
         (double width, double height, double minWidth, double minHeight) = _component switch
         {
-            "network" => (430, 132, 360, 112),
+            "network" => (430, 164, 360, 142),
             "wait" => (360, 112, 300, 96),
             "session" when _visualStyle == GameOverlayVisualStyle.Modern => (340, 160, 310, 145),
             "session" => (920, 230, 620, 215),
@@ -263,6 +263,22 @@ public partial class GameNetworkStatsOverlayWindow : Window
             : snapshot.ServerLabel;
         NetworkServerText.Text = serverText;
         NetworkModernServerText.Text = serverText;
+        string vpnText = string.IsNullOrWhiteSpace(snapshot.VpnRegion)
+            ? ""
+            : $"VPN: {snapshot.VpnRegion}";
+        NetworkVpnText.Text = vpnText;
+        NetworkModernVpnText.Text = vpnText;
+        NetworkVpnText.Visibility = vpnText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        NetworkModernVpnText.Visibility = vpnText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        NetworkFirewallStatusText.Text = snapshot.FirewallStatus;
+        NetworkFirewallStatusText.Foreground = Brush(
+            string.IsNullOrWhiteSpace(snapshot.FirewallStatusColor)
+                ? "#C8D8E8"
+                : snapshot.FirewallStatusColor);
+        NetworkFirewallStatusText.Visibility = string.IsNullOrWhiteSpace(snapshot.FirewallStatus)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
         bool hasNetwork = snapshot.RttMs.HasValue ||
             snapshot.UploadKilobytesPerSecond.HasValue ||
@@ -1046,7 +1062,7 @@ public partial class GameNetworkStatsOverlayWindow : Window
         {
             try
             {
-                var preferred = Process.GetProcessById(preferredProcessId.Value);
+                using var preferred = Process.GetProcessById(preferredProcessId.Value);
                 if (preferred.MainWindowHandle != IntPtr.Zero &&
                     IsWindowVisible(preferred.MainWindowHandle))
                 {
@@ -1063,24 +1079,25 @@ public partial class GameNetworkStatsOverlayWindow : Window
                 return hwnd;
         }
 
-        var processes = Process.GetProcessesByName("MCC-Win64-Shipping")
-            .Concat(Process.GetProcessesByName("MCC"));
-
-        foreach (var process in processes)
+        foreach (var process in MccProcessLocator.GetRuntimeProcesses(App.LoadMccInstallationPath()))
         {
             try
             {
                 if (process.MainWindowHandle != IntPtr.Zero)
                     return process.MainWindowHandle;
+
+                var hwnd = FindWindowForProcessId(process.Id);
+                if (hwnd != IntPtr.Zero)
+                    return hwnd;
             }
             catch
             {
                 // Process may exit while enumerating.
             }
-
-            var hwnd = FindWindowForProcessId(process.Id);
-            if (hwnd != IntPtr.Zero)
-                return hwnd;
+            finally
+            {
+                process.Dispose();
+            }
         }
 
         return IntPtr.Zero;

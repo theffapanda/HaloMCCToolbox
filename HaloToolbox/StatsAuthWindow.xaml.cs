@@ -53,8 +53,17 @@ namespace HaloToolbox
             Loaded += OnLoadedAsync;
         }
 
-        private string ProfileUrl =>
-            $"https://www.halowaypoint.com/halo-the-master-chief-collection/players/{Uri.EscapeDataString(_gamertag)}";
+        private string ProfileUrl
+        {
+            get
+            {
+                string url =
+                    $"https://www.halowaypoint.com/halo-the-master-chief-collection/players/{Uri.EscapeDataString(_gamertag)}";
+                return _silent
+                    ? $"{url}?toolboxRefresh={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"
+                    : url;
+            }
+        }
 
         private async void OnLoadedAsync(object sender, RoutedEventArgs e)
         {
@@ -104,7 +113,7 @@ namespace HaloToolbox
         {
             try
             {
-                await Task.Delay(30_000, cancellationToken);
+                await Task.Delay(45_000, cancellationToken);
                 if (!_captured && !_closing)
                 {
                     await Dispatcher.InvokeAsync(() =>
@@ -174,6 +183,9 @@ namespace HaloToolbox
                 e.Request.Headers.Contains("x-343-authorization-spartan"))
             {
                 string token = e.Request.Headers.GetHeader("x-343-authorization-spartan");
+                // A successful API response proves the token is usable. Waypoint may
+                // legitimately reuse the same token, so equality with the saved value
+                // must not make a silent refresh time out.
                 if (!string.IsNullOrWhiteSpace(token))
                 {
                     _captured = true;

@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -26,7 +27,9 @@ public class ProxyService : IDisposable
     private const string BanSummaryPath = "/hmcc/bansummary";
 
     // ── Configuration ─────────────────────────────────────────────────────────
-    public int Port { get; set; } = 8888;
+    public const int DefaultPort = 8888;
+    public const string DefaultProxyAddress = "127.0.0.1:8888";
+    public int Port { get; set; } = DefaultPort;
     private const int CertificateSetupTimeoutMs = 30000;
     private static readonly SemaphoreSlim CertificateSetupLock = new(1, 1);
 
@@ -62,6 +65,7 @@ public class ProxyService : IDisposable
 
     public event EventHandler<SmartMatchWaitEstimate>? OnSmartMatchWaitEstimateChanged;
     public event EventHandler? OnSmartMatchWaitCancelled;
+    public event EventHandler? BanSpartanTokenChanged;
 
     private readonly object _banSpartanTokenLock = new();
     private readonly object _smartMatchAuthLock = new();
@@ -97,6 +101,7 @@ public class ProxyService : IDisposable
     private string _playerGamertag = "";
 
     public string CurrentPlayerGamertag => _playerGamertag;
+    public string CurrentPlayerXuid => _playerXuid;
 
     // Golden-rule guard: the client receives the real MPSD roster whenever it
     // contains the player.  Recovery is a last-resort path only for a live
@@ -392,6 +397,7 @@ public class ProxyService : IDisposable
         }
 
         PersistBanSpartanToken(token, capturedAtUtc, sourceHost);
+        BanSpartanTokenChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public bool TryGetLatestBanSpartanToken(
@@ -425,6 +431,7 @@ public class ProxyService : IDisposable
         }
 
         try { File.Delete(RejoinFixPaths.BanSpartanTokenFile); } catch { }
+        BanSpartanTokenChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void PersistBanSpartanToken(string token, DateTimeOffset capturedAtUtc, string sourceHost)
@@ -676,11 +683,7 @@ public class ProxyService : IDisposable
     // ── Internals ─────────────────────────────────────────────────────────────
     private ProxyServer?           _server;
     private ExplicitProxyEndPoint? _endpoint;
-
-    // WinINet originals — restored on Stop()
-    private int    _savedProxyEnable;
-    private string _savedProxyServer   = "";
-    private string _savedProxyOverride = "";
+    private volatile bool _stopRequested;
 
     // ── Domain filter ─────────────────────────────────────────────────────────
     //
@@ -766,6 +769,11 @@ public class ProxyService : IDisposable
     {
         if (IsRunning) return;
 
+        var staleRecovery = ToolboxWinInetProxy.RecoverStaleProxy();
+        if (staleRecovery is StaleProxyRecoveryResult.RestoredSavedSettings or StaleProxyRecoveryResult.DisabledLegacyProxy)
+            RejoinFixDiagnostics.Warn("proxy", $"Recovered stale Windows proxy settings before startup ({staleRecovery}).");
+
+        _stopRequested = false;
         Directory.CreateDirectory(Path.GetDirectoryName(CertStorePath)!);
 
         ProxyServer? server = null;
@@ -791,12 +799,13 @@ public class ProxyService : IDisposable
             // WinINet proxy (no admin required)
             SetWinINetProxy($"127.0.0.1:{Port}");
             winInetProxySet = true;
+            IsRunning = true;
 
             // WinHTTP proxy: Halo MCC uses WinHTTP, not WinINet.
-            await TrySetWinHttpProxyAsync();
+            TrySetWinHttpProxy();
 
-            IsRunning = true;
-            RejoinFixDiagnostics.Info("proxy", $"Proxy started on 127.0.0.1:{Port}.");
+            if (!_stopRequested)
+                RejoinFixDiagnostics.Info("proxy", $"Proxy started on 127.0.0.1:{Port}.");
         }
         catch
         {
@@ -863,11 +872,19 @@ public class ProxyService : IDisposable
 
     private void CleanupFailedStart(ProxyServer? server, ExplicitProxyEndPoint? endpoint, bool restoreWinInetProxy)
     {
+        _stopRequested = true;
+
         try
         {
             if (restoreWinInetProxy)
                 RestoreWinINetProxy();
+        }
+        catch { }
 
+        ToolboxWinHttpProxy.RestoreForOwner(Environment.ProcessId);
+
+        try
+        {
             if (server is not null)
             {
                 server.BeforeRequest  -= OnBeforeRequestAsync;
@@ -892,26 +909,38 @@ public class ProxyService : IDisposable
 
     public void Stop()
     {
-        if (!IsRunning) return;
+        _stopRequested = true;
 
-        RestoreWinINetProxy();
-        TryResetWinHttpProxy(); // best-effort elevated netsh
+        // Always attempt restoration. Startup can be interrupted after Windows
+        // was changed but before IsRunning was committed.
+        try { RestoreWinINetProxy(); }
+        catch { }
+        try { ToolboxWinHttpProxy.RestoreForOwner(Environment.ProcessId); }
+        catch { }
 
-        if (_server is not null)
+        if (!IsRunning && _server is null)
+            return;
+
+        try
         {
-            _server.BeforeRequest  -= OnBeforeRequestAsync;
-            _server.BeforeResponse -= OnBeforeResponseAsync;
-            if (_endpoint is not null)
+            if (_server is not null)
             {
-                _endpoint.BeforeTunnelConnectRequest -= OnBeforeTunnelConnectRequest;
-                _endpoint = null;
+                _server.BeforeRequest  -= OnBeforeRequestAsync;
+                _server.BeforeResponse -= OnBeforeResponseAsync;
+                if (_endpoint is not null)
+                    _endpoint.BeforeTunnelConnectRequest -= OnBeforeTunnelConnectRequest;
+                try { _server.Stop(); }
+                catch { }
+                try { _server.Dispose(); }
+                catch { }
             }
-            _server.Stop();
-            _server.Dispose();
-            _server = null;
         }
-
-        IsRunning = false;
+        finally
+        {
+            _endpoint = null;
+            _server = null;
+            IsRunning = false;
+        }
         RejoinFixDiagnostics.Info("proxy", "Proxy stopped and system proxy settings were restored.");
     }
 
@@ -3324,7 +3353,7 @@ public class ProxyService : IDisposable
         OnRequestCaptured?.Invoke(this, entry);
     }
 
-    private static void PersistMatchmakingSessionDocument(string url, string body)
+    private void PersistMatchmakingSessionDocument(string url, string body)
     {
         if (string.IsNullOrWhiteSpace(body) ||
             !url.Contains("sessiondirectory.xboxlive.com", StringComparison.OrdinalIgnoreCase))
@@ -3350,7 +3379,7 @@ public class ProxyService : IDisposable
         {
             // Validate before replacing the last known-good capture, then preserve
             // the exact service document rather than reshaping it.
-            using var _ = JsonDocument.Parse(body);
+            using var document = JsonDocument.Parse(body);
             RejoinFixPaths.EnsureRootDirectory();
             File.WriteAllText(path, body);
             RejoinFixDiagnostics.Info("capture", $"Saved latest {label} document for passive analysis.");
@@ -3568,78 +3597,107 @@ public class ProxyService : IDisposable
     // ── WinINet (no admin) ────────────────────────────────────────────────────
     private void SetWinINetProxy(string proxyAddress)
     {
-        const string key = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-        using var reg = Registry.CurrentUser.OpenSubKey(key, writable: true);
-        if (reg is null) return;
-
-        _savedProxyEnable   = (int)(reg.GetValue("ProxyEnable")   ?? 0);
-        _savedProxyServer   = (string)(reg.GetValue("ProxyServer") ?? "");
-        _savedProxyOverride = (string)(reg.GetValue("ProxyOverride") ?? "");
-
-        reg.SetValue("ProxyEnable",   1,                                  RegistryValueKind.DWord);
-        reg.SetValue("ProxyServer",   proxyAddress,                       RegistryValueKind.String);
-        reg.SetValue("ProxyOverride", string.Join(';', _systemProxyBypassHosts), RegistryValueKind.String);
-
-        InternetSetOption(IntPtr.Zero, INTERNET_OPTION_SETTINGS_CHANGED, IntPtr.Zero, 0);
-        InternetSetOption(IntPtr.Zero, INTERNET_OPTION_REFRESH,          IntPtr.Zero, 0);
+        ToolboxWinInetProxy.Enable(
+            proxyAddress,
+            string.Join(';', _systemProxyBypassHosts),
+            StartProxyWatchdog);
     }
 
-    private void RestoreWinINetProxy()
+    private static void RestoreWinINetProxy() => ToolboxWinInetProxy.RestoreForCurrentProcess();
+
+    // ── WinHTTP (administrator; needed for Microsoft Store MCC) ──────────────
+    private void TrySetWinHttpProxy()
     {
-        const string key = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-        using var reg = Registry.CurrentUser.OpenSubKey(key, writable: true);
-        if (reg is null) return;
-
-        reg.SetValue("ProxyEnable",   _savedProxyEnable,   RegistryValueKind.DWord);
-        reg.SetValue("ProxyServer",   _savedProxyServer,   RegistryValueKind.String);
-        reg.SetValue("ProxyOverride", _savedProxyOverride, RegistryValueKind.String);
-
-        InternetSetOption(IntPtr.Zero, INTERNET_OPTION_SETTINGS_CHANGED, IntPtr.Zero, 0);
-        InternetSetOption(IntPtr.Zero, INTERNET_OPTION_REFRESH,          IntPtr.Zero, 0);
+        string proxyAddress = $"127.0.0.1:{Port}";
+        string proxyBypass = string.Join(';', _systemProxyBypassHosts);
+        if (!ToolboxWinHttpProxy.Enable(proxyAddress, proxyBypass, Environment.ProcessId))
+            NotifyWinHttpManualFallback("Windows rejected the WinHTTP proxy update or its recovery lease.");
     }
 
-    // ── WinHTTP (admin / UAC required — needed for Halo MCC) ─────────────────
-    private async Task TrySetWinHttpProxyAsync()
+    internal static bool TryRestoreWinHttpProxy() => ToolboxWinHttpProxy.RecoverStaleProxy();
+
+    private void NotifyWinHttpManualFallback(string reason)
     {
+        RejoinFixDiagnostics.Warn("proxy", $"WinHTTP proxy update was skipped: {reason}");
+        WinHttpManualSetRequired?.Invoke(this, "netsh winhttp import proxy source=ie");
+    }
+
+    private static void StartProxyWatchdog()
+    {
+        string executablePath = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Could not locate the Toolbox executable for proxy recovery.");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executablePath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+
+        if (Path.GetFileNameWithoutExtension(executablePath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            string assemblyPath = Assembly.GetEntryAssembly()?.Location
+                ?? throw new InvalidOperationException("Could not locate the Toolbox assembly for proxy recovery.");
+            startInfo.ArgumentList.Add(assemblyPath);
+        }
+
+        startInfo.ArgumentList.Add("--proxy-watchdog");
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+
+        using var watchdog = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Could not start the Toolbox proxy recovery watchdog.");
+    }
+
+    internal static bool TryGetProxyWatchdogOwnerPid(IReadOnlyList<string> arguments, out int ownerProcessId)
+    {
+        ownerProcessId = 0;
+        return arguments.Count == 2 &&
+               arguments[0].Equals("--proxy-watchdog", StringComparison.OrdinalIgnoreCase) &&
+               int.TryParse(arguments[1], out ownerProcessId) &&
+               ownerProcessId > 0;
+    }
+
+    internal static async Task RunProxyWatchdogAsync(int ownerProcessId)
+    {
+        Process? owner = null;
         try
         {
-            var psi = new ProcessStartInfo
+            try { owner = Process.GetProcessById(ownerProcessId); }
+            catch { }
+
+            while (HasProxyLease(ownerProcessId))
             {
-                FileName        = "netsh",
-                Arguments       = "winhttp import proxy source=ie",
-                Verb            = "runas",   // triggers UAC elevation prompt
-                UseShellExecute = true,
-                CreateNoWindow  = true,
-                WindowStyle     = ProcessWindowStyle.Hidden,
-            };
-            var p = Process.Start(psi);
-            await Task.Run(() => p?.WaitForExit(8000));
+                if (owner is null)
+                    break;
+
+                try
+                {
+                    if (owner.HasExited)
+                        break;
+                }
+                catch
+                {
+                    break;
+                }
+
+                await Task.Delay(500).ConfigureAwait(false);
+            }
+
+            if (HasProxyLease(ownerProcessId))
+            {
+                ToolboxWinInetProxy.RestoreForOwner(ownerProcessId);
+                ToolboxWinHttpProxy.RestoreForOwner(ownerProcessId);
+            }
         }
-        catch
+        finally
         {
-            // User cancelled UAC or insufficient rights — surface the manual fallback
-            RejoinFixDiagnostics.Warn("proxy", "WinHTTP proxy update needs elevation; manual netsh command may be required.");
-            WinHttpManualSetRequired?.Invoke(this,
-                "netsh winhttp import proxy source=ie");
+            owner?.Dispose();
         }
     }
 
-    private static void TryResetWinHttpProxy()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName        = "netsh",
-                Arguments       = "winhttp reset proxy",
-                Verb            = "runas",
-                UseShellExecute = true,
-                CreateNoWindow  = true,
-                WindowStyle     = ProcessWindowStyle.Hidden,
-            });
-        }
-        catch { /* best-effort */ }
-    }
+    private static bool HasProxyLease(int ownerProcessId) =>
+        ToolboxWinInetProxy.LeaseBelongsTo(ownerProcessId) ||
+        ToolboxWinHttpProxy.LeaseBelongsTo(ownerProcessId);
 
     // ── Ghost Session Handling ────────────────────────────────────────────────
     // When enabled, fake MPSD responses to make MCC think it's still in the
@@ -4710,14 +4768,6 @@ public class ProxyService : IDisposable
         Task.Delay(
             TimeSpan.FromMilliseconds(Math.Min(5000, 500 * Math.Pow(2, attempt - 1))),
             cancellationToken);
-
-    // ── WinINet P/Invoke ──────────────────────────────────────────────────────
-    [DllImport("wininet.dll", SetLastError = true)]
-    private static extern bool InternetSetOption(
-        IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);
-
-    private const int INTERNET_OPTION_REFRESH          = 37;
-    private const int INTERNET_OPTION_SETTINGS_CHANGED = 39;
 
     /// <summary>
     /// Reconstructs a PlayFab RequestParty response using cached game server info.

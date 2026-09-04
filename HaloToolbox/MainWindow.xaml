@@ -10,7 +10,11 @@
         WindowStyle="None"
         AllowsTransparency="False"
         Background="{DynamicResource BgBrush}"
-        ResizeMode="CanResizeWithGrip">
+        ResizeMode="CanResizeWithGrip"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Ideal"
+        TextOptions.TextRenderingMode="Auto">
 
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="0"
@@ -126,6 +130,121 @@
             </Setter>
         </Style>
 
+        <!-- Lightweight task navigation. The existing TabControl remains the
+             content/lifecycle owner; these radios only select its pages. -->
+        <Style x:Key="SidebarNavButton" TargetType="RadioButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="2,0,0,0"/>
+            <Setter Property="Padding" Value="11,8"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="NavBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="NavBorder" Property="Background" Value="#0D1820"/>
+                                <Setter TargetName="NavBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SidebarSectionLabel" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+            <Setter Property="Margin" Value="8,14,0,6"/>
+        </Style>
+
+        <Style x:Key="SidebarStatusLink" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#8499AC"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="Center"/>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SidebarStatusActionButton"
+               TargetType="Button"
+               BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Padding" Value="3,0"/>
+            <Setter Property="FontSize" Value="9"/>
+        </Style>
+
+        <Style x:Key="HomeTaskButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,11"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="TaskBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TaskBorder" Property="Background" Value="#0D1820"/>
+                                <Setter TargetName="TaskBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="TaskBorder" Property="Opacity" Value="0.8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
     <!-- Outer chrome -->
@@ -185,6 +304,20 @@
                             <Run Foreground="{DynamicResource AccentBrush}" Text=" TOOLBOX"/>
                             <Run Foreground="{DynamicResource MutedBrush}" Text="  ·  THE FFA PANDA"/>
                         </TextBlock>
+                        <Border Margin="12,0,0,0"
+                                Padding="8,3"
+                                Background="#101C26"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                VerticalAlignment="Center">
+                            <TextBlock x:Name="TxtMccEditionBadge"
+                                       Text="MCC: CHECKING"
+                                       FontFamily="Consolas"
+                                       FontSize="9"
+                                       FontWeight="Bold"
+                                       Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
                     </StackPanel>
 
                     <!-- Window controls -->
@@ -241,7 +374,8 @@
                                     <CheckBox x:Name="ShowStatsSection" Content="Stats" Tag="Stats" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowTheaterSection" Content="Theater" Tag="Theater" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowPlaylistsSection" Content="Playlists" Tag="Playlists" Margin="0,3" Click="SectionVisibility_Click"/>
-                                    <CheckBox x:Name="ShowAboutSection" Content="About" Tag="About" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowVpnSection" Content="VPN" Tag="Vpn" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowAboutSection" Content="About" IsChecked="True" IsEnabled="False" Margin="0,3"/>
                                     <CheckBox x:Name="ShowLogSection" Content="Log" Tag="Log" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <Button x:Name="ToggleAllSectionsBtn" Content="HIDE ALL" Margin="0,12,0,0" Padding="8,4"
                                             FontFamily="Consolas" FontSize="10"
@@ -379,32 +513,246 @@
 
             <!-- ══ MAIN CONTENT ══ -->
             <Grid Grid.Row="1">
-                <!-- TabControl fills the grid -->
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="210"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Task-based navigation. Optional entries mirror the existing
+                     section visibility settings through element bindings. -->
+                <Border Grid.Column="0"
+                        Background="{DynamicResource SurfaceBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="0,0,1,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                    <ScrollViewer Grid.Row="0"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Style="{StaticResource FlatScrollViewer}">
+                        <StackPanel Margin="9,10">
+                            <TextBlock Text="START" Style="{StaticResource SidebarSectionLabel}" Margin="8,0,0,6"/>
+                            <RadioButton x:Name="SidebarHomeButton"
+                                         GroupName="MainNavigation" Tag="Home"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="⌂" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="HOME" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+
+                            <TextBlock Text="PLAY" Style="{StaticResource SidebarSectionLabel}"/>
+                            <RadioButton x:Name="SidebarMapsButton"
+                                         GroupName="MainNavigation" Tag="Maps"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="🗺" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="HALO 3 MAPS" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarModsButton"
+                                         GroupName="MainNavigation" Tag="H3Mods"
+                                         Visibility="{Binding Visibility, ElementName=H3ModsSection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="🔧" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="MODS" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarPlaylistsButton"
+                                         GroupName="MainNavigation" Tag="Playlists"
+                                         Visibility="{Binding Visibility, ElementName=PlaylistsSection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="▤" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="PLAYLISTS" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+
+                            <TextBlock Text="NETWORK" Style="{StaticResource SidebarSectionLabel}"/>
+                            <RadioButton x:Name="SidebarVpnButton"
+                                         GroupName="MainNavigation" Tag="Vpn"
+                                         Visibility="{Binding Visibility, ElementName=VpnSection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="◈" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="MCC VPN" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarFeaturesButton"
+                                         GroupName="MainNavigation" Tag="Features"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="↻" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="LIVE FEATURES" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+
+                            <TextBlock Text="REVIEW" Style="{StaticResource SidebarSectionLabel}"/>
+                            <RadioButton x:Name="SidebarStatsButton"
+                                         GroupName="MainNavigation" Tag="Stats"
+                                         Visibility="{Binding Visibility, ElementName=StatsSection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="▥" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="STATS" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarBanCheckerButton"
+                                         GroupName="MainNavigation" Tag="BanChecker"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="🔨" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="BAN CHECKER" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarTheaterButton"
+                                         GroupName="MainNavigation" Tag="Theater"
+                                         Visibility="{Binding Visibility, ElementName=TheaterSection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="▣" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="THEATER" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarReportButton"
+                                         GroupName="MainNavigation" Tag="Report"
+                                         Visibility="{Binding Visibility, ElementName=ReportSection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="♟" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="REPORT" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+
+                            <TextBlock Text="SYSTEM" Style="{StaticResource SidebarSectionLabel}"/>
+                            <RadioButton x:Name="SidebarFixesButton"
+                                         GroupName="MainNavigation" Tag="Fixes"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="✦" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="FIXES" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarLogButton"
+                                         GroupName="MainNavigation" Tag="Log"
+                                         Visibility="{Binding Visibility, ElementName=LogSection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="▧" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="LOG" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarAboutButton"
+                                         GroupName="MainNavigation" Tag="About"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="□" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="ABOUT" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                        <Border Grid.Row="1"
+                                Background="{DynamicResource PanelBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Margin="9,4,9,10"
+                                Padding="12,10"
+                                TextOptions.TextFormattingMode="Ideal"
+                                TextOptions.TextRenderingMode="Auto">
+                            <StackPanel>
+                                <TextBlock Text="TOOLBOX STATUS"
+                                           FontFamily="Consolas" FontSize="12" FontWeight="Bold"
+                                           Foreground="{DynamicResource AccentBrush}"
+                                           Margin="0,0,0,8"/>
+                                <Grid Margin="0,5" MinHeight="20">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="MCC" FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                                               Foreground="#8499AC" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="HomeMccStatus" Grid.Column="1" Text="CHECKING"
+                                               FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                                               Foreground="#71869A" VerticalAlignment="Center"/>
+                                </Grid>
+                                <Grid Margin="0,5" MinHeight="20">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="MCC VPN" FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                                               Foreground="#8499AC" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="HomeVpnStatus" Grid.Column="1" Text="OFF"
+                                               FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                                               Foreground="#71869A" VerticalAlignment="Center"
+                                               MaxWidth="105" TextTrimming="CharacterEllipsis"/>
+                                </Grid>
+                                <Grid Margin="0,5" MinHeight="20">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="LIVE FEATURES"
+                                            Tag="Features"
+                                            Style="{StaticResource SidebarStatusLink}"
+                                            ToolTip="Open Live Features configuration"
+                                            Click="ToolsHomeTask_Click"/>
+                                    <TextBlock x:Name="HomeFeaturesStatus"
+                                               Grid.Column="1"
+                                               Text="● OFF"
+                                               FontFamily="Consolas"
+                                               FontSize="9"
+                                               FontWeight="Bold"
+                                               Foreground="#71869A"
+                                               VerticalAlignment="Center"
+                                               Margin="3,0,4,0"/>
+                                    <Button x:Name="SidebarFeaturesToggleButton"
+                                            Grid.Column="2"
+                                            Content="START"
+                                            Style="{StaticResource SidebarStatusActionButton}"
+                                            ToolTip="Start Live Features without leaving this page"
+                                            Click="BtnRejoinFix_Click"/>
+                                </Grid>
+                                <Grid Margin="0,5" MinHeight="20">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="WAYPOINT" FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                                               Foreground="#8499AC" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="StatsHwStatusLabel" Grid.Column="1" Text="NOT CONNECTED"
+                                               FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                                               Foreground="#71869A" VerticalAlignment="Center"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- The original TabControl stays in place so startup restoration,
+                     lazy section creation, and every existing handler keep working. -->
                 <TabControl x:Name="MainTabs"
+                        Grid.Column="1"
                         Style="{StaticResource DarkTab}"
                         Background="{DynamicResource BgBrush}"
                         Margin="0">
 
-                <!-- Tab headers row -->
+                <!-- Headers are replaced by the task sidebar; content ownership is unchanged. -->
                 <TabControl.Template>
                     <ControlTemplate TargetType="TabControl">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-                            <Border Grid.Row="0"
-                                    Background="{DynamicResource SurfaceBrush}"
-                                    BorderBrush="{DynamicResource BorderBrush}"
-                                    BorderThickness="0,0,0,1">
-                                <TabPanel IsItemsHost="True"
-                                          Background="Transparent"
-                                          Margin="8,0"/>
-                            </Border>
-                            <ContentPresenter Grid.Row="1"
-                                              ContentSource="SelectedContent"
-                                              Margin="0"/>
-                        </Grid>
+                        <ContentPresenter ContentSource="SelectedContent" Margin="0"/>
                     </ControlTemplate>
                 </TabControl.Template>
 
@@ -423,8 +771,216 @@
                             <RowDefinition Height="*"/>     <!-- map selector -->
                         </Grid.RowDefinitions>
 
+                        <!-- Tools home: a lightweight task launcher. Existing tool
+                             controls stay instantiated behind it so startup state,
+                             bindings, and Rejoin events are unchanged. -->
+                        <Grid x:Name="ToolsHomePanel" Grid.Row="0" Grid.RowSpan="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="0,0,0,1" Padding="0,0,0,14" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="⌂ " FontSize="16" Foreground="{DynamicResource AccentBrush}"/>
+                                        <TextBlock Text="HOME" FontFamily="Consolas" FontSize="15" FontWeight="Bold"
+                                                   Foreground="{DynamicResource TextBrush}"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Everything in the Toolbox, organized around the task you want to complete."
+                                               FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}"
+                                               Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Row="1"
+                                    Background="{DynamicResource PanelBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="14"
+                                    Margin="0,0,0,16">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,9">
+                                        <TextBlock Text="📁 " FontSize="16" VerticalAlignment="Center"/>
+                                        <TextBlock Text="MCC INSTALLATION PATH"
+                                                   FontFamily="Consolas" FontSize="12" FontWeight="Bold"
+                                                   Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="HomeMccPathText"
+                                                 Grid.Column="0"
+                                                 Style="{StaticResource DarkTextBox}"
+                                                 Margin="0,0,8,0"
+                                                 Text="{Binding Text, ElementName=TxtMccPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <Button Grid.Column="1"
+                                                Content="BROWSE"
+                                                Style="{StaticResource PrimaryButton}"
+                                                Padding="12,6"
+                                                Click="BtnBrowse_Click"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Row="2"
+                                    Background="{DynamicResource PanelBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="14"
+                                    Margin="0,0,0,16">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,9">
+                                        <TextBlock Text="♙ " FontSize="16" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource AccentBrush}"/>
+                                        <TextBlock Text="PLAYER &amp; WAYPOINT"
+                                                   FontFamily="Consolas" FontSize="12" FontWeight="Bold"
+                                                   Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="GAMERTAG"
+                                                   FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"
+                                                   Margin="0,0,10,0"/>
+                                        <TextBox x:Name="StatsGamertagBox" Grid.Column="1"
+                                                 Style="{StaticResource DarkTextBox}"
+                                                 FontSize="13" FontWeight="SemiBold"
+                                                 KeyDown="StatsGamertagBox_KeyDown"/>
+                                        <Button x:Name="StatsApplyBtn" Grid.Column="2"
+                                                Content="APPLY" Style="{StaticResource PrimaryButton}"
+                                                Margin="8,0,0,0" Click="StatsApplyBtn_Click"/>
+                                    </Grid>
+                                    <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,11"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="HALO WAYPOINT"
+                                                       FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextBrush}"/>
+                                            <TextBlock Text="Connect once to enable match history and recent-game stats."
+                                                       FontFamily="Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource MutedBrush}" Margin="0,4,12,0"/>
+                                        </StackPanel>
+                                        <Button x:Name="StatsHwAuthBtn" Grid.Column="1"
+                                                Content="CONNECT WAYPOINT"
+                                                Style="{StaticResource PrimaryButton}"
+                                                Padding="10,6"
+                                                ToolTip="Sign in to Halo Waypoint to enable match history and recent 100-game stats."
+                                                Click="StatsHwAuthBtn_Click"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <ScrollViewer Grid.Row="3"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          Style="{StaticResource FlatScrollViewer}">
+
+                                <StackPanel>
+                                    <TextBlock Text="COMMON TASKS" FontFamily="Consolas" FontSize="10" FontWeight="Bold"
+                                               Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,9"/>
+
+                                    <Button Tag="Maps" Style="{StaticResource HomeTaskButton}"
+                                            Click="ToolsHomeTask_Click" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextBrush}">
+                                                    <Run Foreground="{DynamicResource AccentBrush}" Text="🗺  "/><Run Text="MANAGE HALO 3 MAPS"/>
+                                                </TextBlock>
+                                                <TextBlock Text="Choose which multiplayer maps MCC should load."
+                                                           FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="OPEN  ›" FontFamily="Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                        </Grid>
+                                    </Button>
+
+                                    <Button Tag="Vpn" Style="{StaticResource HomeTaskButton}"
+                                            Visibility="{Binding Visibility, ElementName=VpnSection}"
+                                            Click="ToolsHomeTask_Click" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextBrush}">
+                                                    <Run Foreground="{DynamicResource AccentBrush}" Text="◈  "/><Run Text="CONNECT MCC VPN"/>
+                                                </TextBlock>
+                                                <TextBlock Text="Route MCC through NordVPN while every other app stays direct."
+                                                           FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="OPEN  ›" FontFamily="Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                        </Grid>
+                                    </Button>
+
+                                    <Button Tag="BanChecker" Style="{StaticResource HomeTaskButton}"
+                                            Click="ToolsHomeTask_Click" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextBrush}">
+                                                    <Run Foreground="{DynamicResource AccentBrush}" Text="🔨  "/><Run Text="CHECK PLAYER BANS"/>
+                                                </TextBlock>
+                                                <TextBlock Text="Check up to 15 gamertags or XUIDs using MCC authorization."
+                                                           FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}"
+                                                           Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="OPEN  ›" FontFamily="Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                        </Grid>
+                                    </Button>
+
+                                    <Button Tag="Fixes" Style="{StaticResource HomeTaskButton}"
+                                            Click="ToolsHomeTask_Click" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextBrush}">
+                                                    <Run Foreground="{DynamicResource OrangeBrush}" Text="✦  "/><Run Text="FIX AN MCC PROBLEM"/>
+                                                </TextBlock>
+                                                <TextBlock Text="Repair sign-in, EasyAntiCheat, or audio-device issues."
+                                                           FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="OPEN  ›" FontFamily="Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                        </Grid>
+                                    </Button>
+
+                                    <Button Tag="Features" Style="{StaticResource HomeTaskButton}"
+                                            Click="ToolsHomeTask_Click">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextBrush}">
+                                                    <Run Foreground="{DynamicResource AccentBrush}" Text="↻  "/><Run Text="CONFIGURE LIVE FEATURES"/>
+                                                </TextBlock>
+                                                <TextBlock Text="Rejoin Recovery, firewall fixes, and stream overlays."
+                                                           FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="OPEN  ›" FontFamily="Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                        </Grid>
+                                    </Button>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+
                         <!-- Section: Fix & Repair -->
-                        <TextBlock Grid.Row="0"
+                        <TextBlock x:Name="FixRepairSectionLabel" Grid.Row="0" Visibility="Collapsed"
                                    Text="— FIX &amp; REPAIR"
                                    FontFamily="Consolas"
                                    FontSize="10"
@@ -433,7 +989,7 @@
                                    Margin="0,0,0,10"/>
 
                         <!-- Clean Credentials Card -->
-                        <Border Grid.Row="1"
+                        <Border x:Name="CleanCredentialsCard" Grid.Row="1" Visibility="Collapsed"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -482,7 +1038,7 @@
                         </Border>
 
                         <!-- EAC Repair Card -->
-                        <Border Grid.Row="2"
+                        <Border x:Name="EacRepairCard" Grid.Row="2" Visibility="Collapsed"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -531,7 +1087,7 @@
                         </Border>
 
                         <!-- Audio Device Repair Card -->
-                        <Border Grid.Row="3"
+                        <Border x:Name="AudioRepairCard" Grid.Row="3" Visibility="Collapsed"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -580,7 +1136,7 @@
                         </Border>
 
                         <!-- Advanced Features Card -->
-                        <Border Grid.Row="4"
+                        <Border x:Name="AdvancedFeaturesCard" Grid.Row="4" Visibility="Collapsed"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -636,13 +1192,14 @@
                                                    FontSize="10"
                                                    Margin="0,4,0,0"
                                                    Foreground="{DynamicResource MutedBrush}"/>
-                                        <CheckBox x:Name="ChkRejoinRecovery"
-                                                  Content="REJOIN RECOVERY"
-                                                  Style="{StaticResource MapCheckBox}"
-                                                  FontSize="10"
-                                                  Margin="0,8,0,0"
-                                                  Focusable="False"
-                                                  IsHitTestVisible="False"/>
+                                        <TextBlock x:Name="TxtRejoinRecoveryStatus"
+                                                   Text="○ REJOIN RECOVERY · CORE · STARTS WITH SERVICES"
+                                                   FontFamily="Consolas"
+                                                   FontSize="10"
+                                                   FontWeight="Bold"
+                                                   Margin="0,8,0,0"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   ToolTip="Rejoin Recovery is a core component. It is always active while Advanced Features are running and stops with them."/>
                                         <CheckBox x:Name="ChkRejoinFixFirewall"
                                                   Content="Firewall Fix (Campaign)"
                                                   Style="{StaticResource MapCheckBox}"
@@ -862,7 +1419,7 @@
                         </Border>
 
                         <!-- MCC Installation Path -->
-                        <Border Grid.Row="6"
+                        <Border x:Name="MccInstallationPathCard" Grid.Row="6" Visibility="Collapsed"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
@@ -902,7 +1459,7 @@
                         </Border>
 
                         <!-- Map Selector -->
-                        <Border Grid.Row="7"
+                        <Border x:Name="MapSelectorPanel" Grid.Row="7" Visibility="Collapsed"
                                 Background="Transparent"
                                 BorderThickness="0"
                                 VerticalAlignment="Stretch">
@@ -1597,74 +2154,16 @@
 
                     <Grid>
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/> <!-- 0: Gamertag input -->
-                            <RowDefinition Height="Auto"/> <!-- 1: Stats bar -->
-                            <RowDefinition Height="Auto"/> <!-- 2: Buttons -->
-                            <RowDefinition Height="Auto"/> <!-- 3: Population -->
-                            <RowDefinition Height="Auto"/> <!-- 4: Team summary -->
-                            <RowDefinition Height="*"/>    <!-- 5: Lobby list -->
-                            <RowDefinition Height="Auto"/> <!-- 6: Status bar -->
+                            <RowDefinition Height="Auto"/> <!-- 0: Stats bar -->
+                            <RowDefinition Height="Auto"/> <!-- 1: Buttons -->
+                            <RowDefinition Height="Auto"/> <!-- 2: Population -->
+                            <RowDefinition Height="Auto"/> <!-- 3: Team summary -->
+                            <RowDefinition Height="*"/>    <!-- 4: Lobby list -->
+                            <RowDefinition Height="Auto"/> <!-- 5: Status bar -->
                         </Grid.RowDefinitions>
 
-                        <!-- ── Row 0: Gamertag input ──────────────────────────────────── -->
-                        <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
-                                BorderThickness="0,0,0,1" Padding="14,10">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-
-                                <TextBlock Grid.Column="0" Text="GAMERTAG"
-                                           FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"
-                                           Margin="0,0,10,0"/>
-
-                                <TextBox x:Name="StatsGamertagBox"
-                                         Grid.Column="1"
-                                         Style="{StaticResource DarkTextBox}"
-                                         FontSize="13" FontWeight="SemiBold"
-                                         KeyDown="StatsGamertagBox_KeyDown"/>
-
-                                <Button x:Name="StatsApplyBtn"
-                                        Grid.Column="2"
-                                        Content="APPLY"
-                                        Style="{StaticResource PrimaryButton}"
-                                        Margin="8,0,0,0"
-                                        Click="StatsApplyBtn_Click"/>
-
-                                <TextBlock x:Name="StatsHwStatusLabel"
-                                           Grid.Column="3"
-                                           Text="WAYPOINT: NOT CONNECTED"
-                                           FontFamily="Consolas" FontSize="11"
-                                           Foreground="{DynamicResource MutedBrush}"
-                                           VerticalAlignment="Center"
-                                           Margin="14,0,8,0"/>
-
-                                <Button x:Name="StatsHwAuthBtn"
-                                        Grid.Column="4"
-                                        Content="CONNECT WAYPOINT"
-                                        Style="{StaticResource PrimaryButton}"
-                                        Padding="10,6"
-                                        ToolTip="Sign in to Halo Waypoint to enable match history and recent 100-game stats."
-                                        Margin="0,0,8,0"
-                                        Click="StatsHwAuthBtn_Click"/>
-
-                                <Button x:Name="StatsSyncBtn"
-                                        Grid.Column="5"
-                                        Content="↻ SYNC"
-                                        Style="{StaticResource PrimaryButton}"
-                                        ToolTip="Refresh lifetime stats for the applied gamertag."
-                                        Click="StatsSyncBtn_Click"/>
-                            </Grid>
-                        </Border>
-
-                        <!-- ── Row 1: Stats summary bar ───────────────────────────────── -->
-                        <Border Grid.Row="1" Background="{DynamicResource BgBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                        <!-- ── Row 0: Stats summary bar ───────────────────────────────── -->
+                        <Border Grid.Row="0" Background="{DynamicResource BgBrush}" BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="14,8">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -1693,13 +2192,6 @@
                                             Padding="8,3" FontSize="11"
                                             Margin="16,0,0,0" VerticalAlignment="Center"
                                             Click="BtnStatsMyHistory_Click"/>
-                                    <Button x:Name="BtnStatsBanChecker"
-                                            Content="BAN CHECKER"
-                                            Style="{StaticResource PrimaryButton}"
-                                            Padding="8,3" FontSize="11"
-                                            Margin="8,0,0,0" VerticalAlignment="Center"
-                                            ToolTip="Open the multi-player ban checker (up to 15 gamertags or XUIDs)."
-                                            Click="BtnStatsBanChecker_Click"/>
                                 </StackPanel>
 
                                 <!-- Session stats -->
@@ -1741,11 +2233,17 @@
                             </Grid>
                         </Border>
 
-                        <!-- ── Row 2: Action buttons ──────────────────────────────────── -->
-                        <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                        <!-- ── Row 1: Action buttons ──────────────────────────────────── -->
+                        <Border Grid.Row="1" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="14,8">
                             <DockPanel LastChildFill="False">
                             <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                <Button x:Name="StatsSyncBtn"
+                                        Content="↻ SYNC STATS"
+                                        Style="{StaticResource PrimaryButton}"
+                                        ToolTip="Refresh lifetime stats for the applied gamertag."
+                                        Margin="0,0,6,0"
+                                        Click="StatsSyncBtn_Click"/>
                                 <Button x:Name="StatsResetBtn"
                                         Content="⟳ RESET SESSION"
                                         Style="{StaticResource PrimaryButton}"
@@ -1786,7 +2284,7 @@
                         </Border>
 
                         <!-- ── Row 3: Matchmaking population ──────────────────────────── -->
-                        <Expander Grid.Row="3"
+                        <Expander Grid.Row="2"
                                   IsExpanded="True"
                                   Background="{DynamicResource SurfaceBrush}"
                                   BorderBrush="{DynamicResource BorderBrush}"
@@ -1856,7 +2354,7 @@
 
                         <!-- ── Row 4: Team summary bar (hidden until team game detected) ── -->
                         <Border x:Name="StatsTeamSummaryBar"
-                                Grid.Row="4"
+                                  Grid.Row="3"
                                 Background="{DynamicResource BgBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,0,0,1"
@@ -1909,7 +2407,7 @@
                         </Border>
 
                         <!-- ── Row 5: Current lobby + last game ────────────────────────── -->
-                        <Grid x:Name="StatsLobbyContent" Grid.Row="5">
+                        <Grid x:Name="StatsLobbyContent" Grid.Row="4">
                             <Grid.RowDefinitions>
                                 <RowDefinition x:Name="StatsCurrentLobbyHeaderRow" Height="Auto"/>
                                 <RowDefinition x:Name="StatsCurrentLobbyListRow" Height="260" MinHeight="170"/>
@@ -1953,7 +2451,7 @@
                                                         <Hyperlink NavigateUri="{Binding WortUrl}"
                                                                    Foreground="{Binding GamertagColor}"
                                                                    TextDecorations="None"
-                                                                   RequestNavigate="StatsHyperlink_RequestNavigate">
+                                                                   RequestNavigate="ExternalHyperlink_RequestNavigate">
                                                             <Run Text="{Binding Gamertag, Mode=OneWay}"/>
                                                         </Hyperlink>
                                                     </TextBlock>
@@ -2043,14 +2541,14 @@
                                       MouseDoubleClick="StatsLobbyList_MouseDoubleClick">
                                 <ListView.View>
                                     <GridView>
-                                        <GridViewColumn Header="PLAYER" Width="200">
+                                        <GridViewColumn Header="PLAYER" Width="190">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock FontFamily="Consolas" Padding="6,5">
                                                         <Hyperlink NavigateUri="{Binding WortUrl}"
                                                                    Foreground="{Binding GamertagColor}"
                                                                    TextDecorations="None"
-                                                                   RequestNavigate="StatsHyperlink_RequestNavigate">
+                                                                   RequestNavigate="ExternalHyperlink_RequestNavigate">
                                                             <Run Text="{Binding Gamertag, Mode=OneWay}"/>
                                                         </Hyperlink>
                                                     </TextBlock>
@@ -2058,60 +2556,102 @@
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
 
-                                        <GridViewColumn Header="K/D" Width="70">
+                                        <GridViewColumn Header="RESULT" Width="70">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock Text="{Binding KD}"
-                                                               Foreground="{Binding KdColor}"
+                                                    <TextBlock Text="{Binding MatchResult}"
+                                                               Foreground="{Binding MatchResultColor}"
                                                                FontFamily="Consolas" FontWeight="SemiBold"
                                                                Padding="6,5" HorizontalAlignment="Center"/>
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
 
-                                        <GridViewColumn Header="KILLS / DEATHS" Width="145">
+                                        <GridViewColumn Header="SCORE / POINTS" Width="105">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock Text="{Binding Totals}"
-                                                               Foreground="{DynamicResource MutedBrush}"
-                                                               FontFamily="Consolas"
-                                                               Padding="6,5"/>
-                                                </DataTemplate>
-                                            </GridViewColumn.CellTemplate>
-                                        </GridViewColumn>
-
-                                        <GridViewColumn Header="GAMES" Width="80">
-                                            <GridViewColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding GamesPlayed}"
-                                                               Foreground="{DynamicResource MutedBrush}"
-                                                               FontFamily="Consolas"
-                                                               Padding="6,5" HorizontalAlignment="Right"/>
-                                                </DataTemplate>
-                                            </GridViewColumn.CellTemplate>
-                                        </GridViewColumn>
-
-                                        <GridViewColumn Header="SQUAD" Width="65">
-                                            <GridViewColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding SquadLabel}"
-                                                               ToolTip="{Binding SquadToolTip}"
-                                                               Foreground="{DynamicResource AccentBrush}"
-                                                               FontFamily="Consolas"
-                                                               FontWeight="SemiBold"
-                                                               Padding="6,5"
-                                                               HorizontalAlignment="Center"/>
-                                                </DataTemplate>
-                                            </GridViewColumn.CellTemplate>
-                                        </GridViewColumn>
-
-                                        <GridViewColumn Header="TEAM" Width="60">
-                                            <GridViewColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding TeamLabel}"
-                                                               Foreground="{DynamicResource MutedBrush}"
-                                                               FontFamily="Consolas"
+                                                    <TextBlock Text="{Binding MatchScore}"
+                                                               Foreground="#FFD700"
+                                                               FontFamily="Consolas" FontWeight="SemiBold"
                                                                Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="K" Width="48">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding MatchKills}" Foreground="#39FF14"
+                                                               FontFamily="Consolas" Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="D" Width="48">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding MatchDeaths}" Foreground="#FF2D55"
+                                                               FontFamily="Consolas" Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="A" Width="48">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding MatchAssists}" Foreground="{DynamicResource AccentBrush}"
+                                                               FontFamily="Consolas" Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="OBJECTIVE STATS" Width="230">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding MatchObjectiveStats}"
+                                                               Foreground="{DynamicResource TextBrush}"
+                                                               FontFamily="Consolas"
+                                                               Padding="6,5"
+                                                               ToolTip="{Binding MatchObjectiveStats}"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="TEAM" Width="62">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding TeamLabel}" Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas" Padding="6,5" HorizontalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="CAREER K/D" Width="90">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding KD}" Foreground="{Binding KdColor}"
+                                                               FontFamily="Consolas" FontWeight="SemiBold"
+                                                               Padding="6,5" HorizontalAlignment="Center"
+                                                               ToolTip="{Binding Totals}"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="GAMES" Width="76">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding GamesPlayed}" Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas" Padding="6,5" HorizontalAlignment="Right"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+
+                                        <GridViewColumn Header="SQUAD" Width="62">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding SquadLabel}" ToolTip="{Binding SquadToolTip}"
+                                                               Foreground="{DynamicResource AccentBrush}" FontFamily="Consolas"
+                                                               FontWeight="SemiBold" Padding="6,5" HorizontalAlignment="Center"/>
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
@@ -2119,33 +2659,21 @@
                                         <GridViewColumn Header="BEST SERVER" Width="115">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock Text="{Binding BestServer}"
-                                                               Foreground="{DynamicResource MutedBrush}"
-                                                               FontFamily="Consolas"
-                                                               Padding="6,5"
-                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding BestServer}" Foreground="{DynamicResource MutedBrush}"
+                                                               FontFamily="Consolas" Padding="6,5" TextTrimming="CharacterEllipsis"/>
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
 
-                                        <GridViewColumn Header="RECENT (100G)" Width="145">
+                                        <GridViewColumn Header="RECENT (100G)" Width="125">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
-                                                    <Border Padding="6,3">
-                                                        <StackPanel VerticalAlignment="Center">
-                                                            <StackPanel Orientation="Horizontal">
-                                                                <TextBlock Text="{Binding RecentKD}"
-                                                                           Foreground="{Binding RecentKdColor}"
-                                                                           FontFamily="Consolas"
-                                                                           FontSize="12" FontWeight="SemiBold"/>
-                                                                <TextBlock Text="{Binding RecentTrend}"
-                                                                           Foreground="{Binding TrendColor}"
-                                                                           FontFamily="Consolas"
-                                                                           FontSize="11" Margin="4,0,0,1"
-                                                                           VerticalAlignment="Bottom"/>
-                                                            </StackPanel>
-                                                        </StackPanel>
-                                                    </Border>
+                                                    <StackPanel Orientation="Horizontal" Margin="6,3">
+                                                        <TextBlock Text="{Binding RecentKD}" Foreground="{Binding RecentKdColor}"
+                                                                   FontFamily="Consolas" FontSize="12" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="{Binding RecentTrend}" Foreground="{Binding TrendColor}"
+                                                                   FontFamily="Consolas" FontSize="11" Margin="4,0,0,1"/>
+                                                    </StackPanel>
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
@@ -2385,15 +2913,26 @@
                         </Border>
 
                         <!-- ── Row 6: Status bar ──────────────────────────────────────── -->
-                        <Border Grid.Row="6" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                        <Border Grid.Row="5" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,1,0,0" Padding="14,6">
                             <TextBlock x:Name="StatsStatusLabel"
                                        FontFamily="Consolas" FontSize="11"
                                        Foreground="{DynamicResource MutedBrush}"
                                        TextTrimming="CharacterEllipsis"
-                                       Text="Ready — enter your gamertag and click APPLY."/>
+                                       Text="Ready — configure your gamertag on Home, then sync or scan."/>
                         </Border>
                     </Grid>
+                </TabItem>
+
+                <!-- ═══ BAN CHECKER ═══ -->
+                <TabItem x:Name="BanCheckerSection" Header="🔨  BAN CHECKER" Style="{StaticResource DarkTabItem}">
+                    <ContentControl x:Name="BanCheckerHost">
+                        <TextBlock Text="Ban Checker loads when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
                 </TabItem>
 
                 <!-- ═══ TAB 4: THEATER ═══ -->
@@ -2418,8 +2957,22 @@
                     </ContentControl>
                 </TabItem>
 
-                <!-- ═══ TAB 6: ABOUT ═══ -->
+                <!-- ═══ TAB 6: VPN ═══ -->
+                <TabItem x:Name="VpnSection" Header="🔒  VPN" Style="{StaticResource DarkTabItem}">
+                    <ContentControl x:Name="VpnHost">
+                        <TextBlock Text="VPN loads when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
+                </TabItem>
+
+                <!-- ═══ TAB 7: ABOUT ═══ -->
                 <TabItem x:Name="AboutSection" Header="ℹ  ABOUT" Style="{StaticResource DarkTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Style="{StaticResource FlatScrollViewer}">
                     <Grid Margin="24">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -2435,11 +2988,11 @@
                                     VerticalAlignment="Center"
                                     HorizontalAlignment="Center"
                                     MaxWidth="420"
-                                    Margin="0,12,0,28">
+                                    Margin="0,6,0,20">
                             <TextBlock Text="🐼"
-                                       FontSize="64"
+                                       FontSize="48"
                                        HorizontalAlignment="Center"
-                                       Margin="0,0,0,16"/>
+                                       Margin="0,0,0,10"/>
                             <TextBlock FontFamily="Consolas"
                                        FontSize="22"
                                        FontWeight="Bold"
@@ -2454,7 +3007,7 @@
                                        FontSize="13"
                                        Foreground="{DynamicResource MutedBrush}"
                                        HorizontalAlignment="Center"
-                                       Margin="0,0,0,28"/>
+                                       Margin="0"/>
 
                         </StackPanel>
 
@@ -2467,95 +3020,46 @@
                                 Padding="20"
                                 Margin="0,0,16,0">
                             <StackPanel>
-                                <TextBlock Text="FEATURES"
+                                <TextBlock Text="TOOLBOX SECTIONS"
                                            FontFamily="Consolas" FontSize="10"
                                            Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10"/>
-                                <StackPanel>
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="•" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"/>
-                                        <TextBlock Grid.Column="1" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"
-                                                   TextWrapping="Wrap">
-                                            <Run Foreground="{DynamicResource AccentBrush}" Text="XBL Credential Cleaner"/>
-                                            <Run Text=" — Clears stored credentials &amp; webcache"/>
+                                <UniformGrid Columns="2">
+                                    <UniformGrid.Resources>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="TextWrapping" Value="Wrap"/>
+                                        </Style>
+                                    </UniformGrid.Resources>
+                                    <StackPanel Margin="0,0,18,14">
+                                        <TextBlock Text="START" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
+                                        <TextBlock FontSize="11" LineHeight="18" TextWrapping="Wrap">
+                                            <Run Foreground="{DynamicResource AccentBrush}" Text="HOME"/><Run Text=" — setup, status, and common tasks"/>
                                         </TextBlock>
-                                    </Grid>
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="•" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"/>
-                                        <TextBlock Grid.Column="1" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"
-                                                   TextWrapping="Wrap">
-                                            <Run Foreground="{DynamicResource AccentBrush}" Text="H3 Map Selector"/>
-                                            <Run Text=" — Enable/disable maps by renaming them with REMOVED_ prefix so MCC skips them in matchmaking"/>
-                                        </TextBlock>
-                                    </Grid>
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="•" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"/>
-                                        <TextBlock Grid.Column="1" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"
-                                                   TextWrapping="Wrap">
-                                            <Run Foreground="{DynamicResource AccentBrush}" Text="Cheater Report"/>
-                                            <Run Text=" — Load a carnage report XML, review the scoreboard, build a ZIP evidence package with theater files, and submit directly to Halo Support"/>
-                                        </TextBlock>
-                                    </Grid>
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="•" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"/>
-                                        <TextBlock Grid.Column="1" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"
-                                                   TextWrapping="Wrap">
-                                            <Run Foreground="{DynamicResource AccentBrush}" Text="Stats"/>
-                                            <Run Text=" — Lobby scanner that shows K/D, win rate, and recent form for every player in your game; tracks session W/L and supports Halo Waypoint authentication for full stats"/>
-                                        </TextBlock>
-                                    </Grid>
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="•" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"/>
-                                        <TextBlock Grid.Column="1" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"
-                                                   TextWrapping="Wrap">
-                                            <Run Foreground="{DynamicResource AccentBrush}" Text="Theater Backups"/>
-                                            <Run Text=" — Automatically backs up MCC theater clips, lets you rename them, search them, and restore them later by game or selection"/>
-                                        </TextBlock>
-                                    </Grid>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="•" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"/>
-                                        <TextBlock Grid.Column="1" FontFamily="Consolas" FontSize="12"
-                                                   Foreground="{DynamicResource TextBrush}" LineHeight="22"
-                                                   TextWrapping="Wrap">
-                                            <Run Foreground="{DynamicResource AccentBrush}" Text="Playlist Explorer"/>
-                                            <Run Text=" — Visualizes MCC playlist XML, featured rotation history, and weighted map/mode combinations with filters for playlists, titles, and categories"/>
-                                        </TextBlock>
-                                    </Grid>
-                                </StackPanel>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,0,14">
+                                        <TextBlock Text="PLAY" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="HALO 3 MAPS"/><Run Text=" — map selection"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="MODS"/><Run Text=" — installed mod tools"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="PLAYLISTS"/><Run Text=" — rotation explorer"/></TextBlock>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,18,0">
+                                        <TextBlock Text="NETWORK" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="MCC VPN"/><Run Text=" — Halo-only routing"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="LIVE FEATURES"/><Run Text=" — proxy and recovery"/></TextBlock>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="REVIEW" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="STATS"/><Run Text=" — players and sessions"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="BAN CHECKER"/><Run Text=" — MCC enforcement checks"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="THEATER"/><Run Text=" — clip backups"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="REPORT"/><Run Text=" — evidence packages"/></TextBlock>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,14,18,0">
+                                        <TextBlock Text="SYSTEM" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="FIXES"/><Run Text=" — MCC maintenance"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="LOG"/><Run Text=" — diagnostics"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="ABOUT"/><Run Text=" — toolbox information"/></TextBlock>
+                                    </StackPanel>
+                                </UniformGrid>
                             </StackPanel>
                         </Border>
 
@@ -2568,12 +3072,28 @@
                                     Padding="20"
                                 VerticalAlignment="Top">
                             <StackPanel>
-                                <TextBlock Text="CONTACT"
+                                <TextBlock Text="CONTACT &amp; CREDITS"
                                            FontFamily="Consolas"
                                            FontSize="10"
                                            Foreground="{DynamicResource AccentBrush}"
                                            Margin="0,0,0,10"/>
                                 <StackPanel>
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="16"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="•" FontFamily="Consolas" FontSize="11"
+                                                   Foreground="{DynamicResource MutedBrush}" LineHeight="18"/>
+                                        <TextBlock Grid.Column="1" FontFamily="Consolas" FontSize="11"
+                                                   Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
+                                                   LineHeight="18">
+                                            <Run Text="Project: "/>
+                                            <Hyperlink NavigateUri="https://github.com/theffapanda/HaloToolbox"
+                                                       Foreground="{DynamicResource AccentBrush}"
+                                                       RequestNavigate="ExternalHyperlink_RequestNavigate">GitHub</Hyperlink>
+                                        </TextBlock>
+                                    </Grid>
                                     <Grid Margin="0,0,0,6">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="16"/>
@@ -2626,7 +3146,7 @@
                                             <Run Text="YouTube: "/><Run Foreground="{DynamicResource TextBrush}" Text="The FFA Panda"/>
                                         </TextBlock>
                                     </Grid>
-                                    <Grid>
+                                    <Grid Margin="0,0,0,6">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="16"/>
                                             <ColumnDefinition Width="*"/>
@@ -2656,9 +3176,10 @@
                             </StackPanel>
                         </Border>
                     </Grid>
+                    </ScrollViewer>
                 </TabItem>
 
-                <!-- ═══ TAB 7: LOG ═══ -->
+                <!-- ═══ TAB 8: LOG ═══ -->
                 <TabItem x:Name="LogSection" Header="📋  LOG" Style="{StaticResource DarkTabItem}">
                     <Grid Margin="20">
                         <Grid.RowDefinitions>

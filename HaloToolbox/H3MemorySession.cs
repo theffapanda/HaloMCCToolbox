@@ -50,19 +50,7 @@ internal sealed class H3MemorySession : IDisposable
 
     public static Process? FindMccProcess()
     {
-        var names = new[] { "MCC-Win64-Shipping", "MCCWinStore-Win64-Shipping" };
-        return names
-            .SelectMany(name =>
-            {
-                try { return Process.GetProcessesByName(name); }
-                catch { return []; }
-            })
-            .OrderByDescending(p =>
-            {
-                try { return p.StartTime; }
-                catch { return DateTime.MinValue; }
-            })
-            .FirstOrDefault();
+        return MccProcessLocator.GetLatestRuntimeProcess(App.LoadMccInstallationPath());
     }
 
     public static bool IsEasyAntiCheatLikelyLoaded(Process process)

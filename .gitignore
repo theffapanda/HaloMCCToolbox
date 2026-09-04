@@ -29,6 +29,7 @@ x86/
 bld/
 [Bb]in/
 [Oo]bj/
+HaloVpnRouter/target/
 [Oo]ut/
 [Ll]og/
 [Ll]ogs/
@@ -344,6 +345,16 @@ ASALocalRun/
 # Codex scratch workspace
 **/.codex_tmp/
 
+# Local AI-assistant scratch, transcripts, and planning artifacts
+**/.codex/
+**/.codex_*
+**/.agents/
+**/.chatgpt/
+**/CHATGPT*.md
+**/CODEX*.md
+**/PLAN*.md
+**/planning/
+
 # Local RenderDoc investigation exports
 /rdoc_*.txt
 /reach_bloom_thumb.png
@@ -371,3 +382,19 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/tools/build-vpn-router.ps1
+/HaloVpnRouter/README.md
+/docs/Rejoin-Fix-Network-Diagram
+/docs/Rejoin-Fix-Video-Animation/build-scenes.js
+/docs/Rejoin-Fix-Video-Animation/render-animation.ps1
+/docs/Rejoin-Fix-Video-Animation/scene-manifest.json
+/docs/Rejoin-Fix-Video-Animation/successful-rejoin-flow-1920x1080.mp4
+/docs/Rejoin-Fix-Video-Animation/successful-rejoin-flow-timing.md
+/docs/Rejoin-Fix-Video-Diagram
+/docs/Rejoin-Fix-Video-Visuals
+/docs/Halo-MCC-Rejoin-Fix-Official-Source-Brief-Interactive.docx
+/docs/Halo-MCC-Rejoin-Fix-Official-Source-Brief-Network.docx
+/docs/Halo-MCC-Rejoin-Fix-Official-Source-Brief-Reflow.docx
+/docs/Halo-MCC-Rejoin-Fix-Official-Source-Brief.docx
+/docs/Halo-MCC-Rejoin-Fix-Official-Source-Brief.md
+/docs/Rejoin-Fix-Video-Animation/scenes

@@ -111,11 +111,18 @@ public partial class DollyTrackOverlayWindow : Window
                 return preferred;
         }
 
-        foreach (var process in Process.GetProcessesByName("MCC-Win64-Shipping").Concat(Process.GetProcessesByName("MCC")))
+        foreach (var process in MccProcessLocator.GetRuntimeProcesses(App.LoadMccInstallationPath()))
         {
-            var hwnd = FindWindowForProcessId(process.Id);
-            if (hwnd != IntPtr.Zero)
-                return hwnd;
+            try
+            {
+                var hwnd = FindWindowForProcessId(process.Id);
+                if (hwnd != IntPtr.Zero)
+                    return hwnd;
+            }
+            finally
+            {
+                process.Dispose();
+            }
         }
 
         return IntPtr.Zero;

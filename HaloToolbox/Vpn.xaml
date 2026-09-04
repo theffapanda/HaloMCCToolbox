@@ -1,0 +1,271 @@
+<UserControl x:Class="HaloToolbox.Vpn"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:HaloToolbox"
+             Background="{DynamicResource BgBrush}"
+             FontFamily="Consolas"
+             Foreground="{DynamicResource TextBrush}">
+    <UserControl.Resources>
+        <Style x:Key="VpnCard" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Padding" Value="18"/>
+        </Style>
+        <Style x:Key="VpnLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
+        <Style x:Key="VpnPassword" TargetType="PasswordBox">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="7,6"/>
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer x:Name="VpnScrollViewer"
+                  VerticalScrollBarVisibility="Visible"
+                  HorizontalScrollBarVisibility="Disabled"
+                  HorizontalContentAlignment="Stretch"
+                  Style="{StaticResource FlatScrollViewer}">
+        <Grid Width="{Binding ViewportWidth, ElementName=VpnScrollViewer}">
+          <Grid Margin="22,16,22,22" MaxWidth="1180" HorizontalAlignment="Stretch">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Grid Margin="0,0,0,18">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="MCC VPN" FontSize="22" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}"/>
+                    <TextBlock Text="NordVPN for MCC. Browser, Discord, Steam, and Windows stay direct."
+                               Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,6,0,0"/>
+                </StackPanel>
+                <Border Grid.Column="1" Background="{DynamicResource SurfaceBrush}"
+                        BorderBrush="{DynamicResource GreenBrush}" BorderThickness="1"
+                        CornerRadius="3" Padding="11,6" VerticalAlignment="Center">
+                    <TextBlock Text="MCC TRAFFIC ONLY" Foreground="{DynamicResource GreenBrush}"
+                               FontSize="10" FontWeight="Bold"/>
+                </Border>
+            </Grid>
+
+            <Grid Grid.Row="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="18"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.08*" MinWidth="390"/>
+                    <ColumnDefinition Width="18"/>
+                    <ColumnDefinition Width="0.92*" MinWidth="330"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Row="0" Grid.ColumnSpan="3" Style="{StaticResource VpnCard}"
+                        Padding="0" ClipToBounds="True">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="360"/>
+                        </Grid.RowDefinitions>
+                        <Grid Margin="18,13,18,12">
+                            <StackPanel>
+                                <TextBlock Text="MCC DATACENTER MAP" Foreground="{DynamicResource AccentBrush}"
+                                           FontSize="12" FontWeight="Bold"/>
+                                <TextBlock Text="Choose an MCC region visually · scroll to zoom · drag to pan"
+                                           Foreground="{DynamicResource MutedBrush}" FontSize="9" Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                        <Border Grid.Row="1" BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,1,0,0" ClipToBounds="True">
+                            <local:VpnRegionMap x:Name="RegionMap"/>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource VpnCard}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="CONNECTION" Foreground="{DynamicResource AccentBrush}"
+                                           FontSize="12" FontWeight="Bold"/>
+                                <TextBlock x:Name="TxtSetupState" Text="Checking VPN support…"
+                                           Foreground="{DynamicResource MutedBrush}" FontSize="10" Margin="0,5,0,0"/>
+                            </StackPanel>
+                            <Button x:Name="BtnInstallSupport" Grid.Column="1" Content="SET UP VPN"
+                                    Style="{StaticResource PrimaryButton}" Padding="12,6"
+                                    Click="BtnInstallSupport_Click"/>
+                        </Grid>
+
+                        <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1" CornerRadius="2" Padding="12" Margin="0,0,0,16">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="18"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="1" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold"/>
+                                <TextBlock Grid.Column="1" Text="Use Nord service credentials from Manual setup — not your normal Nord account password."
+                                           Foreground="{DynamicResource MutedBrush}" FontSize="10" TextWrapping="Wrap"/>
+                                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
+                                    <Button Content="GET SERVICE CREDENTIALS" Style="{StaticResource PrimaryButton}"
+                                            Padding="10,5" Margin="0,0,8,0"
+                                            Click="BtnOpenNordCredentials_Click"/>
+                                    <Button Content="SHOW ME WHERE" Style="{StaticResource PrimaryButton}"
+                                            Padding="10,5" Click="BtnShowCredentialGuide_Click"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="NORD SERVICE USERNAME" Style="{StaticResource VpnLabel}"/>
+                        <PasswordBox x:Name="TxtUsername" Style="{StaticResource VpnPassword}" Height="34"
+                                     PasswordChar="*" Margin="0,0,0,13"/>
+
+                        <Grid Margin="0,0,0,13">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="NORD SERVICE PASSWORD" Style="{StaticResource VpnLabel}"/>
+                                <PasswordBox x:Name="TxtPassword" Style="{StaticResource VpnPassword}" Height="34"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="HALO MCC SERVER REGION" Style="{StaticResource VpnLabel}"/>
+                                <ComboBox x:Name="CmbRegion" Style="{StaticResource DarkCombo}" Height="34"
+                                          SelectionChanged="CmbRegion_SelectionChanged"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="NORD EXIT — AUTO-SELECTED" Style="{StaticResource VpnLabel}"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="CmbServer" Style="{StaticResource DarkCombo}" Height="34"
+                                      DisplayMemberPath="DisplayName"
+                                      SelectionChanged="CmbServer_SelectionChanged"/>
+                            <Button x:Name="BtnRefreshServers" Grid.Column="2" Content="RETEST"
+                                    Style="{StaticResource PrimaryButton}" Padding="10,6"
+                                    Click="BtnRefreshServers_Click"/>
+                        </Grid>
+                        <DockPanel Margin="0,0,0,14">
+                            <Button x:Name="BtnImportProfile" Content="IMPORT .OVPN"
+                                    Style="{StaticResource PrimaryButton}" Padding="9,4"
+                                    DockPanel.Dock="Right" Click="BtnImportProfile_Click"/>
+                            <TextBlock x:Name="TxtServerHint" Text="Nearby Nord exits are tested; the lowest measured latency is selected."
+                                       Foreground="{DynamicResource MutedBrush}" FontSize="9"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+
+                        <CheckBox x:Name="ChkRemember" Content="Remember credentials securely for this Windows account"
+                                  Style="{StaticResource MapCheckBox}" FontSize="11" IsChecked="True" Margin="0,0,0,10"/>
+                        <CheckBox x:Name="ChkLaunchMcc" Content="Launch MCC after the tunnel passes its checks"
+                                  Style="{StaticResource MapCheckBox}" FontSize="11" IsChecked="True" Margin="0,0,0,18"/>
+
+                        <Button x:Name="BtnConnect" Content="CONNECT MCC ONLY"
+                                Style="{StaticResource GreenButton}" Height="42"
+                                Click="BtnConnect_Click"/>
+                        <TextBlock x:Name="TxtActionStatus" Text="One click installs the prerequisite, requests admin permission, and connects."
+                                   Foreground="{DynamicResource MutedBrush}" FontSize="9"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,9,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Grid.Row="2" Grid.Column="2">
+                    <Border x:Name="StatusCard" Style="{StaticResource VpnCard}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="StatusDot" Width="11" Height="11" CornerRadius="6"
+                                        Background="{DynamicResource MutedBrush}" Margin="0,2,11,0"
+                                        VerticalAlignment="Top"/>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock x:Name="TxtConnectionTitle" Text="NOT CONNECTED"
+                                               FontSize="15" FontWeight="Bold"/>
+                                    <TextBlock x:Name="TxtConnectionDetail" Text="Ready to create a Halo-only tunnel."
+                                               Foreground="{DynamicResource MutedBrush}" FontSize="10"
+                                               TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid Margin="0,18,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="SERVER" Style="{StaticResource VpnLabel}" Margin="0,0,18,7"/>
+                                <TextBlock x:Name="TxtConnectedServer" Grid.Column="1" Text="—" TextAlignment="Right" FontSize="10"/>
+                                <TextBlock Grid.Row="1" Text="TUNNEL IP" Style="{StaticResource VpnLabel}" Margin="0,0,18,0"/>
+                                <TextBlock x:Name="TxtTunnelIp" Grid.Row="1" Grid.Column="1" Text="—" TextAlignment="Right" FontSize="10"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource VpnCard}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Text="TRAFFIC ROUTING" Foreground="{DynamicResource AccentBrush}"
+                                       FontSize="11" FontWeight="Bold" Margin="0,0,0,13"/>
+                            <Grid Margin="0,0,0,11">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel><TextBlock Text="HALO MCC" FontSize="11" FontWeight="Bold"/>
+                                    <TextBlock x:Name="TxtMccProcess" Text="Waiting for game" Foreground="{DynamicResource MutedBrush}" FontSize="9"/></StackPanel>
+                                <TextBlock Grid.Column="1" Text="NORDVPN" Foreground="{DynamicResource GreenBrush}" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,0,0,11"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel><TextBlock Text="ALL OTHER APPS" FontSize="11" FontWeight="Bold"/>
+                                    <TextBlock Text="Browser · Discord · Steam · Windows" Foreground="{DynamicResource MutedBrush}" FontSize="9"/></StackPanel>
+                                <TextBlock Grid.Column="1" Text="DIRECT" Foreground="{DynamicResource TextBrush}" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource VpnCard}">
+                        <StackPanel>
+                            <TextBlock Text="PROTECTION" Foreground="{DynamicResource AccentBrush}"
+                                       FontSize="11" FontWeight="Bold" Margin="0,0,0,11"/>
+                            <TextBlock Text="✓  HALO BLOCKED IF VPN DROPS" Foreground="{DynamicResource GreenBrush}" FontSize="10" Margin="0,0,0,7"/>
+                            <TextBlock Text="✓  HALO IPV6 LEAKS BLOCKED" Foreground="{DynamicResource GreenBrush}" FontSize="10" Margin="0,0,0,7"/>
+                            <TextBlock Text="✓  NO CODE INJECTED INTO MCC" Foreground="{DynamicResource GreenBrush}" FontSize="10" Margin="0,0,0,7"/>
+                            <TextBlock Text="✓  VPN CHILD PROCESSES CLOSE WITH TOOLBOX" Foreground="{DynamicResource GreenBrush}" FontSize="10"/>
+                            <TextBlock Text="✓  ADVANCED SERVICES + REJOIN RECOVERY START WITH VPN" Foreground="{DynamicResource GreenBrush}" FontSize="10" Margin="0,7,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+          </Grid>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

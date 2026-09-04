@@ -16,7 +16,7 @@
 
         <!-- Text -->
         <SolidColorBrush x:Key="TextBrush"          Color="#C8D8E8"/>  <!-- primary text        -->
-        <SolidColorBrush x:Key="MutedBrush"         Color="#4A5A6A"/>  <!-- secondary text      -->
+        <SolidColorBrush x:Key="MutedBrush"         Color="#7A90A6"/>  <!-- readable secondary text -->
         <SolidColorBrush x:Key="SubtleBrush"        Color="#2A3A4A"/>  <!-- very dim text       -->
 
         <!-- Accent colours -->

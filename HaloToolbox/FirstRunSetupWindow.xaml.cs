@@ -13,11 +13,17 @@ namespace HaloToolbox
     {
         private int _step = 1;
         private string? _waypointToken;
+        private IReadOnlyList<MccInstallationInfo> _detectedInstallations = Array.Empty<MccInstallationInfo>();
+        private bool _syncingInstallationSelection;
 
         public FirstRunSetupWindow()
         {
             InitializeComponent();
-            MccPathBox.Text = App.FindMccInstallationPath();
+            _detectedInstallations = App.FindMccInstallations();
+            DetectedInstallationBox.ItemsSource = _detectedInstallations;
+            string initialPath = App.FindMccInstallationPath();
+            MccPathBox.Text = initialPath;
+            SelectDetectedInstallation(initialPath);
             GamertagBox.Text = App.LoadPlayerGamertag();
             UpdatePathStatus();
             UpdateStep();
@@ -31,17 +37,46 @@ namespace HaloToolbox
                 InitialDirectory = Directory.Exists(MccPathBox.Text) ? MccPathBox.Text : App.DefaultMccPath
             };
             if (dialog.ShowDialog() == true)
-                MccPathBox.Text = dialog.FolderName;
+                MccPathBox.Text = MccInstallationResolver.NormalizeRoot(dialog.FolderName);
         }
 
-        private void MccPathBox_TextChanged(object sender, TextChangedEventArgs e) => UpdatePathStatus();
+        private void DetectedInstallationBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_syncingInstallationSelection || DetectedInstallationBox.SelectedItem is not MccInstallationInfo installation)
+                return;
+
+            MccPathBox.Text = installation.RootPath;
+        }
+
+        private void MccPathBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            SelectDetectedInstallation(MccPathBox.Text);
+            UpdatePathStatus();
+        }
+
+        private void SelectDetectedInstallation(string? path)
+        {
+            if (DetectedInstallationBox is null)
+                return;
+
+            var normalized = MccInstallationResolver.NormalizeRoot(path);
+            var match = _detectedInstallations.FirstOrDefault(installation =>
+                string.Equals(installation.RootPath, normalized, StringComparison.OrdinalIgnoreCase));
+
+            _syncingInstallationSelection = true;
+            try { DetectedInstallationBox.SelectedItem = match; }
+            finally { _syncingInstallationSelection = false; }
+        }
 
         private void UpdatePathStatus()
         {
             if (PathStatus is null || NextButton is null)
                 return;
-            bool valid = App.IsValidMccInstallationPath(MccPathBox.Text.Trim());
-            PathStatus.Text = valid ? "✓ STEAM INSTALLATION VERIFIED" : "MCC INSTALLATION NOT VERIFIED";
+            var installation = MccInstallationResolver.Inspect(MccPathBox.Text);
+            bool valid = installation is not null;
+            PathStatus.Text = valid
+                ? $"✓ {installation!.DisplayName} INSTALLATION VERIFIED"
+                : "MCC INSTALLATION NOT VERIFIED";
             PathStatus.Foreground = (System.Windows.Media.Brush)FindResource(valid ? "GreenBrush" : "OrangeBrush");
             NextButton.IsEnabled = _step != 1 || valid;
         }
@@ -175,7 +210,8 @@ namespace HaloToolbox
 
         private void PopulateReview()
         {
-            ReviewPath.Text = "STEAM  ✓\n" + MccPathBox.Text.Trim();
+            var installation = MccInstallationResolver.Inspect(MccPathBox.Text);
+            ReviewPath.Text = $"{installation?.DisplayName ?? "UNKNOWN"}  ✓\n{installation?.RootPath ?? MccPathBox.Text.Trim()}";
             ReviewGamertag.Text = string.IsNullOrWhiteSpace(GamertagBox.Text)
                 ? "Not set — configure later from Stats"
                 : GamertagBox.Text.Trim();
@@ -186,7 +222,7 @@ namespace HaloToolbox
 
         private void SaveSetup()
         {
-            App.SaveMccInstallationPath(MccPathBox.Text.Trim());
+            App.SaveMccInstallationPath(MccInstallationResolver.NormalizeRoot(MccPathBox.Text));
             App.SavePlayerGamertag(GamertagBox.Text.Trim());
 
             App.SaveMainSectionVisible("H3Mods", ModsPreference.IsChecked == true);
@@ -194,6 +230,7 @@ namespace HaloToolbox
             App.SaveMainSectionVisible("Stats", StatsPreference.IsChecked == true);
             App.SaveMainSectionVisible("Theater", TheaterPreference.IsChecked == true);
             App.SaveMainSectionVisible("Playlists", PlaylistsPreference.IsChecked == true);
+            App.SaveMainSectionVisible("Vpn", NetworkPreference.IsChecked == true);
             App.SaveMainSectionVisible("About", false);
             App.SaveMainSectionVisible("Log", AdvancedPreference.IsChecked == true);
 

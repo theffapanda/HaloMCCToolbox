@@ -81,14 +81,18 @@
         <Grid>
             <Border x:Name="NetworkPanel" Style="{StaticResource OverlayCard}">
                 <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
                 <Viewbox x:Name="NetworkClassicLayout"
                          Stretch="Uniform"
                          StretchDirection="Both"
                          HorizontalAlignment="Stretch"
                          VerticalAlignment="Stretch">
-                    <Grid Width="392" Height="108">
+                    <Grid Width="392" Height="122">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="16"/>
+                            <RowDefinition Height="30"/>
                             <RowDefinition Height="31"/>
                             <RowDefinition Height="17"/>
                             <RowDefinition Height="15"/>
@@ -101,12 +105,20 @@
                                        FontFamily="Consolas"
                                        FontWeight="Bold"
                                        FontSize="13"/>
-                            <TextBlock x:Name="NetworkServerText"
-                                       Text="SERVER: --"
-                                       Style="{StaticResource OverlayLabel}"
-                                       FontSize="13"
-                                       TextAlignment="Right"
-                                       HorizontalAlignment="Right"/>
+                            <StackPanel HorizontalAlignment="Right">
+                                <TextBlock x:Name="NetworkServerText"
+                                           Text="SERVER: --"
+                                           Style="{StaticResource OverlayLabel}"
+                                           FontSize="12"
+                                           TextAlignment="Right"/>
+                                <TextBlock x:Name="NetworkVpnText"
+                                           Foreground="#39FF14"
+                                           FontFamily="Consolas"
+                                           FontWeight="Bold"
+                                           FontSize="11"
+                                           TextAlignment="Right"
+                                           Visibility="Collapsed"/>
+                            </StackPanel>
                         </Grid>
 
                         <Grid Grid.Row="1">
@@ -176,12 +188,20 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <DockPanel>
-                        <TextBlock x:Name="NetworkModernServerText"
-                                   Text="SERVER: --"
-                                   Foreground="#00C8FF"
-                                   FontFamily="Consolas"
-                                   FontWeight="Bold"
-                                   FontSize="13"/>
+                        <StackPanel>
+                            <TextBlock x:Name="NetworkModernServerText"
+                                       Text="SERVER: --"
+                                       Foreground="#00C8FF"
+                                       FontFamily="Consolas"
+                                       FontWeight="Bold"
+                                       FontSize="13"/>
+                            <TextBlock x:Name="NetworkModernVpnText"
+                                       Foreground="#39FF14"
+                                       FontFamily="Consolas"
+                                       FontWeight="Bold"
+                                       FontSize="11"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                             <TextBlock x:Name="NetworkModernPingText" Style="{StaticResource OverlayValue}" Margin="16,0,0,0"/>
                             <TextBlock x:Name="NetworkModernJitterText" Style="{StaticResource OverlayValue}" Margin="16,0,0,0"/>
@@ -211,6 +231,16 @@
                         </Viewbox>
                     </Grid>
                 </Grid>
+                <TextBlock x:Name="NetworkFirewallStatusText"
+                           Grid.Row="1"
+                           Visibility="Collapsed"
+                           Foreground="#C8D8E8"
+                           FontFamily="Consolas"
+                           FontSize="9.5"
+                           FontWeight="Bold"
+                           LineHeight="12"
+                           TextWrapping="Wrap"
+                           Margin="0,4,0,0"/>
                 </Grid>
             </Border>
 

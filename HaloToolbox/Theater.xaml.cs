@@ -494,7 +494,16 @@ public partial class Theater : UserControl
         LoadDownpatchIndex();
         _downpatchLogWatchTimer.Interval = TimeSpan.FromSeconds(2);
         _downpatchLogWatchTimer.Tick += DownpatchLogWatchTimer_Tick;
+        SetMccInstallationPath(App.LoadMccInstallationPath());
         RefreshDownpatchUi();
+    }
+
+    public void SetMccInstallationPath(string path)
+    {
+        bool isMicrosoftStore = App.GetMccInstallationKind(path) == MccInstallationKind.MicrosoftStore;
+        DownpatchTab.Visibility = isMicrosoftStore ? Visibility.Collapsed : Visibility.Visible;
+        if (isMicrosoftStore && ReferenceEquals(TheaterTabs.SelectedItem, DownpatchTab))
+            TheaterTabs.SelectedItem = LibraryTab;
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────

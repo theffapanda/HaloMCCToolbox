@@ -27,14 +27,27 @@
   <ItemGroup>
     <EmbeddedResource Include="Data\playlist-rotations.csv"
                       LogicalName="HaloToolbox.Data.playlist-rotations.csv" />
+    <EmbeddedResource Include="Resources\Vpn\world-countries-lowres.geojson"
+                      LogicalName="HaloToolbox.Resources.Vpn.world-countries-lowres.geojson" />
     <EmbeddedResource Include="Native\ReachBloomHook.dll"
                       LogicalName="HaloToolbox.Native.ReachBloomHook.dll" />
+    <EmbeddedResource Include="Native\Vpn\HaloVpnRouter.exe"
+                      LogicalName="HaloToolbox.Native.Vpn.HaloVpnRouter.exe" />
+    <EmbeddedResource Include="Native\Vpn\WinDivert.dll"
+                      LogicalName="HaloToolbox.Native.Vpn.WinDivert.dll" />
+    <EmbeddedResource Include="Native\Vpn\WinDivert64.sys"
+                      LogicalName="HaloToolbox.Native.Vpn.WinDivert64.sys" />
+    <EmbeddedResource Include="Native\Vpn\HaloVpnRouter-LICENSE.txt"
+                      LogicalName="HaloToolbox.Native.Vpn.HaloVpnRouter-LICENSE.txt" />
+    <EmbeddedResource Include="Native\Vpn\WinDivert-LICENSE.txt"
+                      LogicalName="HaloToolbox.Native.Vpn.WinDivert-LICENSE.txt" />
   </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Resources\halo_toolbox_whiteicon.ico" />
     <Resource Include="Resources\halo_toolbox_icon.png" />
     <Resource Include="Resources\Medals\*.png" />
+    <Resource Include="Resources\Vpn\*.png" />
   </ItemGroup>
 
   <PropertyGroup>

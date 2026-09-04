@@ -378,10 +378,13 @@ public sealed class GameServerConnectionMonitor : IDisposable
     {
         try
         {
-            return Process.GetProcessesByName("MCC-Win64-Shipping")
-                .Concat(Process.GetProcessesByName("MCC"))
-                .Select(x => x.Id)
-                .ToHashSet();
+            var processes = MccProcessLocator.GetRuntimeProcesses(App.LoadMccInstallationPath()).ToArray();
+            try { return processes.Select(process => process.Id).ToHashSet(); }
+            finally
+            {
+                foreach (var process in processes)
+                    process.Dispose();
+            }
         }
         catch
         {

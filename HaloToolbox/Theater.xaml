@@ -169,8 +169,8 @@
 
     </UserControl.Resources>
 
-    <TabControl Style="{StaticResource TheaterSubTabControl}">
-        <TabItem Header="LIBRARY" Style="{StaticResource TheaterSubTabItem}">
+    <TabControl x:Name="TheaterTabs" Style="{StaticResource TheaterSubTabControl}">
+        <TabItem x:Name="LibraryTab" Header="LIBRARY" Style="{StaticResource TheaterSubTabItem}">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>  <!-- 0 header bar      -->
@@ -518,7 +518,7 @@
     </Grid>
         </TabItem>
 
-        <TabItem Header="DOWNPATCH" Style="{StaticResource TheaterSubTabItem}">
+        <TabItem x:Name="DownpatchTab" Header="DOWNPATCH" Style="{StaticResource TheaterSubTabItem}">
             <Grid Margin="18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>

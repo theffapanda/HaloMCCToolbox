@@ -110,9 +110,14 @@ namespace HaloToolbox
         private string _statsSpartanToken = "";
         private bool _statsHwTokenExpired = false;
         private Task<string?>? _statsWaypointRefreshTask;
+        private DateTimeOffset _statsTokenLastValidatedUtc = DateTimeOffset.MinValue;
+        private readonly SemaphoreSlim _statsWaypointMaintenanceLock = new(1, 1);
+        private readonly System.Windows.Threading.DispatcherTimer _statsWaypointTokenTimer;
         private bool _statsCurrentLobbyScanRunning = false;
         private string _statsCurrentLobbyServerText = "";
         private string _statsLastGameServerText = "";
+        private string _statsLastGameModeText = "";
+        private string _statsLastGamePlayedText = "";
         private List<StatsPlayerRow> _statsCurrentLobbySnapshotRows = new();
         private List<StatsPlayerRow> _statsLastCompletedLobbyRows = new();
 
@@ -186,6 +191,8 @@ namespace HaloToolbox
         private Mods? _modsTab;
         private Theater? _theaterTab;
         private Playlists? _playlistsTab;
+        private Vpn? _vpnTab;
+        private BanChecker? _banCheckerTab;
         private string _playlistsMccPath = App.DefaultMccPath;
         private bool _firstRenderInitializationQueued;
         private bool _statsInitialized;
@@ -212,6 +219,9 @@ namespace HaloToolbox
         private bool _closeFirewallCleanupStarted;
         private TabItem? _lastMainTab;
         private bool _restoringMainTabSelection;
+        private ToolsPage _toolsPage = ToolsPage.Home;
+        private string _homeMccStatusPath = "";
+        private bool _homeMccStatusFound;
         private static readonly SemaphoreSlim SteamFirewallCommandLock = new(1, 1);
         private DateTime _steamFirewallAutoResumeAfterUtc = DateTime.MinValue;
         private const int SteamFirewallAutoSearchHoldSeconds = 180;
@@ -223,7 +233,7 @@ namespace HaloToolbox
 
         private const long MaxDiagnosticExportBytes = 25L * 1024 * 1024;
         private const string ToolboxRegistryPath = @"Software\HaloMCCToolbox";
-        private const string RejoinFixProxyAddress = "127.0.0.1:19999";
+        private const string RejoinFixProxyAddress = ProxyService.DefaultProxyAddress;
         private const string RejoinFixProxyCertificatePassword = "halointel-proxy";
         private static readonly int[] SteamFirewallPorts = { 3478, 4379 };
         private static readonly int[] RejoinCampaignFirewallPorts = { 3478 };
@@ -357,6 +367,11 @@ namespace HaloToolbox
                 Interval = TimeSpan.FromMinutes(1)
             };
             _populationHistoryTimer.Tick += PopulationHistoryTimer_Tick;
+            _statsWaypointTokenTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMinutes(15)
+            };
+            _statsWaypointTokenTimer.Tick += StatsWaypointTokenTimer_Tick;
             RestoreMainWindowPlacement();
             LoadSectionVisibility();
             _lastMainTab = MainTabs.SelectedItem as TabItem;
@@ -387,7 +402,10 @@ namespace HaloToolbox
             TxtMccPath.Text = App.LoadMccInstallationPath();
             _playlistsMccPath = TxtMccPath.Text;
             TxtMccPath.TextChanged += TxtMccPath_TextChanged;
+            UpdateMccEditionUi();
             MapList.ItemsSource = _maps;
+            ShowToolsPage(ToolsPage.Home, selectToolsSection: false);
+            SyncSidebarSelection(MainTabs.SelectedItem as TabItem ?? ToolsSection);
             AppendLog("[INFO]", "Halo MCC Toolbox started. Made by The FFA Panda.", "#00C8FF");
             ContentRendered += MainWindow_ContentRendered;
             _statsAutoPullLobby = App.LoadStatsAutoLobbyEnabled();
@@ -500,6 +518,8 @@ namespace HaloToolbox
                 {
                     HandleSteamFirewallAutoSignal(entry);
                 });
+            _rejoinProxy.BanSpartanTokenChanged += (_, _) =>
+                Dispatcher.InvokeAsync(() => _banCheckerTab?.RefreshAuthorizationStatus());
             _networkStatsMonitor.StatsUpdated += (_, snapshot) =>
                 Dispatcher.InvokeAsync(() => UpdateNetworkStatsOverlay(snapshot));
             _gameServerConnectionMonitor.ActiveServerChanged += (_, serverInfo) =>
@@ -508,10 +528,13 @@ namespace HaloToolbox
                 Dispatcher.InvokeAsync(() => UpdateNetworkTrafficOverlay(snapshot));
             _gameServerConnectionMonitor.StatusChanged += (_, status) =>
                 Dispatcher.InvokeAsync(() => AppendLog("[NET]", status, "#4A5A6A"));
+            VpnConnectionPresence.Changed += VpnConnectionPresence_Changed;
             Closed += (_, _) =>
             {
+                VpnConnectionPresence.Changed -= VpnConnectionPresence_Changed;
                 DisposeHiddenCookieChecker();
                 _modsTab?.Dispose();
+                _vpnTab?.Dispose();
                 StopRejoinCrashWatcher();
                 _gameServerConnectionMonitor.Dispose();
                 _networkStatsMonitor.Dispose();
@@ -519,6 +542,7 @@ namespace HaloToolbox
                 _rejoinProxy.Dispose();
                 _matchmakingPopulationTimer.Stop();
                 _populationHistoryTimer.Stop();
+                _statsWaypointTokenTimer.Stop();
             };
             Closing += MainWindow_Closing;
             StateChanged += (_, _) => UpdateMaximizeButton();
@@ -538,7 +562,8 @@ namespace HaloToolbox
             _steamFirewallAutoTimer.Tick += async (_, _) => await SteamFirewallAutoTimer_TickAsync();
             InitializeSteamFirewallFeatureState();
             _mainWindowInitialized = true;
-            Dispatcher.InvokeAsync(SynchronizeStartupFirewallStateAsync);
+            if (!IsMicrosoftStoreInstallation)
+                Dispatcher.InvokeAsync(SynchronizeStartupFirewallStateAsync);
             Dispatcher.InvokeAsync(StartPendingRejoinFixAfterElevationAsync);
 
         }
@@ -619,6 +644,7 @@ namespace HaloToolbox
                 return _theaterTab;
 
             _theaterTab = new Theater();
+            _theaterTab.SetMccInstallationPath(TxtMccPath.Text.Trim());
             TheaterHost.Content = _theaterTab;
             return _theaterTab;
         }
@@ -634,6 +660,252 @@ namespace HaloToolbox
             return _playlistsTab;
         }
 
+        private enum ToolsPage
+        {
+            Home,
+            Maps,
+            Fixes,
+            Features
+        }
+
+        private void SidebarNavigation_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not RadioButton { Tag: string target })
+                return;
+
+            if (TryParseToolsPage(target, out var toolsPage))
+            {
+                ShowToolsPage(toolsPage);
+                return;
+            }
+
+            TabItem? section = target switch
+            {
+                "H3Mods" => H3ModsSection,
+                "Playlists" => PlaylistsSection,
+                "Vpn" => VpnSection,
+                "Stats" => StatsSection,
+                "BanChecker" => BanCheckerSection,
+                "Theater" => TheaterSection,
+                "Report" => ReportSection,
+                "Log" => LogSection,
+                "About" => AboutSection,
+                _ => null
+            };
+
+            if (section is null || section.Visibility != Visibility.Visible)
+            {
+                SyncSidebarSelection(MainTabs.SelectedItem as TabItem ?? ToolsSection);
+                return;
+            }
+
+            MainTabs.SelectedItem = section;
+            SyncSidebarSelection(MainTabs.SelectedItem as TabItem ?? ToolsSection);
+        }
+
+        private void ToolsHomeTask_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string target })
+                return;
+
+            if (TryParseToolsPage(target, out var toolsPage))
+            {
+                ShowToolsPage(toolsPage);
+                return;
+            }
+
+            TabItem? section = target switch
+            {
+                "Vpn" => VpnSection,
+                "BanChecker" => BanCheckerSection,
+                _ => null
+            };
+            if (section is not null && section.Visibility == Visibility.Visible)
+            {
+                MainTabs.SelectedItem = section;
+                SyncSidebarSelection(section);
+            }
+        }
+
+        private static bool TryParseToolsPage(string value, out ToolsPage page)
+        {
+            page = value switch
+            {
+                "Home" => ToolsPage.Home,
+                "Maps" => ToolsPage.Maps,
+                "Fixes" => ToolsPage.Fixes,
+                "Features" => ToolsPage.Features,
+                _ => ToolsPage.Home
+            };
+            return value is "Home" or "Maps" or "Fixes" or "Features";
+        }
+
+        private void ShowToolsPage(ToolsPage page, bool selectToolsSection = true)
+        {
+            _toolsPage = page;
+
+            ToolsHomePanel.Visibility = page == ToolsPage.Home ? Visibility.Visible : Visibility.Collapsed;
+
+            bool showFixes = page == ToolsPage.Fixes;
+            FixRepairSectionLabel.Visibility = showFixes ? Visibility.Visible : Visibility.Collapsed;
+            CleanCredentialsCard.Visibility = showFixes ? Visibility.Visible : Visibility.Collapsed;
+            EacRepairCard.Visibility = showFixes ? Visibility.Visible : Visibility.Collapsed;
+            AudioRepairCard.Visibility = showFixes ? Visibility.Visible : Visibility.Collapsed;
+
+            AdvancedFeaturesCard.Visibility = page == ToolsPage.Features
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            bool showMaps = page == ToolsPage.Maps;
+            MccInstallationPathCard.Visibility = showMaps ? Visibility.Visible : Visibility.Collapsed;
+            MapSelectorPanel.Visibility = showMaps ? Visibility.Visible : Visibility.Collapsed;
+
+            if (selectToolsSection && !ReferenceEquals(MainTabs.SelectedItem, ToolsSection))
+                MainTabs.SelectedItem = ToolsSection;
+
+            SyncSidebarSelection(ToolsSection);
+            if (page == ToolsPage.Home)
+                UpdateToolboxStatus();
+        }
+
+        private void SyncSidebarSelection(TabItem selectedTab)
+        {
+            RadioButton? selectedButton = ReferenceEquals(selectedTab, ToolsSection)
+                ? _toolsPage switch
+                {
+                    ToolsPage.Home => SidebarHomeButton,
+                    ToolsPage.Maps => SidebarMapsButton,
+                    ToolsPage.Fixes => SidebarFixesButton,
+                    ToolsPage.Features => SidebarFeaturesButton,
+                    _ => SidebarHomeButton
+                }
+                : ReferenceEquals(selectedTab, H3ModsSection) ? SidebarModsButton
+                : ReferenceEquals(selectedTab, PlaylistsSection) ? SidebarPlaylistsButton
+                : ReferenceEquals(selectedTab, VpnSection) ? SidebarVpnButton
+                : ReferenceEquals(selectedTab, StatsSection) ? SidebarStatsButton
+                : ReferenceEquals(selectedTab, BanCheckerSection) ? SidebarBanCheckerButton
+                : ReferenceEquals(selectedTab, TheaterSection) ? SidebarTheaterButton
+                : ReferenceEquals(selectedTab, ReportSection) ? SidebarReportButton
+                : ReferenceEquals(selectedTab, LogSection) ? SidebarLogButton
+                : ReferenceEquals(selectedTab, AboutSection) ? SidebarAboutButton
+                : null;
+
+            if (selectedButton is not null)
+                selectedButton.IsChecked = true;
+        }
+
+        private void UpdateToolboxStatus()
+        {
+            if (HomeMccStatus is null)
+                return;
+
+            string mccPath = TxtMccPath.Text.Trim();
+            if (!string.Equals(_homeMccStatusPath, mccPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _homeMccStatusPath = mccPath;
+                _homeMccStatusFound = Directory.Exists(Path.Combine(mccPath, "halo3", "maps"));
+            }
+            bool mccFound = _homeMccStatusFound;
+            SetToolboxStatusText(
+                HomeMccStatus,
+                mccFound ? App.GetMccInstallationLabel(mccPath) : "NOT FOUND",
+                mccFound ? "#39FF14" : "#FF6A00");
+
+            bool vpnConnected = !string.IsNullOrWhiteSpace(VpnConnectionPresence.ConnectedRegion);
+            SetToolboxStatusText(
+                HomeVpnStatus,
+                vpnConnected
+                    ? $"CONNECTED · {VpnConnectionPresence.ConnectedRegion.ToUpperInvariant()}"
+                    : "NOT CONNECTED",
+                vpnConnected ? "#39FF14" : "#71869A");
+
+            SetToolboxStatusText(
+                HomeFeaturesStatus,
+                _rejoinProxy.IsRunning ? "● ON" : "● OFF",
+                _rejoinProxy.IsRunning ? "#39FF14" : "#71869A");
+        }
+
+        private bool IsMicrosoftStoreInstallation =>
+            App.GetMccInstallationKind(TxtMccPath?.Text) == MccInstallationKind.MicrosoftStore;
+
+        private void UpdateMccEditionUi()
+        {
+            if (TxtMccEditionBadge is null || TxtMccPath is null)
+                return;
+
+            var kind = App.GetMccInstallationKind(TxtMccPath.Text);
+            string label = kind switch
+            {
+                MccInstallationKind.Steam => "STEAM",
+                MccInstallationKind.MicrosoftStore => "MICROSOFT STORE",
+                _ => "NOT DETECTED"
+            };
+
+            TxtMccEditionBadge.Text = $"MCC: {label}";
+            TxtMccEditionBadge.Foreground = Brush(kind == MccInstallationKind.Unknown ? "#FF6A00" : "#39FF14");
+            _theaterTab?.SetMccInstallationPath(TxtMccPath.Text.Trim());
+
+            bool steamOnlyFeaturesAvailable = kind == MccInstallationKind.Steam;
+            ChkRejoinFixFirewall.Visibility = steamOnlyFeaturesAvailable ? Visibility.Visible : Visibility.Collapsed;
+            ChkRejoinFixFirewallMatchmaking.Visibility = steamOnlyFeaturesAvailable ? Visibility.Visible : Visibility.Collapsed;
+
+            if (!steamOnlyFeaturesAvailable)
+            {
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                _steamFirewallAutoEnabled = false;
+                _steamFirewallAutoPaused = false;
+                _rejoinCampaignFirewallApplying = false;
+                _rejoinCampaignFirewallEnabled = false;
+            }
+
+            if (_mainWindowInitialized)
+            {
+                UpdateRejoinFirewallOptionAvailability(_rejoinProxy.IsRunning);
+                UpdateRejoinFirewallStatus();
+                UpdateToolboxStatus();
+            }
+        }
+
+        private static void SetToolboxStatusText(TextBlock target, string text, string color)
+        {
+            if (string.Equals(target.Text, text, StringComparison.Ordinal))
+                return;
+
+            target.Text = text;
+            target.Foreground = Brush(color);
+        }
+
+        private void VpnConnectionPresence_Changed(object? sender, EventArgs e) =>
+            Dispatcher.InvokeAsync(() =>
+            {
+                PublishObsOverlaySnapshot();
+                UpdateToolboxStatus();
+            });
+
+        private Vpn EnsureVpnTab()
+        {
+            if (_vpnTab is not null)
+                return _vpnTab;
+
+            _vpnTab = new Vpn(() => EnsureCompanionServicesRunningAsync("MCC VPN"));
+            VpnHost.Content = _vpnTab;
+            return _vpnTab;
+        }
+
+        private BanChecker EnsureBanCheckerTab()
+        {
+            if (_banCheckerTab is not null)
+                return _banCheckerTab;
+
+            _banCheckerTab = new BanChecker(
+                StatsCheckBanTargetsAsync,
+                GetBanCheckerAuthorizationState,
+                () => ShowToolsPage(ToolsPage.Features));
+            BanCheckerHost.Content = _banCheckerTab;
+            return _banCheckerTab;
+        }
+
         private void EnsureSelectedSectionContent(TabItem selectedTab)
         {
             if (ReferenceEquals(selectedTab, H3ModsSection))
@@ -642,8 +914,23 @@ namespace HaloToolbox
                 EnsureTheaterTab();
             else if (ReferenceEquals(selectedTab, PlaylistsSection))
                 EnsurePlaylistsTab();
+            else if (ReferenceEquals(selectedTab, VpnSection))
+                EnsureVpnTab();
             else if (ReferenceEquals(selectedTab, StatsSection))
                 EnsureStatsInitialized();
+            else if (ReferenceEquals(selectedTab, BanCheckerSection))
+                EnsureBanCheckerTab().RefreshAuthorizationStatus();
+        }
+
+        public async Task OpenVpnSectionAndConnectAsync()
+        {
+            VpnSection.Visibility = Visibility.Visible;
+            ShowVpnSection.IsChecked = true;
+            App.SaveMainSectionVisible("Vpn", true);
+            MainTabs.SelectedItem = VpnSection;
+            _lastMainTab = VpnSection;
+            SyncSidebarSelection(VpnSection);
+            await EnsureVpnTab().ConnectFromRelaunchAsync();
         }
 
         // ------------------------------------------
@@ -747,6 +1034,7 @@ namespace HaloToolbox
             {
                 EnsureSelectedSectionContent(selectedTab);
                 _lastMainTab = selectedTab;
+                SyncSidebarSelection(selectedTab);
                 if (App.LoadSetupPreference("OpenLastSection", true))
                     App.SaveLastMainSection(selectedTab.Name);
                 return;
@@ -756,6 +1044,7 @@ namespace HaloToolbox
             _restoringMainTabSelection = true;
             MainTabs.SelectedItem = _lastMainTab ?? ToolsSection;
             _restoringMainTabSelection = false;
+            SyncSidebarSelection(MainTabs.SelectedItem as TabItem ?? ToolsSection);
 
             var result = ToolboxDialog.Show(
                 "Mods requires the Toolbox to run as Administrator.\n\nRelaunch as Administrator now?",
@@ -799,7 +1088,8 @@ namespace HaloToolbox
             SetSectionVisibility(StatsSection, ShowStatsSection, "Stats", App.LoadMainSectionVisible("Stats"));
             SetSectionVisibility(TheaterSection, ShowTheaterSection, "Theater", App.LoadMainSectionVisible("Theater"));
             SetSectionVisibility(PlaylistsSection, ShowPlaylistsSection, "Playlists", App.LoadMainSectionVisible("Playlists"));
-            SetSectionVisibility(AboutSection, ShowAboutSection, "About", App.LoadMainSectionVisible("About"));
+            SetSectionVisibility(VpnSection, ShowVpnSection, "Vpn", App.LoadMainSectionVisible("Vpn"));
+            SetSectionVisibility(AboutSection, ShowAboutSection, "About", true);
             SetSectionVisibility(LogSection, ShowLogSection, "Log", App.LoadMainSectionVisible("Log"));
             UpdateToggleAllSectionsButton();
         }
@@ -817,6 +1107,7 @@ namespace HaloToolbox
                 "Stats" => StatsSection,
                 "Theater" => TheaterSection,
                 "Playlists" => PlaylistsSection,
+                "Vpn" => VpnSection,
                 "About" => AboutSection,
                 "Log" => LogSection,
                 _ => null
@@ -842,7 +1133,7 @@ namespace HaloToolbox
             SetSectionVisibility(StatsSection, ShowStatsSection, "Stats", makeVisible, save: true);
             SetSectionVisibility(TheaterSection, ShowTheaterSection, "Theater", makeVisible, save: true);
             SetSectionVisibility(PlaylistsSection, ShowPlaylistsSection, "Playlists", makeVisible, save: true);
-            SetSectionVisibility(AboutSection, ShowAboutSection, "About", makeVisible, save: true);
+            SetSectionVisibility(VpnSection, ShowVpnSection, "Vpn", makeVisible, save: true);
             SetSectionVisibility(LogSection, ShowLogSection, "Log", makeVisible, save: true);
 
             if (!makeVisible)
@@ -856,7 +1147,7 @@ namespace HaloToolbox
             ShowStatsSection.IsChecked == true &&
             ShowTheaterSection.IsChecked == true &&
             ShowPlaylistsSection.IsChecked == true &&
-            ShowAboutSection.IsChecked == true &&
+            ShowVpnSection.IsChecked == true &&
             ShowLogSection.IsChecked == true;
 
         private void UpdateToggleAllSectionsButton()
@@ -1100,9 +1391,14 @@ namespace HaloToolbox
             _statsCurrentLobbyServerText = label;
             _statsLastGameServerText = label;
             StatsCurrentLobbyServerLabel.Text = label;
-            StatsLastGameServerLabel.Text = label;
+            StatsLastGameServerLabel.Text = StatsFormatLastGameHeader();
             PublishObsOverlaySnapshot();
         }
+
+        private string StatsFormatLastGameHeader() => string.Join(
+            "  ·  ",
+            new[] { _statsLastGameModeText, _statsLastGameServerText, _statsLastGamePlayedText }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
 
         private void ClearNetworkStatsOverlayDisplay()
         {
@@ -1238,11 +1534,8 @@ namespace HaloToolbox
         {
             try
             {
-                return Process.GetProcessesByName("MCC-Win64-Shipping")
-                    .Concat(Process.GetProcessesByName("MCC"))
-                    .OrderByDescending(p => p.StartTime)
-                    .Select(p => (int?)p.Id)
-                    .FirstOrDefault();
+                using var process = MccProcessLocator.GetLatestRuntimeProcess(App.LoadMccInstallationPath());
+                return process?.Id;
             }
             catch
             {
@@ -1816,6 +2109,7 @@ namespace HaloToolbox
 
             if (_rejoinProxy.IsRunning)
             {
+                StopRejoinCrashWatcher();
                 _rejoinProxy.Stop();
                 AppendLog("[CLEAN]", "Stopped Rejoin Fix proxy and restored proxy settings.", "#C8D8E8");
             }
@@ -1889,7 +2183,7 @@ if (Test-Path -LiteralPath $pfxPath) {{
 }}
 
 $winHttp = (& netsh winhttp show proxy) -join ""`n""
-if ($winHttp -match '127\.0\.0\.1:19999') {{
+if ($winHttp -match '127\.0\.0\.1:(?:8888|19999)') {{
     & netsh winhttp reset proxy | Out-Null
     $removed.Add(""Reset WinHTTP proxy: {RejoinFixProxyAddress}"")
 }}
@@ -1962,25 +2256,11 @@ exit 0";
 
         private bool ClearToolboxWinInetProxyIfPresent()
         {
-            const string keyPath = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
             try
             {
-                using var key = Registry.CurrentUser.OpenSubKey(keyPath, writable: true);
-                if (key is null)
-                    return false;
-
-                var proxyServer = key.GetValue("ProxyServer") as string;
-                if (!string.Equals(proxyServer, RejoinFixProxyAddress, StringComparison.OrdinalIgnoreCase))
-                    return false;
-
-                key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
-                key.DeleteValue("ProxyServer", throwOnMissingValue: false);
-
-                var proxyOverride = key.GetValue("ProxyOverride") as string;
-                if (string.Equals(proxyOverride, "localhost;127.0.0.1;<local>", StringComparison.OrdinalIgnoreCase))
-                    key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
-
-                return true;
+                var recovery = ToolboxWinInetProxy.RecoverStaleProxy();
+                return recovery is StaleProxyRecoveryResult.RestoredSavedSettings or
+                    StaleProxyRecoveryResult.DisabledLegacyProxy;
             }
             catch (Exception ex)
             {
@@ -2447,7 +2727,7 @@ echo All tasks complete.
         // ------------------------------------------
         private void BtnRepairAudioDevices_Click(object sender, RoutedEventArgs e)
         {
-            var mccProcesses = Process.GetProcessesByName("MCC-Win64-Shipping");
+            var mccProcesses = MccProcessLocator.GetRuntimeProcesses(TxtMccPath.Text.Trim()).ToArray();
             var isMccRunning = mccProcesses.Length > 0;
             foreach (var process in mccProcesses)
                 process.Dispose();
@@ -2593,10 +2873,17 @@ echo All tasks complete.
 
         private void PollMccProcessesForRejoinCrashRestore()
         {
+            if (!_rejoinProxy.IsRunning)
+            {
+                StopRejoinCrashWatcher();
+                UpdateRejoinFixUi();
+                return;
+            }
+
             Process[] processes;
             try
             {
-                processes = Process.GetProcessesByName("MCC-Win64-Shipping");
+                processes = MccProcessLocator.GetRuntimeProcesses(TxtMccPath.Text.Trim()).ToArray();
             }
             catch (Exception ex)
             {
@@ -2764,7 +3051,18 @@ echo All tasks complete.
                 : "";
 
             BtnRejoinFix.Content = isRunning ? "STOP SERVICES" : "START SERVICES";
-            ChkRejoinRecovery.IsChecked = isRunning;
+            SidebarFeaturesToggleButton.Content = isRunning ? "STOP" : "START";
+            SidebarFeaturesToggleButton.ToolTip = isRunning
+                ? "Stop Live Features without leaving this page"
+                : "Start Live Features without leaving this page";
+            SetToolboxStatusText(
+                HomeFeaturesStatus,
+                isRunning ? "● ON" : "● OFF",
+                isRunning ? "#39FF14" : "#71869A");
+            TxtRejoinRecoveryStatus.Text = isRunning
+                ? "● REJOIN RECOVERY · CORE · ACTIVE"
+                : "○ REJOIN RECOVERY · CORE · STARTS WITH SERVICES";
+            TxtRejoinRecoveryStatus.Foreground = Brush(isRunning ? "#39FF14" : "#4A5A6A");
             bool hasPlayerVisibleOverlay =
                 (_networkStatsOverlayEnabled && !_networkStatsObsOnly) ||
                 (_matchmakingWaitOverlayEnabled && !_matchmakingWaitObsOnly) ||
@@ -2816,6 +3114,7 @@ echo All tasks complete.
             UpdateRejoinFirewallOptionAvailability(isRunning);
             UpdateRejoinFirewallStatus();
             StatsUpdateCurrentLobbyVisibility(isRunning);
+            UpdateToolboxStatus();
         }
 
         private void StatsUpdateCurrentLobbyVisibility(bool isRejoinFixRunning)
@@ -2843,6 +3142,19 @@ echo All tasks complete.
 
         private void UpdateRejoinFirewallOptionAvailability(bool isRejoinFixRunning)
         {
+            if (IsMicrosoftStoreInstallation)
+            {
+                ChkRejoinFixFirewall.IsEnabled = false;
+                ChkRejoinFixFirewallMatchmaking.IsEnabled = false;
+                ChkRejoinFixFirewall.Visibility = Visibility.Collapsed;
+                ChkRejoinFixFirewallMatchmaking.Visibility = Visibility.Collapsed;
+                ChkRejoinFixFirewall.ToolTip = "Steam-only feature";
+                ChkRejoinFixFirewallMatchmaking.ToolTip = "Steam-only feature";
+                return;
+            }
+
+            ChkRejoinFixFirewall.Visibility = Visibility.Visible;
+            ChkRejoinFixFirewallMatchmaking.Visibility = Visibility.Visible;
             ChkRejoinFixFirewall.IsEnabled = true;
             ChkRejoinFixFirewallMatchmaking.IsEnabled = true;
             ChkRejoinFixFirewall.Content = RejoinFirewallCampaignLabel;
@@ -2856,10 +3168,19 @@ echo All tasks complete.
 
         private void UpdateRejoinFirewallStatus(string? overrideText = null, string? overrideColor = null)
         {
+            if (IsMicrosoftStoreInstallation)
+            {
+                TxtRejoinFirewallStatus.Text = "FIREWALL: STEAM ONLY - not used for Microsoft Store MCC";
+                TxtRejoinFirewallStatus.Foreground = Brush("#4A5A6A");
+                PublishNetworkFirewallStatus();
+                return;
+            }
+
             if (!string.IsNullOrWhiteSpace(overrideText))
             {
                 TxtRejoinFirewallStatus.Text = overrideText;
                 TxtRejoinFirewallStatus.Foreground = Brush(overrideColor ?? "#C8D8E8");
+                PublishNetworkFirewallStatus();
                 return;
             }
 
@@ -2867,6 +3188,7 @@ echo All tasks complete.
             {
                 TxtRejoinFirewallStatus.Text = "FIREWALL: REJOIN RESTORE - ports are open for crash rejoin";
                 TxtRejoinFirewallStatus.Foreground = Brush("#00C8FF");
+                PublishNetworkFirewallStatus();
                 return;
             }
 
@@ -2917,6 +3239,7 @@ echo All tasks complete.
                 {
                     TxtRejoinFirewallStatus.Text = "FIREWALL: ON - rules are enabled but no Rejoin firewall mode is selected";
                     TxtRejoinFirewallStatus.Foreground = Brush("#FF6A00");
+                    PublishNetworkFirewallStatus();
                     return;
                 }
 
@@ -2924,6 +3247,7 @@ echo All tasks complete.
                 {
                     TxtRejoinFirewallStatus.Text = "FIREWALL: PARTIAL - rules are mixed; restart Rejoin Fix to repair";
                     TxtRejoinFirewallStatus.Foreground = Brush("#FF6A00");
+                    PublishNetworkFirewallStatus();
                     return;
                 }
 
@@ -2932,6 +3256,14 @@ echo All tasks complete.
                     : "FIREWALL: OFF - rules will be prepared when Rejoin Fix starts as admin";
                 TxtRejoinFirewallStatus.Foreground = Brush(_steamFirewallRulesPrepared ? "#C8D8E8" : "#4A5A6A");
             }
+
+            PublishNetworkFirewallStatus();
+        }
+
+        private void PublishNetworkFirewallStatus()
+        {
+            if (_mainWindowInitialized)
+                PublishObsOverlaySnapshot();
         }
 
         private async Task RefreshSteamFirewallUiAsync()
@@ -3149,6 +3481,12 @@ echo All tasks complete.
 
         private async void ChkRejoinFixFirewall_Checked(object sender, RoutedEventArgs e)
         {
+            if (IsMicrosoftStoreInstallation)
+            {
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewall, false);
+                return;
+            }
+
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
@@ -3197,6 +3535,12 @@ echo All tasks complete.
 
         private async void ChkRejoinFixFirewallMatchmaking_Checked(object sender, RoutedEventArgs e)
         {
+            if (IsMicrosoftStoreInstallation)
+            {
+                SetRejoinFirewallCheckbox(ChkRejoinFixFirewallMatchmaking, false);
+                return;
+            }
+
             if (!_mainWindowInitialized || _rejoinFirewallCheckChanging)
                 return;
 
@@ -3417,8 +3761,10 @@ echo All tasks complete.
             if (!firewallMayBlockRestore)
                 return;
 
-            if (!await _steamFirewallAutoLock.WaitAsync(0))
-                return;
+            // Crash restore is a hard firewall suspension. Wait for any in-flight
+            // auto transition so this request cannot be dropped while the normal
+            // matchmaking timer is changing the same rules.
+            await _steamFirewallAutoLock.WaitAsync();
 
             try
             {
@@ -3494,7 +3840,18 @@ echo All tasks complete.
         {
             string path = entry.Path;
 
-            return path.Contains("Party/RequestParty", StringComparison.OrdinalIgnoreCase)
+            // A successful SmartMatch hopper POST is the first definitive signal
+            // that MCC entered a matchmaking queue. The hopper path itself does
+            // not contain the word "Matchmaking", so relying on the legacy path
+            // checks below leaves the firewall enabled throughout the search.
+            bool isSmartMatchQueueStart =
+                entry.StatusCode is >= 200 and < 300 &&
+                entry.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
+                entry.Host.Equals("smartmatch.xboxlive.com", StringComparison.OrdinalIgnoreCase) &&
+                path.Contains("/hoppers/", StringComparison.OrdinalIgnoreCase);
+
+            return isSmartMatchQueueStart
+                || path.Contains("Party/RequestParty", StringComparison.OrdinalIgnoreCase)
                 || path.Contains("Matchmaking", StringComparison.OrdinalIgnoreCase)
                 || path.Contains("/CascadeMatchmaking/sessions/", StringComparison.OrdinalIgnoreCase);
         }
@@ -3555,7 +3912,9 @@ echo All tasks complete.
 
         private void ScheduleSteamFirewallAutoResume(int holdSeconds, string reason)
         {
-            if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused)
+            if (_steamFirewallAutoSuspendedForCrashRestore ||
+                !_steamFirewallAutoEnabled ||
+                !_steamFirewallAutoPaused)
                 return;
 
             _steamFirewallAutoResumeAfterUtc = DateTime.UtcNow.AddSeconds(holdSeconds);
@@ -3566,7 +3925,12 @@ echo All tasks complete.
 
         private void HoldSteamFirewallPausedForActiveMatch(string reason)
         {
-            if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused)
+            // A server assignment or squad update is only rejoin progress, not
+            // proof that MCC completed its UDP/DTLS connection. Do not let those
+            // normal match signals shorten the crash-restore firewall suspension.
+            if (_steamFirewallAutoSuspendedForCrashRestore ||
+                !_steamFirewallAutoEnabled ||
+                !_steamFirewallAutoPaused)
                 return;
 
             _steamFirewallAutoHeldForActiveMatch = true;
@@ -3579,7 +3943,10 @@ echo All tasks complete.
 
         private async Task SteamFirewallAutoTimer_TickAsync()
         {
-            if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused || DateTime.UtcNow < _steamFirewallAutoResumeAfterUtc)
+            if (_steamFirewallAutoSuspendedForCrashRestore ||
+                !_steamFirewallAutoEnabled ||
+                !_steamFirewallAutoPaused ||
+                DateTime.UtcNow < _steamFirewallAutoResumeAfterUtc)
                 return;
 
             await ResumeSteamFirewallAfterMatchmakingAsync();
@@ -3592,7 +3959,11 @@ echo All tasks complete.
 
             try
             {
-                if (!_steamFirewallAutoEnabled || !_steamFirewallAutoPaused)
+                // Recheck after acquiring the lock. Crash restore may have been
+                // armed while this resume was waiting behind another transition.
+                if (_steamFirewallAutoSuspendedForCrashRestore ||
+                    !_steamFirewallAutoEnabled ||
+                    !_steamFirewallAutoPaused)
                     return;
 
                 string mccExePath = ResolveMccExecutablePath(TxtMccPath.Text.Trim());
@@ -4255,6 +4626,12 @@ try {{
             AppendLog("[REJOIN]", $"Rejoin Fix active on 127.0.0.1:{_rejoinProxy.Port}. Restart MCC now.", "#39FF14");
             SetStatus("Rejoin Fix active.", "#39FF14");
 
+            if (IsMicrosoftStoreInstallation)
+            {
+                UpdateRejoinFirewallStatus();
+                return;
+            }
+
             try
             {
                 await EnsureSteamFirewallRulesPreparedAsync();
@@ -4313,6 +4690,13 @@ try {{
                     MessageBoxImage.Error);
                 return false;
             }
+            finally
+            {
+                // This path is also used by VPN and overlay auto-start, so it
+                // must keep the shared Services controls in sync without
+                // relying on the Start Services button's click handler.
+                UpdateRejoinFixUi();
+            }
         }
 
         private async Task StartPendingRejoinFixAfterElevationAsync()
@@ -4324,6 +4708,7 @@ try {{
                 return;
 
             BtnRejoinFix.IsEnabled = false;
+            SidebarFeaturesToggleButton.IsEnabled = false;
             try
             {
                 await StartRejoinFixAsync();
@@ -4343,12 +4728,14 @@ try {{
             {
                 UpdateRejoinFixUi();
                 BtnRejoinFix.IsEnabled = true;
+                SidebarFeaturesToggleButton.IsEnabled = true;
             }
         }
 
         private async void BtnRejoinFix_Click(object sender, RoutedEventArgs e)
         {
             BtnRejoinFix.IsEnabled = false;
+            SidebarFeaturesToggleButton.IsEnabled = false;
 
             try
             {
@@ -4409,6 +4796,7 @@ try {{
             {
                 UpdateRejoinFixUi();
                 BtnRejoinFix.IsEnabled = true;
+                SidebarFeaturesToggleButton.IsEnabled = true;
             }
         }
 
@@ -4431,7 +4819,7 @@ try {{
             };
             if (dlg.ShowDialog() == true)
             {
-                TxtMccPath.Text = dlg.FolderName;
+                TxtMccPath.Text = MccInstallationResolver.NormalizeRoot(dlg.FolderName);
                 SaveMccInstallationPath();
             }
         }
@@ -4447,14 +4835,20 @@ try {{
             _playlistsMccPath = TxtMccPath.Text;
             _playlistsTab?.SetMccInstallationPath(_playlistsMccPath);
             App.SaveMccInstallationPath(TxtMccPath.Text);
+            UpdateMccEditionUi();
+            UpdateToolboxStatus();
         }
 
         private void SaveMccInstallationPath()
         {
-            var mccPath = TxtMccPath.Text.Trim();
+            var mccPath = MccInstallationResolver.NormalizeRoot(TxtMccPath.Text);
+            if (!string.Equals(TxtMccPath.Text, mccPath, StringComparison.OrdinalIgnoreCase))
+                TxtMccPath.Text = mccPath;
             App.SaveMccInstallationPath(mccPath);
             _playlistsMccPath = mccPath;
             _playlistsTab?.SetMccInstallationPath(mccPath);
+            _theaterTab?.SetMccInstallationPath(mccPath);
+            UpdateMccEditionUi();
         }
 
         private void LoadMaps(string mccPath)
@@ -4465,8 +4859,11 @@ try {{
             {
                 Dispatcher.InvokeAsync(() =>
                 {
+                    _homeMccStatusPath = mccPath;
+                    _homeMccStatusFound = false;
                     TxtMapStatus.Text = $"Maps folder not found: {mapsPath}";
                     TxtMapStatus.Foreground = Brush("#FF2D55");
+                    UpdateToolboxStatus();
                 });
                 AppendLog("[ERROR]", $"Halo 3 maps folder not found: {mapsPath}", "#FF2D55");
                 return;
@@ -4517,6 +4914,8 @@ try {{
             // Marshal all collection updates to the UI thread
             Dispatcher.InvokeAsync(() =>
             {
+                _homeMccStatusPath = mccPath;
+                _homeMccStatusFound = true;
                 _maps.Clear();
 
                 // Add official maps sorted alphabetically
@@ -4555,6 +4954,8 @@ try {{
                     AppendLog("[INFO]", msg, "#39FF14");
                     SetStatus(msg, "#39FF14");
                 }
+
+                UpdateToolboxStatus();
             });
         }
 
@@ -5338,12 +5739,8 @@ try {{
 
             if (!string.IsNullOrWhiteSpace(_statsGamertag))
             {
-                _ = StatsFetchStats(_statsGamertag);
-                if (!string.IsNullOrEmpty(_statsSpartanToken))
-                    _ = StatsFetchRecentStatsAsync(_statsGamertag, _statsSpartanToken);
-                _ = StatsRefreshWaypointTokenOnStartupAsync(
-                    _statsGamertag,
-                    refreshStatsAfterCapture: string.IsNullOrEmpty(_statsSpartanToken));
+                _statsWaypointTokenTimer.Start();
+                _ = StatsInitializeWaypointSessionAsync(_statsGamertag);
             }
 
             StatsLoadLastGameOnStartup();
@@ -5374,10 +5771,17 @@ try {{
             if (e.Key == Key.Enter) StatsApplyGamertag();
         }
 
-        private void StatsSyncBtn_Click(object sender, RoutedEventArgs e)
+        private async void StatsSyncBtn_Click(object sender, RoutedEventArgs e)
         {
             string gt; lock (_statsLock) { gt = _statsGamertag; }
-            if (!string.IsNullOrWhiteSpace(gt)) _ = StatsFetchStats(gt);
+            if (string.IsNullOrWhiteSpace(gt))
+                return;
+
+            // A manual sync is also an explicit request to retry the persisted
+            // Waypoint session. This lets a temporary silent-refresh failure heal
+            // immediately instead of waiting for the next maintenance interval.
+            await StatsMaintainWaypointTokenAsync();
+            await StatsFetchStats(gt);
         }
 
         private void StatsResetBtn_Click(object sender, RoutedEventArgs e)
@@ -5635,7 +6039,7 @@ try {{
             string token; lock (_statsLock) { token = _statsSpartanToken; }
             if (string.IsNullOrEmpty(token))
             {
-                StatsSetStatus("Connect Halo Waypoint first to open match history.");
+                StatsSetStatus("Connect Halo Waypoint on Home to open match history.");
                 return;
             }
             var win = new PlayerMatchHistoryWindow(row.Gamertag, token) { Owner = this };
@@ -5648,22 +6052,34 @@ try {{
             lock (_statsLock) { gt = _statsGamertag; token = _statsSpartanToken; }
             if (string.IsNullOrEmpty(gt))
             {
-                StatsSetStatus("Apply a gamertag first.");
+                StatsSetStatus("Configure your gamertag on Home first.");
                 return;
             }
             if (string.IsNullOrEmpty(token))
             {
-                StatsSetStatus("Connect Halo Waypoint first to open match history.");
+                StatsSetStatus("Connect Halo Waypoint on Home to open match history.");
                 return;
             }
             var win = new PlayerMatchHistoryWindow(gt, token) { Owner = this };
             win.Show();
         }
 
-        private void BtnStatsBanChecker_Click(object sender, RoutedEventArgs e)
+        private BanCheckerAuthorizationState GetBanCheckerAuthorizationState()
         {
-            var window = new BanCheckerWindow(StatsCheckBanTargetsAsync) { Owner = this };
-            window.ShowDialog();
+            if (_rejoinProxy.TryGetLatestBanSpartanToken(out _, out var capturedAtUtc, out var sourceHost))
+            {
+                string captured = capturedAtUtc.ToLocalTime().ToString("MMM d, h:mm tt");
+                string source = string.IsNullOrWhiteSpace(sourceHost) ? "MCC" : sourceHost;
+                return new BanCheckerAuthorizationState(
+                    true,
+                    "READY",
+                    $"Captured from {source} on {captured}. If MCC rejects it, the token is cleared and the refresh steps become required.");
+            }
+
+            string nextStep = _rejoinProxy.IsRunning
+                ? "Rejoin Recovery is running. Launch MCC, sign in, and open Multiplayer to capture a fresh token."
+                : "No usable token is stored. Open Live Features and start Rejoin Recovery, then launch MCC and open Multiplayer.";
+            return new BanCheckerAuthorizationState(false, "AUTHORIZATION NEEDED", nextStep);
         }
 
         private async Task<IReadOnlyList<BanCheckDisplayResult>> StatsCheckBanTargetsAsync(IReadOnlyList<string> targets)
@@ -5671,7 +6087,9 @@ try {{
             if (!_rejoinProxy.TryGetLatestBanSpartanToken(out var token, out var capturedAtUtc, out _))
             {
                 StatsSetStatus("Start Rejoin Fix, then let MCC make a ban summary request before using Ban Checker.");
-                throw new InvalidOperationException("No fresh MCC banprocessor token is available yet.\n\nStart Rejoin Fix, let MCC make a /hmcc/bansummary request, then try Ban Checker again.");
+                throw new InvalidOperationException(
+                    "MCC authorization is missing or expired. Open Live Features, start Rejoin Recovery, " +
+                    "launch MCC, sign in, and open Multiplayer. Then return here and refresh the authorization status.");
             }
 
             StatsSetStatus($"Resolving {targets.Count} Ban Checker target(s)...");
@@ -5926,7 +6344,12 @@ try {{
             using var res = await StatsHttp.SendAsync(req);
             string body = await res.Content.ReadAsStringAsync();
             if (res.StatusCode == HttpStatusCode.Unauthorized)
+            {
                 _rejoinProxy.ClearBanSpartanToken(token);
+                throw new InvalidOperationException(
+                    "MCC rejected the stored authorization. It has been cleared. Open Live Features, start Rejoin Recovery, " +
+                    "launch MCC, sign in, and open Multiplayer to capture a new token.");
+            }
             if (!res.IsSuccessStatusCode)
                 throw new HttpRequestException($"Ban Checker returned HTTP {(int)res.StatusCode} {res.ReasonPhrase}.\n\n{body}");
 
@@ -5979,7 +6402,7 @@ try {{
             return (true, $"BANNED.\n\nActive bans:\n{string.Join(Environment.NewLine, banLines)}\n\nResultCode: {resultCode}", "Ban Checker: active ban found.");
         }
 
-        private void StatsHyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+        private void ExternalHyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
         {
             Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
             e.Handled = true;
@@ -6096,6 +6519,13 @@ try {{
             var rttHistory = _lastNetworkStatsSnapshot?.RttHistory
                 .Select(x => x.HasValue ? (int?)Math.Clamp(x.Value, int.MinValue, int.MaxValue) : null)
                 .ToArray() ?? Array.Empty<int?>();
+            bool showFirewallStatus = ChkRejoinFixFirewall.IsChecked == true ||
+                ChkRejoinFixFirewallMatchmaking.IsChecked == true;
+            string firewallStatus = showFirewallStatus ? TxtRejoinFirewallStatus.Text : "";
+            string firewallStatusColor = showFirewallStatus &&
+                TxtRejoinFirewallStatus.Foreground is SolidColorBrush firewallStatusBrush
+                    ? firewallStatusBrush.Color.ToString()
+                    : "";
 
             return new ObsOverlaySnapshot(
                 ShowSessionStats: _obsBrowserOverlaySessionStatsEnabled,
@@ -6114,6 +6544,9 @@ try {{
                     ? null
                     : _smartMatchWaitEstimate.CapturedAtUtc.AddSeconds(_smartMatchWaitEstimate.GiveUpSeconds + 10),
                 ServerLabel: serverLabel,
+                VpnRegion: VpnConnectionPresence.ConnectedRegion,
+                FirewallStatus: firewallStatus,
+                FirewallStatusColor: firewallStatusColor,
                 RttMs: _lastNetworkStatsSnapshot?.RttMs is long rtt ? (int?)Math.Clamp(rtt, int.MinValue, int.MaxValue) : null,
                 JitterMs: _lastNetworkStatsSnapshot?.JitterMs,
                 PacketLossPercent: _lastNetworkStatsSnapshot?.PacketLossPercent ?? 0,
@@ -6311,7 +6744,12 @@ try {{
 
         private void StatsApplyCapturedToken(string token)
         {
-            lock (_statsLock) { _statsSpartanToken = token; _statsHwTokenExpired = false; }
+            lock (_statsLock)
+            {
+                _statsSpartanToken = token;
+                _statsHwTokenExpired = false;
+                _statsTokenLastValidatedUtc = DateTimeOffset.MinValue;
+            }
             StatsSaveToken(token);
             StatsUpdateHwStatus();
             StatsSetStatus("HW token captured.");
@@ -6323,16 +6761,157 @@ try {{
             }
         }
 
-        private async Task StatsRefreshWaypointTokenOnStartupAsync(
-            string gamertag,
-            bool refreshStatsAfterCapture)
+        private async Task StatsInitializeWaypointSessionAsync(string gamertag)
         {
-            string? token = await StatsRefreshWaypointTokenSilentlyAsync();
-            if (string.IsNullOrWhiteSpace(token) || !refreshStatsAfterCapture)
+            await StatsFetchStats(gamertag);
+
+            string token;
+            lock (_statsLock)
+            {
+                token = _statsSpartanToken;
+            }
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                token = await StatsRefreshWaypointTokenSilentlyAsync() ?? "";
+                if (!string.IsNullOrWhiteSpace(token))
+                    await StatsFetchStats(gamertag);
+            }
+
+            bool expired;
+            lock (_statsLock)
+            {
+                token = _statsSpartanToken;
+                expired = _statsHwTokenExpired;
+            }
+            if (!string.IsNullOrWhiteSpace(token) && !expired)
+                _ = StatsFetchRecentStatsAsync(gamertag, token);
+
+            await StatsMaintainWaypointTokenAsync();
+        }
+
+        private async void StatsWaypointTokenTimer_Tick(object? sender, EventArgs e) =>
+            await StatsMaintainWaypointTokenAsync();
+
+        private async Task StatsMaintainWaypointTokenAsync()
+        {
+            if (!await _statsWaypointMaintenanceLock.WaitAsync(0))
                 return;
 
-            await StatsFetchStats(gamertag);
-            _ = StatsFetchRecentStatsAsync(gamertag, token);
+            try
+            {
+                string token;
+                string gamertag;
+                bool expired;
+                DateTimeOffset validatedUtc;
+                lock (_statsLock)
+                {
+                    token = _statsSpartanToken;
+                    gamertag = _statsGamertag;
+                    expired = _statsHwTokenExpired;
+                    validatedUtc = _statsTokenLastValidatedUtc;
+                }
+
+                if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(gamertag))
+                    return;
+
+                // A Spartan token is short-lived, but the persisted Waypoint browser
+                // session can usually mint another one without user interaction. Keep
+                // retrying that recovery instead of making one 401 permanently disable
+                // maintenance until the user reconnects manually.
+                if (expired)
+                {
+                    await StatsRefreshAndValidateWaypointTokenAsync(gamertag, token);
+                    return;
+                }
+
+                if (validatedUtc == DateTimeOffset.MinValue ||
+                    DateTimeOffset.UtcNow - validatedUtc >= TimeSpan.FromMinutes(15))
+                {
+                    WaypointTokenProbeResult probe = await StatsProbeWaypointTokenAsync(gamertag, token);
+                    if (probe == WaypointTokenProbeResult.Valid)
+                    {
+                        lock (_statsLock) { _statsTokenLastValidatedUtc = DateTimeOffset.UtcNow; }
+                    }
+                    else if (probe == WaypointTokenProbeResult.Unauthorized)
+                    {
+                        await StatsRefreshAndValidateWaypointTokenAsync(gamertag, token);
+                        return;
+                    }
+                    else
+                    {
+                        // A timeout, DNS failure, or 5xx response is not an auth
+                        // failure. Keep the current session and try next tick.
+                        return;
+                    }
+                }
+            }
+            finally
+            {
+                _statsWaypointMaintenanceLock.Release();
+            }
+        }
+
+        private async Task StatsRefreshAndValidateWaypointTokenAsync(string gamertag, string rejectedToken)
+        {
+            string? refreshed = await StatsRefreshWaypointTokenSilentlyAsync();
+            WaypointTokenProbeResult? refreshedProbe = string.IsNullOrWhiteSpace(refreshed)
+                ? null
+                : await StatsProbeWaypointTokenAsync(gamertag, refreshed);
+            if (refreshedProbe == WaypointTokenProbeResult.Valid)
+            {
+                lock (_statsLock)
+                {
+                    _statsTokenLastValidatedUtc = DateTimeOffset.UtcNow;
+                    _statsHwTokenExpired = false;
+                }
+                StatsUpdateHwStatus();
+                return;
+            }
+
+            lock (_statsLock)
+            {
+                // Do not let a late 401 for an older request invalidate a token
+                // that another request refreshed in the meantime.
+                string tokenProvenUnauthorized = refreshedProbe == WaypointTokenProbeResult.Unauthorized
+                    ? refreshed!
+                    : rejectedToken;
+                if (refreshedProbe != WaypointTokenProbeResult.TransientFailure &&
+                    string.Equals(_statsSpartanToken, tokenProvenUnauthorized, StringComparison.Ordinal))
+                    _statsHwTokenExpired = true;
+            }
+            StatsUpdateHwStatus();
+        }
+
+        private async Task<WaypointTokenProbeResult> StatsProbeWaypointTokenAsync(
+            string gamertag,
+            string token)
+        {
+            try
+            {
+                string url =
+                    $"https://mccapi.svc.halowaypoint.com/hmcc/users/gt({Uri.EscapeDataString(gamertag)})/service-record";
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.TryAddWithoutValidation("x-343-authorization-spartan", token);
+                request.Headers.TryAddWithoutValidation("Accept", "application/json");
+                using HttpResponseMessage response = await StatsHttp.SendAsync(request);
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                    return WaypointTokenProbeResult.Unauthorized;
+                return response.IsSuccessStatusCode
+                    ? WaypointTokenProbeResult.Valid
+                    : WaypointTokenProbeResult.TransientFailure;
+            }
+            catch
+            {
+                return WaypointTokenProbeResult.TransientFailure;
+            }
+        }
+
+        private enum WaypointTokenProbeResult
+        {
+            Valid,
+            Unauthorized,
+            TransientFailure
         }
 
         private Task<string?> StatsRefreshWaypointTokenSilentlyAsync()
@@ -6373,6 +6952,7 @@ try {{
             {
                 _statsSpartanToken = token;
                 _statsHwTokenExpired = false;
+                _statsTokenLastValidatedUtc = DateTimeOffset.MinValue;
             }
             StatsSaveToken(token);
             StatsUpdateHwStatus();
@@ -6422,11 +7002,11 @@ try {{
             lock (_statsLock)
             {
                 if (string.IsNullOrEmpty(_statsSpartanToken))
-                    (text, buttonText, color) = ("WAYPOINT: NOT CONNECTED", "CONNECT WAYPOINT", new SolidColorBrush(Color.FromRgb(0x4A, 0x5A, 0x6A)));
+                    (text, buttonText, color) = ("NOT CONNECTED", "CONNECT WAYPOINT", new SolidColorBrush(Color.FromRgb(0x71, 0x86, 0x9A)));
                 else if (_statsHwTokenExpired)
-                    (text, buttonText, color) = ("WAYPOINT: EXPIRED", "RECONNECT WAYPOINT", new SolidColorBrush(Color.FromRgb(0xFF, 0x2D, 0x55)));
+                    (text, buttonText, color) = ("EXPIRED", "RECONNECT WAYPOINT", new SolidColorBrush(Color.FromRgb(0xFF, 0x2D, 0x55)));
                 else
-                    (text, buttonText, color) = ("WAYPOINT: CONNECTED", "WAYPOINT CONNECTED", new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0xFF)));
+                    (text, buttonText, color) = ("CONNECTED", "WAYPOINT CONNECTED", new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0xFF)));
             }
             Dispatcher.InvokeAsync(() =>
             {
@@ -6613,6 +7193,8 @@ try {{
             var rows = players
                 .OrderBy(p => p.Attribute("mTeamIndex")?.Value ?? p.Attribute("mTeamId")?.Value ?? "0")
                 .ThenBy(p => int.TryParse(p.Attribute("mStanding")?.Value, out int s) ? s : 99)
+                .ThenByDescending(p => ParseInt(p.Attribute("Score")?.Value))
+                .ThenByDescending(p => ParseInt(p.Attribute("mKills")?.Value))
                 .Select(p =>
                 {
                     string gt    = p.Attribute("mGamertagText")?.Value ?? "Unknown";
@@ -6622,6 +7204,9 @@ try {{
                         : p.Attribute("mTeamIndex")?.Value ?? p.Attribute("mTeamId")?.Value ?? "0";
                     string kd       = kdSnap.GetValueOrDefault(gt, "—");
                     string recentKd = recentKdSnap.GetValueOrDefault(gt, "");
+                    int standing = int.TryParse(p.Attribute("mStanding")?.Value, out int parsedStanding)
+                        ? parsedStanding
+                        : 99;
                     completedByXuid.TryGetValue(normalizedXuid, out var completedLobbyRow);
                     if (completedLobbyRow is null)
                         completedByGamertag.TryGetValue(gt, out completedLobbyRow);
@@ -6660,7 +7245,13 @@ try {{
                         SkillPercentile = StatsPreferCopiedDisplay(completedLobbyRow?.SkillPercentile, "—"),
                         IsMe          = gt.Equals(myGt, StringComparison.OrdinalIgnoreCase),
                         IsScanning    = kd == "…",
-                        Standing      = int.TryParse(p.Attribute("mStanding")?.Value, out int s) ? s : 99,
+                        Standing      = standing,
+                        MatchResult   = StatsFormatMatchResult(standing, isFfa),
+                        MatchScore    = ParseInt(p.Attribute("Score")?.Value),
+                        MatchKills    = ParseInt(p.Attribute("mKills")?.Value),
+                        MatchDeaths   = ParseInt(p.Attribute("mDeaths")?.Value),
+                        MatchAssists  = ParseInt(p.Attribute("mAssists")?.Value),
+                        MatchObjectiveStats = StatsFormatMatchCustomStats(p),
                         RecentKD      = recentKd,
                         RecentTrend   = trend,
                     };
@@ -6714,6 +7305,52 @@ try {{
             });
         }
 
+        private static string StatsFormatMatchResult(int standing, bool isFfa)
+        {
+            if (standing < 0 || standing >= 99)
+                return "—";
+
+            if (isFfa)
+                return $"#{standing + 1}";
+
+            return standing switch
+            {
+                0 => "WIN",
+                1 => "LOSS",
+                _ => $"#{standing + 1}"
+            };
+        }
+
+        private static string StatsFormatMatchCustomStats(XElement player)
+        {
+            var stats = player.Element("CustomStats")?
+                .Elements("CustomStat")
+                .Select(stat => new
+                {
+                    Name = StatsFormatCustomStatName(stat.Attribute("mStatName")?.Value ?? ""),
+                    Value = stat.Attribute("mValueForDisplay")?.Value?.Trim() ?? ""
+                })
+                .Where(stat => !string.IsNullOrWhiteSpace(stat.Name) &&
+                               !string.IsNullOrWhiteSpace(stat.Value))
+                .Select(stat => $"{stat.Name}: {stat.Value}")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? new List<string>();
+
+            return stats.Count == 0 ? "—" : string.Join("  ·  ", stats);
+        }
+
+        private static string StatsFormatCustomStatName(string value)
+        {
+            string name = value.Trim().TrimStart('$');
+            if (string.IsNullOrWhiteSpace(name))
+                return "";
+
+            name = name.Replace('_', ' ');
+            name = Regex.Replace(name, "(?<=[a-z0-9])(?=[A-Z])", " ");
+            name = Regex.Replace(name, "\\s+", " ").Trim();
+            return name.ToUpperInvariant();
+        }
+
         private static string StatsPreferCopiedStat(string? copied, string fallback)
         {
             if (string.IsNullOrWhiteSpace(copied) || copied == "—" || copied == "…")
@@ -6746,6 +7383,12 @@ try {{
             IsMe = row.IsMe,
             IsScanning = row.IsScanning,
             Standing = row.Standing,
+            MatchResult = row.MatchResult,
+            MatchScore = row.MatchScore,
+            MatchKills = row.MatchKills,
+            MatchDeaths = row.MatchDeaths,
+            MatchAssists = row.MatchAssists,
+            MatchObjectiveStats = row.MatchObjectiveStats,
             RecentKD = row.RecentKD,
             RecentTrend = row.RecentTrend,
         };
@@ -7049,6 +7692,10 @@ try {{
             bool alreadyLogged = false;
             bool playerFound = false;
             string trackedGamertag = "";
+            string gameTypeName = doc.Root?.Element("GameTypeName")?.Attribute("GameTypeName")?.Value
+                ?? doc.Root?.Element("GameTypeName")?.Value
+                ?? "";
+            string playedAt = File.GetLastWriteTime(path).ToString("MMM d, h:mm tt");
 
             lock (_statsLock)
             {
@@ -7064,6 +7711,8 @@ try {{
                     .Select(StatsClonePlayerRow)
                     .ToList();
                 _statsLastGameServerText = _statsCurrentLobbyServerText;
+                _statsLastGameModeText = gameTypeName;
+                _statsLastGamePlayedText = playedAt;
                 trackedGamertag = _statsGamertag.Trim();
                 alreadyLogged = _statsSession.ProcessedGameIds.Contains(gId);
                 if (countTowardSession && !alreadyLogged)
@@ -7195,7 +7844,7 @@ try {{
 
             StatsRefreshSessionUI();
             StatsRebuildLobbyRows();
-            Dispatcher.InvokeAsync(() => StatsLastGameServerLabel.Text = _statsLastGameServerText);
+            Dispatcher.InvokeAsync(() => StatsLastGameServerLabel.Text = StatsFormatLastGameHeader());
             if (!countTowardSession)
                 StatsSetStatus($"Loaded last game: {Path.GetFileName(path)}");
             else if (alreadyLogged)
@@ -7206,7 +7855,7 @@ try {{
                     .Select(p => p.Attribute("mGamertagText")?.Value?.Trim())
                     .Where(name => !string.IsNullOrWhiteSpace(name)));
                 StatsSetStatus(string.IsNullOrWhiteSpace(trackedGamertag)
-                    ? "Set and apply your gamertag before loading the last game."
+                    ? "Configure your gamertag on Home before loading the last game."
                     : $"Gamertag '{trackedGamertag}' was not in the report. Players: {available}");
                 return false;
             }
@@ -7418,6 +8067,7 @@ try {{
             {
                 var (success, unauthorized) = await StatsFetchHaloWaypointStats(gt, token);
                 if (success) return;
+                string tokenProvenUnauthorized = token;
 
                 if (unauthorized)
                 {
@@ -7436,15 +8086,26 @@ try {{
                             _ = StatsFetchRecentStatsAsync(gt, refreshedToken);
                             return;
                         }
+                        if (retry.unauthorized)
+                            tokenProvenUnauthorized = refreshedToken;
                         unauthorized = retry.unauthorized;
                     }
                 }
 
                 if (unauthorized)
                 {
-                    lock (_statsLock) { _statsHwTokenExpired = true; }
+                    lock (_statsLock)
+                    {
+                        // A response from an older request must not expire a token
+                        // captured by another request while this one was in flight.
+                        if (string.Equals(
+                                _statsSpartanToken,
+                                tokenProvenUnauthorized,
+                                StringComparison.Ordinal))
+                            _statsHwTokenExpired = true;
+                    }
                     StatsUpdateHwStatus();
-                    StatsSetStatus("HW token expired and could not refresh silently — reconnect Halo Waypoint.");
+                    StatsSetStatus("Waypoint connection expired — reconnect it on Home.");
                 }
             }
 
@@ -7470,6 +8131,8 @@ try {{
                     StatsSetStatus($"[HW] API {(int)resp.StatusCode} for {gt}");
                     return (false, false);
                 }
+
+                lock (_statsLock) { _statsTokenLastValidatedUtc = DateTimeOffset.UtcNow; }
 
                 string body = await resp.Content.ReadAsStringAsync();
                 using var json = JsonDocument.Parse(body);
@@ -7841,7 +8504,10 @@ try {{
             try
             {
                 string t = File.ReadAllText(StatsTokenFile).Trim();
-                if (!string.IsNullOrEmpty(t)) _statsSpartanToken = t;
+                if (!string.IsNullOrEmpty(t))
+                {
+                    _statsSpartanToken = t;
+                }
             }
             catch { }
         }
@@ -8017,6 +8683,10 @@ try {{
         {
             "" or "—" => "—",
             "FFA" => "FFA",
+            "0" => "RED",
+            "1" => "BLUE",
+            "2" => "GREEN",
+            "3" => "YELLOW",
             _ => $"T{Team}"
         };
         public string BestServer { get; set; } = "—";
@@ -8042,6 +8712,18 @@ try {{
         public bool   IsMe      { get; set; }
         public bool   IsScanning { get; set; }
         public int    Standing  { get; set; }
+        public string MatchResult { get; set; } = "—";
+        public int MatchScore { get; set; }
+        public int MatchKills { get; set; }
+        public int MatchDeaths { get; set; }
+        public int MatchAssists { get; set; }
+        public string MatchObjectiveStats { get; set; } = "—";
+        public Brush MatchResultColor => MatchResult switch
+        {
+            "WIN" => new SolidColorBrush(Color.FromRgb(0x39, 0xFF, 0x14)),
+            "LOSS" => new SolidColorBrush(Color.FromRgb(0xFF, 0x2D, 0x55)),
+            _ => new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0xFF))
+        };
 
         public string KD
         {

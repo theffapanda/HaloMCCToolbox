@@ -311,6 +311,7 @@ internal sealed class ObsOverlayServer : IDisposable
     .label { color: var(--muted); font-size: 12px; font-weight: 700; text-shadow: var(--shadow); }
     .section-title { color: var(--cyan); font-size: 13px; font-weight: 700; text-shadow: var(--shadow); }
     .server { color: var(--muted); font-size: 13px; text-align: right; text-shadow: var(--shadow); }
+    .vpn { color: var(--green); font-size: 11px; font-weight: 700; text-align: right; margin-top: 2px; text-shadow: var(--shadow); }
     .ping { color: var(--green); font-size: 26px; font-weight: 700; line-height: 1.25; text-shadow: var(--shadow); }
     .quality { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
     .jitter { color: var(--green); font-size: 12px; font-weight: 700; text-align: right; text-shadow: var(--shadow); }
@@ -320,6 +321,8 @@ internal sealed class ObsOverlayServer : IDisposable
     .traffic .down { color: var(--cyan); }
     .packets { margin-top: 4px; color: var(--muted); font-size: 12px; text-shadow: var(--shadow); }
     .graph { width: 100%; height: 34px; margin-top: 8px; }
+    .firewall-status { margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 700; line-height: 1.2; text-shadow: var(--shadow); }
+    .firewall-status:empty { display: none; }
     .divider { height: 1px; margin: 10px 0; background: rgba(0, 200, 255, 0.32); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.95); }
     .session.hidden { display: none; }
     .record { margin-top: 8px; }
@@ -376,7 +379,10 @@ internal sealed class ObsOverlayServer : IDisposable
       <div id="network" class="network">
         <div class="row">
           <div class="section-title">NETWORK</div>
-          <div id="server" class="server">SERVER: --</div>
+          <div>
+            <div id="server" class="server">SERVER: --</div>
+            <div id="vpn" class="vpn blank"></div>
+          </div>
         </div>
         <div class="row">
           <div id="ping" class="ping">Ping: -- ms</div>
@@ -399,6 +405,7 @@ internal sealed class ObsOverlayServer : IDisposable
           <polyline id="graphGlow" points="" fill="none" stroke="rgba(0,200,255,.32)" stroke-width="6" stroke-linejoin="round" />
           <polyline id="graphLine" points="" fill="none" stroke="#39ff14" stroke-width="2.4" stroke-linejoin="round" />
         </svg>
+        <div id="firewallStatus" class="firewall-status"></div>
       </div>
 
       <section id="matchmaking" class="matchmaking hidden">
@@ -476,7 +483,7 @@ internal sealed class ObsOverlayServer : IDisposable
     document.body.classList.toggle("obs-mode", isObsMode);
     document.body.classList.toggle("component-mode", component !== "all");
     const componentSize = {
-      network: [430, 132],
+      network: [430, 164],
       wait: [360, 112],
       session: [920, 230],
       all: [1280, 150]
@@ -576,6 +583,9 @@ internal sealed class ObsOverlayServer : IDisposable
         const hasNetwork = hasPing || data.uploadKilobytesPerSecond !== null || data.downloadKilobytesPerSecond !== null;
         $("network").classList.toggle("hidden", component !== "all" && component !== "network" || !data.showNetworkStats);
         setBlankable("server", hasNetwork && data.serverLabel !== "SERVER: --" ? data.serverLabel : "");
+        setBlankable("vpn", data.vpnRegion ? `VPN: ${data.vpnRegion}` : "");
+        setBlankable("firewallStatus", data.firewallStatus);
+        $("firewallStatus").style.color = data.firewallStatusColor || "var(--muted)";
         setBlankable("ping", hasPing ? `Ping: ${data.rttMs} ms` : "");
         const hasJitter = data.jitterMs !== null && data.jitterMs !== undefined;
         setBlankable("jitter", hasJitter ? `Jitter: ${data.jitterMs.toFixed(1)} ms` : "");
@@ -702,6 +712,9 @@ internal sealed record ObsOverlaySnapshot(
     DateTimeOffset? MatchmakingStartedAtUtc,
     DateTimeOffset? MatchmakingExpiresAtUtc,
     string ServerLabel,
+    string VpnRegion,
+    string FirewallStatus,
+    string FirewallStatusColor,
     int? RttMs,
     double? JitterMs,
     double PacketLossPercent,
@@ -744,6 +757,9 @@ internal sealed record ObsOverlaySnapshot(
         MatchmakingStartedAtUtc: null,
         MatchmakingExpiresAtUtc: null,
         ServerLabel: "SERVER: --",
+        VpnRegion: "",
+        FirewallStatus: "",
+        FirewallStatusColor: "",
         RttMs: null,
         JitterMs: null,
         PacketLossPercent: 0,

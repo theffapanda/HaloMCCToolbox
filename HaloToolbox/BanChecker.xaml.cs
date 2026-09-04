@@ -1,21 +1,41 @@
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 namespace HaloToolbox;
 
-public partial class BanCheckerWindow : Window
+public partial class BanChecker : UserControl
 {
     public const int MaxTargets = 15;
     private readonly Func<IReadOnlyList<string>, Task<IReadOnlyList<BanCheckDisplayResult>>> _checkAsync;
+    private readonly Func<BanCheckerAuthorizationState> _getAuthorizationState;
+    private readonly Action _openLiveFeatures;
     private readonly ObservableCollection<BanCheckDisplayResult> _results = new();
 
-    public BanCheckerWindow(Func<IReadOnlyList<string>, Task<IReadOnlyList<BanCheckDisplayResult>>> checkAsync)
+    public BanChecker(
+        Func<IReadOnlyList<string>, Task<IReadOnlyList<BanCheckDisplayResult>>> checkAsync,
+        Func<BanCheckerAuthorizationState> getAuthorizationState,
+        Action openLiveFeatures)
     {
         InitializeComponent();
         _checkAsync = checkAsync;
+        _getAuthorizationState = getAuthorizationState;
+        _openLiveFeatures = openLiveFeatures;
         ResultsGrid.ItemsSource = _results;
-        TargetsBox.Focus();
+        Loaded += (_, _) =>
+        {
+            RefreshAuthorizationStatus();
+            TargetsBox.Focus();
+        };
+    }
+
+    public void RefreshAuthorizationStatus()
+    {
+        BanCheckerAuthorizationState state = _getAuthorizationState();
+        AuthStatusText.Text = state.Status;
+        AuthStatusText.Foreground = (Brush)FindResource(state.IsAvailable ? "GreenBrush" : "OrangeBrush");
+        AuthDetailText.Text = state.Detail;
     }
 
     private List<string> ReadTargets() => TargetsBox.Text
@@ -28,11 +48,11 @@ public partial class BanCheckerWindow : Window
     private void TargetsBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         int count = ReadTargets().Count;
-        CountText.Text = $"{count} / {MaxTargets}";
+        CountText.Text = $"{count} / {MaxTargets} PLAYERS";
         CountText.Foreground = count > MaxTargets
-            ? System.Windows.Media.Brushes.OrangeRed
-            : (System.Windows.Media.Brush)FindResource("MutedBrush");
-        CheckButton.IsEnabled = count is > 0 and <= MaxTargets;
+            ? Brushes.OrangeRed
+            : (Brush)FindResource("MutedBrush");
+        CheckButton.IsEnabled = count is > 0 and <= MaxTargets && TargetsBox.IsEnabled;
     }
 
     private async void Check_Click(object sender, RoutedEventArgs e)
@@ -44,6 +64,7 @@ public partial class BanCheckerWindow : Window
         CheckButton.IsEnabled = false;
         TargetsBox.IsEnabled = false;
         StatusText.Text = $"Checking {targets.Count} player(s)...";
+        ErrorCard.Visibility = Visibility.Collapsed;
         _results.Clear();
         try
         {
@@ -54,17 +75,23 @@ public partial class BanCheckerWindow : Window
         catch (Exception ex)
         {
             StatusText.Text = "Check failed";
-            ToolboxDialog.Show(this, ex.Message, "Ban Checker Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            ErrorText.Text = ex.Message;
+            ErrorCard.Visibility = Visibility.Visible;
         }
         finally
         {
             TargetsBox.IsEnabled = true;
             CheckButton.IsEnabled = ReadTargets().Count is > 0 and <= MaxTargets;
+            RefreshAuthorizationStatus();
         }
     }
 
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    private void RefreshAuth_Click(object sender, RoutedEventArgs e) => RefreshAuthorizationStatus();
+
+    private void OpenFeatures_Click(object sender, RoutedEventArgs e) => _openLiveFeatures();
 }
+
+public sealed record BanCheckerAuthorizationState(bool IsAvailable, string Status, string Detail);
 
 public sealed class BanCheckDisplayResult
 {
