@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rejoin Guard - Visual Architecture</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0c10;
+            color: #e0e0e0;
+            padding: 40px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #00c8ff;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 40px;
+        }
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 50px;
+        }
+        .flow-diagram {
+            border: 2px solid #333;
+            border-radius: 8px;
+            padding: 20px;
+            background: #0f1117;
+        }
+        .flow-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #444;
+        }
+        .flow-title.fail {
+            color: #ff2d55;
+        }
+        .flow-title.success {
+            color: #39ff14;
+        }
+        .step {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 4px;
+            border-left: 4px solid #666;
+        }
+        .step.fail {
+            background: #1a0f0f;
+            border-left-color: #ff2d55;
+        }
+        .step.success {
+            background: #0f1a0f;
+            border-left-color: #39ff14;
+        }
+        .step-number {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            background: #444;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 24px;
+            margin-right: 10px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .step.fail .step-number {
+            background: #ff2d55;
+        }
+        .step.success .step-number {
+            background: #39ff14;
+            color: #000;
+        }
+        .arrow {
+            text-align: center;
+            color: #666;
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        .fixes-table {
+            margin-top: 50px;
+            border-collapse: collapse;
+            width: 100%;
+            border: 1px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .fixes-table th {
+            background: #1a1f2e;
+            color: #00c8ff;
+            padding: 15px;
+            text-align: left;
+            border-bottom: 2px solid #333;
+            font-weight: bold;
+        }
+        .fixes-table td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #222;
+        }
+        .fixes-table tr:hover {
+            background: #151b26;
+        }
+        .fix-number {
+            color: #00c8ff;
+            font-weight: bold;
+            width: 30px;
+        }
+        .fix-title {
+            color: #39ff14;
+            font-weight: bold;
+        }
+        .code-block {
+            background: #0a0c10;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #00c8ff;
+            overflow-x: auto;
+            margin-top: 8px;
+        }
+        .legend {
+            display: grid;
+            grid-template-columns: auto auto auto auto;
+            gap: 30px;
+            margin-top: 50px;
+            padding: 20px;
+            background: #0f1117;
+            border: 1px solid #333;
+            border-radius: 8px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+        }
+        .without-fixes {
+            background: #ff2d55;
+            opacity: 0.6;
+        }
+        .with-fixes {
+            background: #39ff14;
+            opacity: 0.6;
+        }
+        .intervention {
+            background: #00c8ff;
+            opacity: 0.6;
+        }
+        .mpsd {
+            background: #d2a822;
+            opacity: 0.6;
+        }
+        .summary {
+            background: #1a1f2e;
+            border-left: 4px solid #ff6a00;
+            padding: 20px;
+            border-radius: 4px;
+            margin-top: 30px;
+        }
+        .summary h3 {
+            color: #ff6a00;
+            margin-top: 0;
+        }
+        .summary ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .summary li {
+            margin: 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Rejoin Guard Architecture</h1>
+        <p class="subtitle">Crash-Recovery System for Halo MCC</p>
+
+        <!-- Comparison Flow -->
+        <div class="comparison">
+            <!-- WITHOUT FIXES -->
+            <div class="flow-diagram">
+                <div class="flow-title fail">❌ WITHOUT OUR FIXES</div>
+
+                <div class="step fail">
+                    <span class="step-number">1</span>
+                    <strong>Player in Match</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">MCC connected to CascadeMatchmaking session</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step fail">
+                    <span class="step-number">2</span>
+                    <strong>MCC Exits</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">Game closes (crash, quit, kill)</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step fail">
+                    <span class="step-number">3</span>
+                    <strong>Leave Request Sent</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">PUT {"members":{"me":null}} succeeds → 204</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step fail">
+                    <span class="step-number">4</span>
+                    <strong>Player Removed</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">MPSD deletes session membership</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step fail">
+                    <span class="step-number">5</span>
+                    <strong>Restart MCC</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">No memory of session, no session to find</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step fail">
+                    <span class="step-number">6</span>
+                    <strong>❌ NO REJOIN</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">Normal matchmaking only</div>
+                </div>
+            </div>
+
+            <!-- WITH FIXES -->
+            <div class="flow-diagram">
+                <div class="flow-title success">✅ WITH OUR FIXES</div>
+
+                <div class="step success">
+                    <span class="step-number">1</span>
+                    <strong>Player in Match</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">MCC connected to CascadeMatchmaking session</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step success">
+                    <span class="step-number">2</span>
+                    <strong>MCC Exits</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;"><strong style="color: #39ff14;">FIX #2:</strong> Watcher detects exit, auto-arms block</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step success">
+                    <span class="step-number">3</span>
+                    <strong>Leave Request Blocked</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;"><strong style="color: #39ff14;">FIX #1:</strong> Proxy intercepts, returns fake 200</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step success">
+                    <span class="step-number">4</span>
+                    <strong>Player Stays in Session</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">MPSD never receives leave → session intact</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step success">
+                    <span class="step-number">5</span>
+                    <strong>Restart MCC + Restore</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;"><strong style="color: #39ff14;">FIX #3-6:</strong> Reconstruct session from saved state</div>
+                </div>
+
+                <div class="arrow">↓</div>
+
+                <div class="step success">
+                    <span class="step-number">6</span>
+                    <strong>✅ REJOIN PROMPT</strong>
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">Queue again → MPSD recognizes session → rejoin</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fixes Table -->
+        <h2 style="color: #00c8ff; margin-top: 50px;">The 7 Fixes</h2>
+        <table class="fixes-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Fix</th>
+                    <th>Problem</th>
+                    <th>Solution</th>
+                    <th>Code Location</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="fix-number">1</td>
+                    <td class="fix-title">Block-Match-Leave</td>
+                    <td>MCC sends immediate leave on exit → player removed from session</td>
+                    <td>Proxy intercepts PUT {"me":null}, returns fake 200 to MCC, never forwards to MPSD</td>
+                    <td>ProxyService.cs:391-401</td>
+                </tr>
+                <tr>
+                    <td class="fix-number">2</td>
+                    <td class="fix-title">Auto-Exit Detection</td>
+                    <td>Block only works if user clicks button; crashes fail silently</td>
+                    <td>MCC watcher monitors process every 5s, auto-arms block on exit</td>
+                    <td>Scanner.xaml.cs:1328-1348</td>
+                </tr>
+                <tr>
+                    <td class="fix-number">3</td>
+                    <td class="fix-title">Persist Match Session</td>
+                    <td>Restarted MCC has no memory of which session it was in</td>
+                    <td>Capture session data from network traffic, save to %APPDATA%\HaloMCCToolbox\last-match-session.json</td>
+                    <td>Scanner.xaml.cs:AddCaptureEntry()</td>
+                </tr>
+                <tr>
+                    <td class="fix-number">4</td>
+                    <td class="fix-title">Persist Activity Handle</td>
+                    <td>No way to reconstruct session handle after restart</td>
+                    <td>Capture handle from /handles POST, save to %APPDATA%\HaloMCCToolbox\last-handle.json</td>
+                    <td>Scanner.xaml.cs:AddCaptureEntry()</td>
+                </tr>
+                <tr>
+                    <td class="fix-number">5</td>
+                    <td class="fix-title">Connection GUID Preservation</td>
+                    <td>MCC generates new GUID on restart → MPSD rejects as unauthorized connection</td>
+                    <td>Include captured connection GUID in rejoin PUT body to prove continuity</td>
+                    <td>SavedHandleInfo / SavedMatchSession models</td>
+                </tr>
+                <tr>
+                    <td class="fix-number">6</td>
+                    <td class="fix-title">Ghost Session Responses</td>
+                    <td>MCC queries session post-restart, gets 401 → assumes no session to rejoin</td>
+                    <td>Proxy fakes session responses during restore window so MCC thinks session is valid</td>
+                    <td>ProxyService.cs:SetPendingCrashRestore()</td>
+                </tr>
+                <tr>
+                    <td class="fix-number">7</td>
+                    <td class="fix-title">ETag Refresh on 412</td>
+                    <td>Cached session ETag stale → rejoin PUT rejected with 412 Precondition Failed</td>
+                    <td>Detect 412, refresh ETag from MPSD, retry the PUT</td>
+                    <td>Scanner.xaml.cs:RefreshETagAsync()</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color without-fixes"></div>
+                <span>Without Fixes (Fails)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color with-fixes"></div>
+                <span>With Fixes (Works)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color intervention"></div>
+                <span>Our Intervention Point</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color mpsd"></div>
+                <span>MPSD Behavior</span>
+            </div>
+        </div>
+
+        <!-- Summary -->
+        <div class="summary">
+            <h3>Why All 7 Fixes Are Required</h3>
+            <ul>
+                <li><strong>Without #1:</strong> Player removed on first exit → no session to rejoin (404)</li>
+                <li><strong>Without #2:</strong> Only works if user manually clicks button → crashes fail silently</li>
+                <li><strong>Without #3/#4:</strong> Restarted MCC has no target session → can't attempt rejoin</li>
+                <li><strong>Without #5:</strong> Rejoin PUT rejected as unauthorized → 403 error</li>
+                <li><strong>Without #6:</strong> MCC thinks no session exists → skips rejoin logic</li>
+                <li><strong>Without #7:</strong> ETag mismatch → 412 error loop</li>
+            </ul>
+            <p style="margin-top: 15px; border-top: 1px solid #333; padding-top: 15px;">
+                <strong>Bottom Line:</strong> This isn't a native MPSD feature—it's a <strong>complete crash-recovery proxy system</strong> we had to build because MCC's architecture broke the feature that MPSD was designed to support.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
