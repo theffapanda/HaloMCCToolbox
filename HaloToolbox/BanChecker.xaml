@@ -1,0 +1,142 @@
+<UserControl x:Class="HaloToolbox.BanChecker"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource BgBrush}"
+             Foreground="{DynamicResource TextBrush}"
+             FontFamily="Consolas">
+    <Grid Margin="20,14,20,14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1" Padding="0,0,0,13" Margin="0,0,0,14">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="🔨 " FontSize="17" Foreground="{DynamicResource AccentBrush}"/>
+                    <TextBlock Text="BAN CHECKER" FontSize="16" FontWeight="Bold" Foreground="White"/>
+                </StackPanel>
+                <TextBlock Text="Check up to 15 gamertags or XUIDs at once using authorization captured directly from MCC."
+                           Margin="0,6,0,0" FontSize="10" Foreground="{DynamicResource MutedBrush}"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="3" Padding="13" Margin="0,0,7,0">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="MCC AUTHORIZATION" FontSize="10" FontWeight="Bold"
+                                       Foreground="{DynamicResource AccentBrush}"/>
+                            <TextBlock x:Name="AuthStatusText" Text="CHECKING" FontSize="13" FontWeight="Bold"
+                                       Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="REFRESH STATUS"
+                                Style="{StaticResource PrimaryButton}" Padding="10,5"
+                                VerticalAlignment="Top" Click="RefreshAuth_Click"/>
+                    </Grid>
+                    <TextBlock x:Name="AuthDetailText" Grid.Row="1" Margin="0,9,0,0"
+                               FontSize="9" Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap"/>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="3" Padding="13" Margin="7,0,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                        <TextBlock Text="GET A NEW MCC AUTHORIZATION" FontSize="10" FontWeight="Bold"
+                                   Foreground="{DynamicResource OrangeBrush}"/>
+                        <TextBlock Margin="0,6,0,0" FontSize="9" Foreground="{DynamicResource MutedBrush}"
+                                   TextWrapping="Wrap" LineHeight="15">
+                            <Run Text="1. Start Rejoin Recovery in Live Features.&#10;"/>
+                            <Run Text="2. Launch MCC and sign in.&#10;"/>
+                            <Run Text="3. Open Multiplayer so MCC requests a fresh ban summary.&#10;"/>
+                            <Run Text="4. Return here and refresh the status."/>
+                        </TextBlock>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="OPEN LIVE FEATURES"
+                            Style="{StaticResource PrimaryButton}" Padding="10,5"
+                            VerticalAlignment="Top" Click="OpenFeatures_Click"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="GAMERTAGS OR XUIDS" FontSize="10" FontWeight="Bold"/>
+                    <TextBlock Text="Enter one player per line. Commas and semicolons also work."
+                               Margin="0,3,0,0" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                </StackPanel>
+                <TextBlock x:Name="CountText" Grid.Column="1" Text="0 / 15 PLAYERS"
+                           FontSize="10" Foreground="{DynamicResource MutedBrush}"
+                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </Grid>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="150"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="TargetsBox" Grid.Column="0" AcceptsReturn="True"
+                         MinHeight="66" MaxHeight="104"
+                         VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"
+                         Padding="9,7" FontSize="12" Background="{DynamicResource SurfaceBrush}"
+                         Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                         ToolTip="Enter one gamertag or XUID per line. You can also paste a comma- or semicolon-separated list."
+                         TextChanged="TargetsBox_TextChanged"/>
+                <Button x:Name="CheckButton" Grid.Column="1" Content="CHECK PLAYERS"
+                        Style="{StaticResource PrimaryButton}" Padding="13,7" Margin="12,0,0,0"
+                        Height="34" VerticalAlignment="Top"
+                        IsEnabled="False" Click="Check_Click"/>
+            </Grid>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,9,0,10">
+            <TextBlock x:Name="StatusText" Text="Ready" Foreground="{DynamicResource MutedBrush}"/>
+            <Border x:Name="ErrorCard" Visibility="Collapsed" HorizontalAlignment="Right"
+                    Background="#22FF2D55" BorderBrush="#66FF2D55" BorderThickness="1"
+                    CornerRadius="3" Padding="8,4" MaxWidth="620">
+                <TextBlock x:Name="ErrorText" Foreground="#FF8095" TextWrapping="Wrap"/>
+            </Border>
+        </Grid>
+
+        <DataGrid x:Name="ResultsGrid" Grid.Row="4" AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                  Background="{DynamicResource SurfaceBrush}" Foreground="{DynamicResource TextBrush}"
+                  BorderBrush="{DynamicResource BorderBrush}" RowBackground="Transparent"
+                  AlternatingRowBackground="#0DFFFFFF">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="GAMERTAG / XUID" Binding="{Binding Target}" Width="2*"/>
+                <DataGridTextColumn Header="RESULT" Binding="{Binding Result}" Width="*"/>
+                <DataGridTextColumn Header="DETAILS" Binding="{Binding Details}" Width="3*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </Grid>
+</UserControl>

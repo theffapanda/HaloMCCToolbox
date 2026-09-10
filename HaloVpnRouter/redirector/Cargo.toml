@@ -1,0 +1,25 @@
+[package]
+name = "halo-vpn-router"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "HaloVpnRouter"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+prost.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+windows.workspace = true
+ipc = { path = "../ipc" }
+windivert = "0.7.0-beta.4"
+windivert-sys = "0.11.0-beta.2"
+etherparse = "0.18"
+smoltcp = { version = "0.13", default-features = false, features = ["std", "proto-ipv4", "medium-ip", "socket-tcp", "socket-udp", "log"] }
+sysinfo = "0.32"
+serde_json = "1.0.149"
+dashmap = "6.1.0"

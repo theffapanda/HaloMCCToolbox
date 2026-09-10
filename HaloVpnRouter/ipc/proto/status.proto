@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package vpnclient.status;
+
+// Wire framing for the status pipe: each message is prefixed with a 4-byte
+// little-endian unsigned length, followed by a protobuf-encoded StatusMessage.
+// Same framing as policy.proto.
+//
+// The status pipe is bi-directional:
+//   redirector -> UI: StatusMessage{Snapshot}     (periodic, ~500ms)
+//   redirector -> UI: StatusMessage{Event}        (on transitions)
+//   UI         -> redirector: StatusMessage{Command} (control)
+
+message StatusMessage {
+  oneof body {
+    Snapshot  snapshot  = 1;
+    Event     event     = 2;
+    Command   command   = 3;
+  }
+}
+
+message Snapshot {
+  VpnState vpn = 1;
+  Totals   totals = 2;
+  // Per-app counters land here once the UI starts requesting them — left empty
+  // in session A.
+  repeated AppStats apps = 3;
+}
+
+message VpnState {
+  bool   up = 1;
+  string adapter_ip = 2;          // empty when down
+  uint64 uptime_ms = 3;           // 0 when down
+  string adapter_name = 4;        // friendly name when known
+}
+
+message Totals {
+  uint64 bytes_app_to_remote = 1;
+  uint64 bytes_remote_to_app = 2;
+  reserved 3;
+  uint32 active_tcp_flows = 4;
+  uint32 active_udp_flows = 5;
+}
+
+message AppStats {
+  string exe_path = 1;
+  uint64 bytes_out = 2;
+  uint64 bytes_in = 3;
+  uint64 bytes_out_per_sec = 4;
+  uint64 bytes_in_per_sec = 5;
+  uint32 active_pids = 6;
+  repeated PidStats pids = 7;
+}
+
+message PidStats {
+  uint32 pid = 1;
+  uint64 bytes_out = 2;
+  uint64 bytes_in = 3;
+  uint64 bytes_out_per_sec = 4;
+  uint64 bytes_in_per_sec = 5;
+}
+
+message Event {
+  EventKind kind = 1;
+  string    detail = 2;
+}
+
+enum EventKind {
+  EVENT_UNKNOWN     = 0;
+  VPN_UP            = 1;
+  VPN_DOWN          = 2;
+  POLICY_PID_ADDED  = 3;
+  POLICY_PID_REMOVED = 4;
+  BRIDGE_OPENED     = 5;
+  BRIDGE_CLOSED     = 6;
+}
+
+message Command {
+  oneof body {
+    Ping ping = 1;
+    // Future: ConnectVpn / DisconnectVpn / AddApp / RemoveApp / etc.
+  }
+}
+
+message Ping {
+  uint64 nonce = 1;
+}

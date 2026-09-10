@@ -1,0 +1,13 @@
+[package]
+name = "ipc"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+prost.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
+protoc-bin-vendored.workspace = true

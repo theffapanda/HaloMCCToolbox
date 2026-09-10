@@ -1,0 +1,14 @@
+<UserControl x:Class="HaloToolbox.Mods"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:HaloToolbox"
+             Background="{DynamicResource BgBrush}">
+    <TabControl Style="{StaticResource DarkTab}">
+        <TabItem Header="HALO 3" Style="{StaticResource DarkTabItem}">
+            <local:H3Mods x:Name="Halo3Mods"/>
+        </TabItem>
+        <TabItem Header="HALO: REACH" Style="{StaticResource DarkTabItem}">
+            <local:ReachMods x:Name="HaloReachMods"/>
+        </TabItem>
+    </TabControl>
+</UserControl>
