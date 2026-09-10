@@ -1,0 +1,871 @@
+<UserControl x:Class="HaloToolbox.H3Mods"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource BgBrush}"
+             FontFamily="Consolas"
+             Foreground="{DynamicResource TextBrush}"
+             Loaded="H3Mods_Loaded"
+             Unloaded="H3Mods_Unloaded">
+    <UserControl.Resources>
+        <Style x:Key="H3StatusPill" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="2"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+        </Style>
+
+        <Style x:Key="H3SmallButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Padding" Value="9,7"/>
+            <Setter Property="MinWidth" Value="92"/>
+        </Style>
+
+        <Style x:Key="H3MiniButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="MinWidth" Value="64"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="20,12,20,12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="— HALO 3 RUNTIME MODS"
+                   FontFamily="Consolas"
+                   FontSize="10"
+                   Foreground="{DynamicResource AccentBrush}"
+                   Margin="0,0,0,10"/>
+
+        <Border Grid.Row="1"
+                Background="{DynamicResource PanelBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="3"
+                Padding="18"
+                Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                        <TextBlock Text="LIVE MEMORY SESSION"
+                                   FontSize="13"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource AccentBrush}"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="TxtSafetyLabel"
+                                   Text="OFFLINE / EAC-DISABLED ONLY"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource OrangeBrush}"
+                                   Margin="14,1,0,0"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <WrapPanel>
+                        <Border Style="{StaticResource H3StatusPill}">
+                            <TextBlock x:Name="TxtMccStatus" Text="MCC: SEARCHING" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                        <Border Style="{StaticResource H3StatusPill}">
+                            <TextBlock x:Name="TxtEacStatus" Text="EAC: UNKNOWN" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                        <Border Style="{StaticResource H3StatusPill}">
+                            <TextBlock x:Name="TxtGameStatus" Text="HALO 3: WAITING" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                        <Border Style="{StaticResource H3StatusPill}">
+                            <TextBlock x:Name="TxtAccessStatus" Text="ACCESS: DETACHED" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                    </WrapPanel>
+
+                    <TextBlock x:Name="TxtSessionDetail"
+                               Text="Launch MCC with Easy Anti-Cheat disabled, then load Halo 3. Auto attach will enable controls when the runtime looks safe."
+                               FontSize="11"
+                               Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               LineHeight="18"
+                               Margin="0,12,0,0"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1"
+                            Orientation="Vertical"
+                            VerticalAlignment="Top"
+                            Margin="18,0,0,0">
+                    <CheckBox x:Name="ChkAutoAttach"
+                              Content="AUTO ATTACH"
+                              Style="{StaticResource MapCheckBox}"
+                              FontSize="10"
+                              IsChecked="True"
+                              Checked="ChkAutoAttach_Changed"
+                              Unchecked="ChkAutoAttach_Changed"
+                              Margin="0,0,0,8"/>
+                    <Button x:Name="BtnManualAttach"
+                            Content="ATTACH NOW"
+                            Style="{StaticResource H3SmallButton}"
+                            Click="BtnManualAttach_Click"
+                            Margin="0,0,0,8"/>
+                    <Button x:Name="BtnRestoreAll"
+                            Content="RESTORE ALL"
+                            Style="{StaticResource RedButton}"
+                            FontSize="10"
+                            Padding="12,7"
+                            Click="BtnRestoreAll_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.05*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="1*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0"
+                    Grid.Column="0"
+                    Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="3"
+                    Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="SKULL TOGGLES"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}"/>
+                    <TextBlock Grid.Row="1"
+                               Text="Known runtime skull flags verified for this MCC build."
+                               FontSize="10"
+                               Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,7,0,12"/>
+                    <ItemsControl Grid.Row="2"
+                                  ItemsSource="{Binding SkullMods}"
+                                  VerticalAlignment="Top">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Columns="2"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource H3SmallButton}"
+                                        CommandParameter="{Binding}"
+                                        Click="ModButton_Click"
+                                        IsEnabled="{Binding CanToggle}"
+                                        Margin="0,0,8,8"
+                                        ToolTip="{Binding Detail}">
+                                    <Grid MinWidth="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Name}" HorizontalAlignment="Left" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding StateText}" Foreground="{Binding StateBrush}" Margin="12,0,0,0"/>
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="0"
+                    Grid.Column="2"
+                    Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="3"
+                    Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="CAMERA / CINEMATIC"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}"/>
+                    <TextBlock Grid.Row="1"
+                               Text="Freecam, freeze, third-person, and coordinates use validated runtime patches and values."
+                               FontSize="10"
+                               Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,7,0,12"/>
+                    <ItemsControl Grid.Row="2" ItemsSource="{Binding CameraMods}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Columns="2"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource H3SmallButton}"
+                                        CommandParameter="{Binding}"
+                                        Click="ModButton_Click"
+                                        IsEnabled="{Binding CanToggle}"
+                                        Margin="0,0,8,8"
+                                        ToolTip="{Binding Detail}">
+                                    <Grid MinWidth="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Name}" HorizontalAlignment="Left" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding StateText}" Foreground="{Binding StateBrush}" Margin="12,0,0,0"/>
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="2"
+                    Grid.Column="0"
+                    Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="3"
+                    Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="GAMEPLAY PATCHES"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}"/>
+                    <TextBlock Grid.Row="1"
+                               Text="Known runtime-only patches verified for this MCC build."
+                               FontSize="10"
+                               Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,7,0,12"/>
+                    <ItemsControl Grid.Row="2" ItemsSource="{Binding GameplayMods}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Columns="2"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource H3SmallButton}"
+                                        CommandParameter="{Binding}"
+                                        Click="ModButton_Click"
+                                        IsEnabled="{Binding CanToggle}"
+                                        Margin="0,0,8,8"
+                                        ToolTip="{Binding Detail}">
+                                    <Grid MinWidth="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Name}" HorizontalAlignment="Left" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding StateText}" Foreground="{Binding StateBrush}" Margin="12,0,0,0"/>
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Grid.Row="3"
+                               x:Name="TxtPatchDetail"
+                               Text="No patches applied by this Toolbox session."
+                               FontSize="10"
+                               Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,12,0,0"/>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="2"
+                    Grid.Column="2"
+                    Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="3"
+                    Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="0"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="DOLLY CAM"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}"/>
+                    <TextBlock Grid.Row="1"
+                               Text="Enable Freecam to hook the live camera automatically. Coordinates update continuously while Dolly Cam is ready."
+                               FontSize="10"
+                               Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,7,0,12"/>
+                    <StackPanel Grid.Row="2">
+                        <TextBlock Text="CAMERA X / Y / Z" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="TxtCamX" Style="{StaticResource DarkTextBox}" Text="0.0" IsReadOnly="True"/>
+                            <TextBox x:Name="TxtCamY" Grid.Column="2" Style="{StaticResource DarkTextBox}" Text="0.0" IsReadOnly="True"/>
+                            <TextBox x:Name="TxtCamZ" Grid.Column="4" Style="{StaticResource DarkTextBox}" Text="0.0" IsReadOnly="True"/>
+                        </Grid>
+                        <TextBlock Text="PLAYER X / Y / Z" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,4"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="TxtPlayerX" Style="{StaticResource DarkTextBox}" Text="0.0" IsReadOnly="True"/>
+                            <TextBox x:Name="TxtPlayerY" Grid.Column="2" Style="{StaticResource DarkTextBox}" Text="0.0" IsReadOnly="True"/>
+                            <TextBox x:Name="TxtPlayerZ" Grid.Column="4" Style="{StaticResource DarkTextBox}" Text="0.0" IsReadOnly="True"/>
+                        </Grid>
+                        <Button x:Name="BtnSwivelCam"
+                                Visibility="Collapsed"
+                                Content="SWIVEL CAM: OFF"
+                                Style="{StaticResource H3SmallButton}"
+                                Margin="0,10,0,0"
+                                Click="BtnSwivelCam_Click"
+                                ToolTip="Captures the current third-person angle and locks it to the player like a selfie stick."/>
+                        <Grid Margin="0,8,0,0" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="42"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="STICK DISTANCE" VerticalAlignment="Center" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,8,0"/>
+                            <Slider x:Name="SldSwivelDistance" Grid.Column="1" Minimum="0.1" Maximum="500" Value="4" TickFrequency="0.1" IsSnapToTickEnabled="False"/>
+                            <TextBox x:Name="TxtSwivelDistance"
+                                     Grid.Column="2"
+                                     Style="{StaticResource DarkTextBox}"
+                                     Text="{Binding ElementName=SldSwivelDistance, Path=Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     HorizontalContentAlignment="Right"
+                                     ToolTip="Type any distance from 0.1 to 500."/>
+                        </Grid>
+                        <CheckBox x:Name="ChkSwivelFollowFacing"
+                                  Visibility="Collapsed"
+                                  Content="FOLLOW PLAYER FACING"
+                                  Margin="0,7,0,0"
+                                  ToolTip="Rotates the captured camera offset with the player's active facing angle."/>
+                        <Button x:Name="BtnSamplePlayerFacing"
+                                Visibility="Collapsed"
+                                Content="SAMPLE PLAYER FACING (15S)"
+                                Style="{StaticResource H3SmallButton}"
+                                Margin="0,7,0,0"
+                                Click="BtnSamplePlayerFacing_Click"
+                                ToolTip="Read-only capture used to identify the Spartan's live facing vector. Rotate in place while it records."/>
+                        <Button x:Name="BtnLocatePlayerObject"
+                                Visibility="Collapsed"
+                                Content="LOCATE PLAYER OBJECT + FACING"
+                                Style="{StaticResource H3SmallButton}"
+                                Margin="0,7,0,0"
+                                Click="BtnLocatePlayerObject_Click"
+                                ToolTip="Finds writable copies of player XYZ, then watches nearby unit fields while you rotate."/>
+                        <Button x:Name="BtnScanGlobalFacing"
+                                Visibility="Collapsed"
+                                Content="SCAN GLOBAL FACING VECTORS"
+                                Style="{StaticResource H3SmallButton}"
+                                Margin="0,7,0,0"
+                                Click="BtnScanGlobalFacing_Click"
+                                ToolTip="Read-only global scan for normalized XY direction vectors, followed by a live rotation filter."/>
+                    </StackPanel>
+                    <Border Grid.Row="3"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="0"
+                            Margin="0,12,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="CAMERA PATH"
+                                       FontSize="10"
+                                       FontWeight="Bold"
+                                       Foreground="{DynamicResource MutedBrush}"/>
+                            <TextBlock Grid.Row="1"
+                                       Text="Capture or record camera markers, then play the smoothed path."
+                                       FontSize="10"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,10"/>
+                            <Grid Grid.Row="2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="58"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="6"/>
+                                    <ColumnDefinition Width="42"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="SEG SEC"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           VerticalAlignment="Center"/>
+                                <TextBox x:Name="TxtDollySeconds"
+                                         Grid.Column="2"
+                                         Style="{StaticResource DarkTextBox}"
+                                         FontSize="10"
+                                         Text="2.0"/>
+                                <TextBlock Grid.Column="4"
+                                           Text="SPEED"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           VerticalAlignment="Center"/>
+                                <Slider x:Name="SldDollySpeed"
+                                        Grid.Column="6"
+                                        Minimum="0.10"
+                                        Maximum="2.00"
+                                        Value="1.00"
+                                        SmallChange="0.05"
+                                        LargeChange="0.25"
+                                        TickFrequency="0.10"
+                                        IsSnapToTickEnabled="False"
+                                        VerticalAlignment="Center"
+                                        ToolTip="Playback speed. Lower values produce slower playback without changing path smoothness."/>
+                                <TextBox x:Name="TxtDollySpeed"
+                                         Grid.Column="8"
+                                         Style="{StaticResource DarkTextBox}"
+                                         Text="{Binding ElementName=SldDollySpeed, Path=Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.00}}"
+                                         FontSize="10"
+                                         MaxLength="4"
+                                         HorizontalContentAlignment="Right"
+                                         ToolTip="Type a playback multiplier from 0.10 to 2.00, then press PLAY."/>
+                                <Button x:Name="BtnDollyCapture"
+                                        Grid.Column="10"
+                                        Content="CAPTURE MARKER"
+                                        Style="{StaticResource H3SmallButton}"
+                                        HorizontalAlignment="Right"
+                                        Click="BtnDollyCapture_Click"/>
+                            </Grid>
+                            <Grid Grid.Row="3" Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="52"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="RECORD POINT SPACING"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           VerticalAlignment="Center"/>
+                                <Slider x:Name="SldDollyRecordDistance"
+                                        Grid.Column="2"
+                                        Minimum="0.50"
+                                        Maximum="10.00"
+                                        Value="2.00"
+                                        SmallChange="0.25"
+                                        LargeChange="1.00"
+                                        TickFrequency="0.50"
+                                        IsSnapToTickEnabled="False"
+                                        VerticalAlignment="Center"
+                                        ToolTip="Minimum world-space distance between automatically recorded dolly points."/>
+                                <TextBlock Grid.Column="4"
+                                           Text="{Binding ElementName=SldDollyRecordDistance, Path=Value, StringFormat={}{0:0.00}}"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource AccentBrush}"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Right"/>
+                            </Grid>
+                            <Grid Grid.Row="4" Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="BtnDollyRecord" Content="RECORD" Style="{StaticResource H3MiniButton}" Click="BtnDollyRecord_Click"/>
+                                <Button x:Name="BtnDollyPlay" Grid.Column="2" Content="PLAY" Style="{StaticResource H3MiniButton}" Click="BtnDollyPlay_Click"/>
+                                <Button x:Name="BtnDollyStop" Grid.Column="4" Content="STOP" Style="{StaticResource H3MiniButton}" Click="BtnDollyStop_Click"/>
+                                <Button x:Name="BtnDollyTrack" Grid.Column="6" Content="SHOW TRACK" Style="{StaticResource H3MiniButton}" Click="BtnDollyTrack_Click"/>
+                            </Grid>
+                            <Grid Grid.Row="5" Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="BtnDollyEdit" Content="EDIT KEY" ToolTip="Release the selected keyframe for adjustment, then save the live camera pose." Style="{StaticResource H3MiniButton}" Click="BtnDollyEdit_Click"/>
+                                <Button x:Name="BtnDollyDelete" Grid.Column="2" Content="DELETE KEY" Style="{StaticResource H3MiniButton}" Click="BtnDollyDelete_Click"/>
+                                <Button x:Name="BtnDollyClear" Grid.Column="4" Content="CLEAR ALL" Style="{StaticResource H3MiniButton}" Click="BtnDollyClear_Click"/>
+                            </Grid>
+                            <WrapPanel Visibility="Collapsed">
+                                <Button x:Name="BtnDollyFindLive"
+                                        Content="ARCH REPORT"
+                                        Style="{StaticResource H3MiniButton}"
+                                        Click="BtnDollyFindLive_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraArchBase"
+                                        Content="CAM BASE"
+                                        Style="{StaticResource H3MiniButton}"
+                                        Click="BtnCameraArchBase_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraArchFreecamDiff"
+                                        Content="FREE DIFF"
+                                        Style="{StaticResource OrangeButton}"
+                                        FontSize="10"
+                                        Padding="8,6"
+                                        MinWidth="64"
+                                        Click="BtnCameraArchFreecamDiff_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraArchThirdPersonDiff"
+                                        Content="3P DIFF"
+                                        Style="{StaticResource OrangeButton}"
+                                        FontSize="10"
+                                        Padding="8,6"
+                                        MinWidth="64"
+                                        Click="BtnCameraArchThirdPersonDiff_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraArchTimingDiff"
+                                        Content="TIME DIFF"
+                                        Style="{StaticResource OrangeButton}"
+                                        FontSize="10"
+                                        Padding="8,6"
+                                        MinWidth="64"
+                                        Click="BtnCameraArchTimingDiff_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraMoveBase"
+                                        Content="MOVE BASE"
+                                        Style="{StaticResource H3MiniButton}"
+                                        Click="BtnCameraMoveBase_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraMoveDiff"
+                                        Content="MOVE DIFF"
+                                        Style="{StaticResource OrangeButton}"
+                                        FontSize="10"
+                                        Padding="8,6"
+                                        MinWidth="64"
+                                        Click="BtnCameraMoveDiff_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraStructScan"
+                                        Content="STRUCT BASE"
+                                        Style="{StaticResource OrangeButton}"
+                                        FontSize="10"
+                                        Padding="8,6"
+                                        MinWidth="72"
+                                        Click="BtnCameraStructScan_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraStructTest"
+                                        Content="COMPARE"
+                                        Style="{StaticResource OrangeButton}"
+                                        FontSize="10"
+                                        Padding="8,6"
+                                        MinWidth="72"
+                                        Click="BtnCameraStructTest_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                                <Button x:Name="BtnCameraOwnedProbe"
+                                        Content="PROBE OWNED"
+                                        Style="{StaticResource OrangeButton}"
+                                        FontSize="10"
+                                        Padding="8,6"
+                                        MinWidth="84"
+                                        Click="BtnCameraOwnedProbe_Click"
+                                        Margin="0,0,8,0"
+                                        Visibility="Collapsed"/>
+                            </WrapPanel>
+                            <Border x:Name="DollyKeyEditor"
+                                    Grid.Row="6"
+                                    Visibility="Collapsed"
+                                    Background="{DynamicResource SurfaceBrush}"
+                                    BorderBrush="{DynamicResource AccentBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="2"
+                                    Padding="8"
+                                    Margin="0,10,0,0">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="6"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="6"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="6"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="6"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="POSE" FontSize="9" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="TxtDollyEditTime" Grid.Column="2" Style="{StaticResource DarkTextBox}" FontSize="9" ToolTip="Time in seconds" TextChanged="DollyEditor_TextChanged"/>
+                                    <TextBox x:Name="TxtDollyEditX" Grid.Column="4" Style="{StaticResource DarkTextBox}" FontSize="9" ToolTip="X" TextChanged="DollyEditor_TextChanged"/>
+                                    <TextBox x:Name="TxtDollyEditY" Grid.Column="6" Style="{StaticResource DarkTextBox}" FontSize="9" ToolTip="Y" TextChanged="DollyEditor_TextChanged"/>
+                                    <TextBox x:Name="TxtDollyEditZ" Grid.Column="8" Style="{StaticResource DarkTextBox}" FontSize="9" ToolTip="Z" TextChanged="DollyEditor_TextChanged"/>
+                                    <TextBlock Grid.Row="1" Text="ROT" FontSize="9" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="0,6,0,0"/>
+                                    <TextBox x:Name="TxtDollyEditYaw" Grid.Row="1" Grid.Column="2" Style="{StaticResource DarkTextBox}" FontSize="9" ToolTip="Yaw" Margin="0,6,0,0" TextChanged="DollyEditor_TextChanged"/>
+                                    <TextBox x:Name="TxtDollyEditPitch" Grid.Row="1" Grid.Column="4" Style="{StaticResource DarkTextBox}" FontSize="9" ToolTip="Pitch" Margin="0,6,0,0" TextChanged="DollyEditor_TextChanged"/>
+                                    <TextBox x:Name="TxtDollyEditRoll" Grid.Row="1" Grid.Column="6" Style="{StaticResource DarkTextBox}" FontSize="9" ToolTip="Roll" Margin="0,6,0,0" TextChanged="DollyEditor_TextChanged"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="8" Text="Type any value, or leave unchanged to save the live camera." FontSize="8" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,6,0,0"/>
+                                </Grid>
+                            </Border>
+                            <ListBox Grid.Row="7"
+                                     x:Name="LstDollyMarkers"
+                                     ItemsSource="{Binding DollyMarkers}"
+                                     SelectionChanged="LstDollyMarkers_SelectionChanged"
+                                     Background="{DynamicResource BgBrush}"
+                                     BorderBrush="{DynamicResource BorderBrush}"
+                                     Foreground="{DynamicResource TextBrush}"
+                                     FontSize="10"
+                                     MinHeight="180"
+                                     Margin="0,10,0,0"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="58"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding TimeText}"
+                                                       Foreground="{DynamicResource AccentBrush}"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding CoordinateText}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Foreground="{DynamicResource MutedBrush}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Row="4"
+                            Visibility="Collapsed"
+                            Background="{DynamicResource SurfaceBrush}"
+                            BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="2"
+                            Padding="12"
+                            Margin="0,16,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="DISCOVERY LAB"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="{DynamicResource AccentBrush}"/>
+                            <TextBlock Grid.Row="1"
+                                       Text="Read-only snapshots plus reversible skull/session bit tests near the known Bandana and Acrophobia flags."
+                                       FontSize="10"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,10"/>
+                            <Grid Grid.Row="2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <ComboBox x:Name="CmbDiscoveryPreset"
+                                          Style="{StaticResource DarkCombo}"
+                                          FontSize="10"
+                                          SelectedIndex="0">
+                                    <ComboBoxItem Content="TRAINER TARGET PACK" Tag="trainer-pack"/>
+                                    <ComboBoxItem Content="VITALITY / DAMAGE" Tag="vitality-damage"/>
+                                    <ComboBoxItem Content="AMMO / WEAPONS" Tag="ammo-weapons"/>
+                                    <ComboBoxItem Content="MOVEMENT / JUMP" Tag="movement-jump"/>
+                                    <ComboBoxItem Content="WIDE STATE SCAN" Tag="wide-state"/>
+                                    <ComboBoxItem Content="SKULL / SESSION FLAGS" Tag="skull-flags"/>
+                                    <ComboBoxItem Content="CAMERA STATE" Tag="camera-state"/>
+                                    <ComboBoxItem Content="SIM FUNCTION TABLE" Tag="sim-functions"/>
+                                </ComboBox>
+                            </Grid>
+                            <WrapPanel Grid.Row="3"
+                                       HorizontalAlignment="Left"
+                                       Margin="0,10,0,0">
+                                <Button x:Name="BtnDiscoveryBase"
+                                        Content="BASE"
+                                        Style="{StaticResource H3MiniButton}"
+                                        Click="BtnDiscoveryBase_Click"
+                                        Margin="0,0,8,0"/>
+                                <Button x:Name="BtnDiscoveryDiff"
+                                        Content="DIFF"
+                                        Style="{StaticResource OrangeButton}"
+                                        FontSize="10"
+                                        Padding="8,6"
+                                        MinWidth="64"
+                                        Click="BtnDiscoveryDiff_Click"
+                                        Margin="0,0,8,0"/>
+                                <Button x:Name="BtnDiscoveryCopy"
+                                        Content="COPY"
+                                        Style="{StaticResource H3MiniButton}"
+                                        Click="BtnDiscoveryCopy_Click"
+                                        Margin="0,0,8,0"/>
+                                <Button x:Name="BtnDiscoveryClear"
+                                        Content="CLEAR"
+                                        Style="{StaticResource H3MiniButton}"
+                                        Click="BtnDiscoveryClear_Click"/>
+                            </WrapPanel>
+                            <Border Grid.Row="4"
+                                    Background="{DynamicResource BgBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="2"
+                                    Padding="10"
+                                    Margin="0,12,0,0">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="SKULL BIT LAB"
+                                               FontSize="11"
+                                               FontWeight="Bold"
+                                               Foreground="{DynamicResource AccentBrush}"/>
+                                    <Grid Grid.Row="1" Margin="0,8,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="CmbSkullByte"
+                                                  Style="{StaticResource DarkCombo}"
+                                                  FontSize="10"
+                                                  SelectedIndex="6">
+                                            <ComboBoxItem Content="0xFDE0" Tag="0xFDE0"/>
+                                            <ComboBoxItem Content="0xFDE1" Tag="0xFDE1"/>
+                                            <ComboBoxItem Content="0xFDE2" Tag="0xFDE2"/>
+                                            <ComboBoxItem Content="0xFDE3" Tag="0xFDE3"/>
+                                            <ComboBoxItem Content="0xFDE4" Tag="0xFDE4"/>
+                                            <ComboBoxItem Content="0xFDE5" Tag="0xFDE5"/>
+                                            <ComboBoxItem Content="0xFDE6 BANDANA" Tag="0xFDE6"/>
+                                            <ComboBoxItem Content="0xFDE7" Tag="0xFDE7"/>
+                                            <ComboBoxItem Content="0xFDE8" Tag="0xFDE8"/>
+                                            <ComboBoxItem Content="0xFDE9 ACRO" Tag="0xFDE9"/>
+                                            <ComboBoxItem Content="0xFDEA" Tag="0xFDEA"/>
+                                            <ComboBoxItem Content="0xFDF4" Tag="0xFDF4"/>
+                                            <ComboBoxItem Content="0xFDF5" Tag="0xFDF5"/>
+                                        </ComboBox>
+                                        <Button x:Name="BtnSkullByteRead"
+                                                Grid.Column="2"
+                                                Content="READ"
+                                                Style="{StaticResource H3MiniButton}"
+                                                Click="BtnSkullByteRead_Click"/>
+                                        <Button x:Name="BtnSkullByteRestore"
+                                                Grid.Column="4"
+                                                Content="RESTORE"
+                                                Style="{StaticResource H3MiniButton}"
+                                                Click="BtnRestoreAll_Click"/>
+                                    </Grid>
+                                    <WrapPanel Grid.Row="2">
+                                        <Button Content="BANDANA" Tag="0xFDE6|0x80" Style="{StaticResource H3MiniButton}" Click="KnownSkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="ACRO" Tag="0xFDE9|0x20" Style="{StaticResource H3MiniButton}" Click="KnownSkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="B0" Tag="0x01" Style="{StaticResource H3MiniButton}" Click="SkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="B1" Tag="0x02" Style="{StaticResource H3MiniButton}" Click="SkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="B2" Tag="0x04" Style="{StaticResource H3MiniButton}" Click="SkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="B3" Tag="0x08" Style="{StaticResource H3MiniButton}" Click="SkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="B4" Tag="0x10" Style="{StaticResource H3MiniButton}" Click="SkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="B5" Tag="0x20" Style="{StaticResource H3MiniButton}" Click="SkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="B6" Tag="0x40" Style="{StaticResource H3MiniButton}" Click="SkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <Button Content="B7" Tag="0x80" Style="{StaticResource H3MiniButton}" Click="SkullBitButton_Click" Margin="0,0,6,6"/>
+                                        <TextBlock x:Name="TxtSkullByteStatus"
+                                                   Text="Pick a byte, READ, then toggle one bit."
+                                                   FontSize="10"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="4,0,0,6"/>
+                                    </WrapPanel>
+                                </Grid>
+                            </Border>
+                            <TextBox Grid.Row="5"
+                                     x:Name="TxtDiscoveryOutput"
+                                     Style="{StaticResource DarkTextBox}"
+                                     FontSize="10"
+                                     TextWrapping="NoWrap"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto"
+                                     MinHeight="118"
+                                     Margin="0,10,0,0"
+                                     Text="No discovery snapshot yet."/>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="3"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="2"
+                Padding="12,7"
+                Margin="0,12,0,0">
+            <TextBlock x:Name="TxtFooter"
+                       Text="Auto attach is on. Controls stay disabled until MCC is detected, EAC is not loaded, and halo3.dll is present."
+                       FontSize="10"
+                       Foreground="{DynamicResource MutedBrush}"
+                       TextTrimming="CharacterEllipsis"/>
+        </Border>
+    </Grid>
+</UserControl>

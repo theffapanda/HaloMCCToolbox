@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420">
+  <defs>
+    <filter id="glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06131b" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#02080d" stop-opacity="0.80"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#39ff14"/>
+      <stop offset="0.58" stop-color="#00c8ff"/>
+      <stop offset="1" stop-color="#ff6a00"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="760" height="420" fill="#12181d"/>
+  <g opacity="0.22">
+    <path d="M0 330 C150 286 254 378 398 332 S642 268 760 302" fill="none" stroke="#00c8ff" stroke-width="1"/>
+    <path d="M0 92 H760 M0 176 H760 M0 260 H760 M112 0 V420 M248 0 V420 M384 0 V420 M520 0 V420 M656 0 V420" stroke="#6f8795" stroke-width="1"/>
+  </g>
+
+  <g transform="translate(198 54)" filter="url(#shadow)">
+    <rect x="0" y="0" width="364" height="288" rx="5" fill="url(#panel)" stroke="#194154" stroke-width="1.2"/>
+    <rect x="10" y="9" width="344" height="270" rx="3" fill="none" stroke="#0e2834" stroke-width="1"/>
+
+    <text x="18" y="30" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#00c8ff">NETWORK</text>
+    <text x="346" y="30" text-anchor="end" font-family="Consolas, monospace" font-size="13" fill="#8fb8d8">EAST US 2</text>
+
+    <text x="18" y="66" font-family="Consolas, monospace" font-size="25" font-weight="700" fill="#39ff14" filter="url(#glow-cyan)">Ping: 42 ms</text>
+    <text x="346" y="66" text-anchor="end" font-family="Consolas, monospace" font-size="21" font-weight="700" fill="#c8d8e8">Loss: 0%</text>
+
+    <text x="18" y="94" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#39ff14">UP</text>
+    <text x="45" y="94" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#c8d8e8">18.4 KB/s</text>
+    <text x="346" y="94" text-anchor="end" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#c8d8e8">64.8 KB/s</text>
+    <text x="252" y="94" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#00c8ff">DOWN</text>
+
+    <text x="18" y="115" font-family="Consolas, monospace" font-size="12" fill="#8fb8d8">42 packets/s</text>
+    <text x="346" y="115" text-anchor="end" font-family="Consolas, monospace" font-size="12" fill="#8fb8d8">96 packets/s</text>
+
+    <line x1="18" y1="138" x2="346" y2="138" stroke="#123340" stroke-width="1"/>
+    <text x="18" y="163" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#8fb8d8">SESSION</text>
+    <text x="346" y="163" text-anchor="end" font-family="Consolas, monospace" font-size="12" fill="#8fb8d8">7 games</text>
+
+    <text x="18" y="199" font-family="Consolas, monospace" font-size="30" font-weight="700" fill="#39ff14">5W</text>
+    <text x="73" y="199" font-family="Consolas, monospace" font-size="30" font-weight="700" fill="#53636e">-</text>
+    <text x="102" y="199" font-family="Consolas, monospace" font-size="30" font-weight="700" fill="#ff2d55">2L</text>
+    <text x="346" y="190" text-anchor="end" font-family="Consolas, monospace" font-size="13" fill="#8fb8d8">WIN RATE</text>
+    <text x="346" y="213" text-anchor="end" font-family="Consolas, monospace" font-size="26" font-weight="700" fill="#00c8ff">71%</text>
+
+    <rect x="18" y="224" width="328" height="44" rx="3" fill="#071119" stroke="#143645" stroke-width="1"/>
+    <text x="32" y="244" font-family="Consolas, monospace" font-size="12" fill="#8fb8d8">K/D</text>
+    <text x="75" y="247" font-family="Consolas, monospace" font-size="20" font-weight="700" fill="#c8d8e8">1.64</text>
+    <text x="158" y="244" font-family="Consolas, monospace" font-size="12" fill="#39ff14">115K</text>
+    <text x="229" y="244" font-family="Consolas, monospace" font-size="12" fill="#ff2d55">70D</text>
+    <line x1="32" y1="255" x2="332" y2="255" stroke="#123340" stroke-width="1"/>
+    <text x="32" y="265" font-family="Consolas, monospace" font-size="11" fill="#8fb8d8">TEAM SKILL</text>
+    <text x="332" y="265" text-anchor="end" font-family="Consolas, monospace" font-size="13" font-weight="700" fill="#ffb000">RED 62% / BLUE 58%</text>
+
+    <polyline points="18,129 47,124 76,126 105,119 134,122 163,110 192,114 221,105 250,112 279,101 308,106 346,96"
+              fill="none" stroke="#0b303d" stroke-width="8" stroke-linejoin="round"/>
+    <polyline points="18,129 47,124 76,126 105,119 134,122 163,110 192,114 221,105 250,112 279,101 308,106 346,96"
+              fill="none" stroke="url(#bar)" stroke-width="2.5" stroke-linejoin="round"/>
+  </g>
+
+  <text x="380" y="384" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" fill="#97a8b4">
+    Mockup: transparent OBS browser source would omit this gray background
+  </text>
+</svg>
