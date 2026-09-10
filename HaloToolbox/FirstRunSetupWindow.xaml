@@ -1,0 +1,252 @@
+<Window x:Class="HaloToolbox.FirstRunSetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Halo MCC Toolbox Setup"
+        Width="1120" Height="760"
+        MinWidth="940" MinHeight="680"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource BgBrush}"
+        Foreground="{DynamicResource TextBrush}"
+        FontFamily="Consolas"
+        Icon="Resources/halo_toolbox_whiteicon.ico">
+    <Window.Resources>
+        <Style x:Key="SetupCheck" TargetType="CheckBox" BasedOn="{StaticResource MapCheckBox}">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,5"/>
+        </Style>
+        <Style x:Key="FeatureCard" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Padding" Value="15"/>
+            <Setter Property="Margin" Value="5"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="6,0,6,18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                <Border x:Name="Step1Box" Width="34" Height="34" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}">
+                    <TextBlock x:Name="Step1Number" Text="1" Foreground="{DynamicResource AccentBrush}" FontSize="17"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock Text=" INSTALL &amp; IDENTITY" Margin="10,0" FontSize="13" FontWeight="Bold"
+                           Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center">
+                <Border x:Name="Step2Box" Width="34" Height="34" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}">
+                    <TextBlock x:Name="Step2Number" Text="2" Foreground="{DynamicResource MutedBrush}" FontSize="17"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock x:Name="Step2Label" Text=" PREFERENCES" Margin="10,0" FontSize="13" FontWeight="Bold"
+                           Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Border x:Name="Step3Box" Width="34" Height="34" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}">
+                    <TextBlock x:Name="Step3Number" Text="3" Foreground="{DynamicResource MutedBrush}" FontSize="17"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock x:Name="Step3Label" Text=" REVIEW" Margin="10,0" FontSize="13" FontWeight="Bold"
+                           Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1" CornerRadius="3" Padding="28">
+            <Grid>
+                <Grid x:Name="InstallPanel">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="WELCOME TO THE HALO MCC TOOLBOX" Foreground="{DynamicResource AccentBrush}"
+                                   FontSize="24" FontWeight="Bold"/>
+                        <TextBlock Text="Let's configure the essentials. No game files will be changed."
+                                   Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,24"/>
+                    </StackPanel>
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="3*"/>
+                            <ColumnDefinition Width="2*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,28,0">
+                            <TextBlock Text="MCC INSTALLATION" Foreground="{DynamicResource AccentBrush}"
+                                       FontSize="14" FontWeight="Bold"/>
+                            <TextBlock Text="Select the Halo: The Master Chief Collection installation folder."
+                                       Foreground="{DynamicResource MutedBrush}" Margin="0,7,0,12"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="MccPathBox" Style="{StaticResource DarkTextBox}" Height="38"
+                                         VerticalContentAlignment="Center" TextChanged="MccPathBox_TextChanged"/>
+                                <Button Grid.Column="1" Content="BROWSE" Style="{StaticResource PrimaryButton}"
+                                        Margin="10,0,0,0" Padding="16,7" Click="Browse_Click"/>
+                            </Grid>
+                            <TextBlock x:Name="PathStatus" Margin="0,10,0,26" FontSize="11"/>
+
+                            <TextBlock Text="PLAYER IDENTITY" Foreground="{DynamicResource AccentBrush}"
+                                       FontSize="14" FontWeight="Bold"/>
+                            <TextBlock Text="Your Xbox gamertag identifies you in Stats, lobbies, and post-game views."
+                                       Foreground="{DynamicResource MutedBrush}" Margin="0,7,0,12" TextWrapping="Wrap"/>
+                            <TextBox x:Name="GamertagBox" Style="{StaticResource DarkTextBox}" Height="38"
+                                     VerticalContentAlignment="Center"/>
+                            <TextBlock Text="Optional — you can set this later." Foreground="{DynamicResource MutedBrush}"
+                                       Margin="0,8,0,0" FontSize="11"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1">
+                            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1" CornerRadius="3" Padding="18">
+                                <StackPanel>
+                                    <TextBlock Text="HALO WAYPOINT" Foreground="{DynamicResource AccentBrush}"
+                                               FontSize="14" FontWeight="Bold"/>
+                                    <TextBlock Text="Connect Waypoint for recent stats and match history. This is optional and can be done later from Stats."
+                                               Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
+                                               LineHeight="18" Margin="0,9,0,16"/>
+                                    <Button x:Name="ConnectWaypointButton" Content="CONNECT WAYPOINT"
+                                            Style="{StaticResource PrimaryButton}" Click="ConnectWaypoint_Click"/>
+                                    <TextBlock x:Name="WaypointStatus" Text="NOT CONNECTED — SETUP LATER IS OK"
+                                               Foreground="{DynamicResource MutedBrush}" FontSize="10"
+                                               Margin="0,12,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1" CornerRadius="3" Padding="18" Margin="0,14,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="PRIVACY" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold"/>
+                                    <TextBlock Text="The toolbox never asks for your Microsoft password. Setup choices are stored locally on this PC."
+                                               Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
+                                               LineHeight="18" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <Grid x:Name="PreferencesPanel" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="CHOOSE YOUR TOOLBOX" Foreground="{DynamicResource AccentBrush}"
+                                   FontSize="24" FontWeight="Bold"/>
+                        <TextBlock Text="Start with what interests you. Everything can be changed later."
+                                   Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,20"/>
+                    </StackPanel>
+                    <Grid Grid.Row="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <UniformGrid Columns="3" Rows="2">
+                            <Border Style="{StaticResource FeatureCard}" Cursor="Hand"
+                                    MouseLeftButtonUp="FeatureCard_Click" Tag="{Binding ElementName=StatsPreference}">
+                                <StackPanel><CheckBox x:Name="StatsPreference" Content="STATS &amp; LOBBIES" IsChecked="True" Style="{StaticResource SetupCheck}"/>
+                                    <TextBlock Text="Player stats, lobby scanning, match history, and post-game views." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/></StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource FeatureCard}" Cursor="Hand"
+                                    MouseLeftButtonUp="FeatureCard_Click" Tag="{Binding ElementName=NetworkPreference}">
+                                <StackPanel><CheckBox x:Name="NetworkPreference" Content="NETWORK &amp; REGION" IsChecked="True" Style="{StaticResource SetupCheck}"/>
+                                    <TextBlock Text="Server region, ping, packet loss, and matchmaking tools." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/></StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource FeatureCard}" Cursor="Hand"
+                                    MouseLeftButtonUp="FeatureCard_Click" Tag="{Binding ElementName=ModsPreference}">
+                                <StackPanel><CheckBox x:Name="ModsPreference" Content="MODS &amp; MAPS" IsChecked="True" Style="{StaticResource SetupCheck}"/>
+                                    <TextBlock Text="Halo 3 and Reach mod tools, map controls, and diagnostics." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/></StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource FeatureCard}" Cursor="Hand"
+                                    MouseLeftButtonUp="FeatureCard_Click" Tag="{Binding ElementName=TheaterPreference}">
+                                <StackPanel><CheckBox x:Name="TheaterPreference" Content="THEATER" Style="{StaticResource SetupCheck}"/>
+                                    <TextBlock Text="Film backup, version matching, and isolated downpatch workspaces." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/></StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource FeatureCard}" Cursor="Hand"
+                                    MouseLeftButtonUp="FeatureCard_Click" Tag="{Binding ElementName=PlaylistsPreference}">
+                                <StackPanel><CheckBox x:Name="PlaylistsPreference" Content="PLAYLISTS" Style="{StaticResource SetupCheck}"/>
+                                    <TextBlock Text="Playlist rotations, hopper population, and schedule information." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/></StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource FeatureCard}" BorderBrush="{DynamicResource OrangeBrush}"
+                                    Cursor="Hand" MouseLeftButtonUp="FeatureCard_Click"
+                                    Tag="{Binding ElementName=AdvancedPreference}">
+                                <StackPanel><CheckBox x:Name="AdvancedPreference" Content="ADVANCED / REJOIN" Style="{StaticResource SetupCheck}"/>
+                                    <TextBlock Text="Crash recovery and connection tools. Privileged setup occurs only when enabled later." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/></StackPanel>
+                            </Border>
+                        </UniformGrid>
+                        <StackPanel Grid.Row="1" Margin="5,15,5,0">
+                            <CheckBox x:Name="OpenLastSectionPreference" Content="Automatically open the last section I used"
+                                      IsChecked="True" Style="{StaticResource SetupCheck}"/>
+                            <TextBlock Text="Selections control visible sections. They do not uninstall features or enable overlays."
+                                       Foreground="{DynamicResource MutedBrush}" FontSize="10" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <Grid x:Name="ReviewPanel" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="READY TO LAUNCH" Foreground="{DynamicResource AccentBrush}"
+                                   FontSize="24" FontWeight="Bold"/>
+                        <TextBlock Text="Review your setup. You can change these choices anytime."
+                                   Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,22"/>
+                    </StackPanel>
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="3*"/>
+                            <ColumnDefinition Width="2*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,24,0">
+                            <TextBlock Text="INSTALLATION" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold"/>
+                            <TextBlock x:Name="ReviewPath" TextWrapping="Wrap" Margin="0,9,0,24"/>
+                            <TextBlock Text="PLAYER IDENTITY" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold"/>
+                            <TextBlock x:Name="ReviewGamertag" Margin="0,9,0,24"/>
+                            <TextBlock Text="WAYPOINT" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold"/>
+                            <TextBlock x:Name="ReviewWaypoint" Margin="0,9,0,0"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="VISIBLE SECTIONS" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold"/>
+                            <TextBlock x:Name="ReviewFeatures" Margin="0,9,0,22" LineHeight="21"/>
+                            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource AccentBrush}"
+                                    BorderThickness="1" CornerRadius="3" Padding="15">
+                                <TextBlock Text="Waypoint connection and administrator access are requested only when a feature needs them."
+                                           Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" LineHeight="18"/>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="6,18,6,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="BackButton" Content="EXIT" Style="{StaticResource PrimaryButton}"
+                    Click="Back_Click" Padding="18,8" HorizontalAlignment="Left"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="RecommendedButton" Content="USE RECOMMENDED" Style="{StaticResource PrimaryButton}"
+                        Click="Recommended_Click" Padding="18,8" Margin="0,0,10,0" Visibility="Collapsed"/>
+                <Button x:Name="NextButton" Content="CONTINUE  ›" Style="{StaticResource PrimaryButton}"
+                        Click="Next_Click" Padding="22,8"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
