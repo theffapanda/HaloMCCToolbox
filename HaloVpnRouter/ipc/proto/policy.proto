@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package vpnclient.policy;
+
+// Wire framing: each message on the pipe is prefixed with a 4-byte
+// little-endian unsigned length, followed by a protobuf-encoded
+// PolicyMessage of that length.
+
+message PolicyMessage {
+  oneof body {
+    AddPid     add_pid     = 1;
+    RemovePid  remove_pid  = 2;
+    Snapshot   snapshot    = 3;
+  }
+}
+
+message AddPid {
+  uint32 pid = 1;
+}
+
+message RemovePid {
+  uint32 pid = 1;
+}
+
+message Snapshot {
+  repeated uint32 pids = 1;
+}
