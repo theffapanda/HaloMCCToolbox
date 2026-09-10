@@ -1,0 +1,11 @@
+RESOURCE ResourceId::30137
+8481|ResourceUsage.ColorTarget
+8494|ResourceUsage.PS_Resource
+8600|ResourceUsage.PS_Resource
+8613|ResourceUsage.ColorTarget
+8628|ResourceUsage.PS_Resource
+RESOURCE ResourceId::30248
+8600|ResourceUsage.ColorTarget
+8613|ResourceUsage.PS_Resource
+8628|ResourceUsage.ColorTarget
+8648|ResourceUsage.PS_Resource
