@@ -44,12 +44,12 @@ public partial class PopulationHistoryWindow : Window
         {
             int queueCount = points.Select(x => x.HopperName).Distinct().Count();
             int refreshCount = points.Select(x => x.CapturedAt).Distinct().Count();
-            SummaryLabel.Text = $"{queueCount} queues · {refreshCount} session refresh{(refreshCount == 1 ? "" : "es")} · each line is a queue (counts are not summed)";
+            SummaryLabel.Text = $"{queueCount} queues · {refreshCount} recorded refresh{(refreshCount == 1 ? "" : "es")} · each line is a queue (counts are not summed)";
         }
         else
         {
             var latest = points[^1];
-            SummaryLabel.Text = $"{points.Count} session sample{(points.Count == 1 ? "" : "s")} · latest {latest.Population} players at {latest.CapturedAt:h:mm:ss tt}";
+            SummaryLabel.Text = $"{points.Count} recorded sample{(points.Count == 1 ? "" : "s")} · latest {latest.Population} players at {latest.CapturedAt:h:mm:ss tt}";
         }
     }
 
@@ -77,12 +77,12 @@ public partial class PopulationHistoryWindow : Window
         if (dialog.ShowDialog(this) != true) return;
 
         static string Csv(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
-        var csv = new StringBuilder("timestamp_local,timestamp_utc,hopper_name,queue,population\r\n");
+        var csv = new StringBuilder("timestamp_local,timestamp_utc,hopper_name,queue,population,session_id\r\n");
         foreach (var sample in export.OrderBy(x => x.CapturedAt).ThenBy(x => x.DisplayName))
             csv.Append(Csv(sample.CapturedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz"))).Append(',')
                .Append(Csv(sample.CapturedAt.UtcDateTime.ToString("O"))).Append(',')
                .Append(Csv(sample.HopperName)).Append(',').Append(Csv(sample.DisplayName)).Append(',')
-               .Append(sample.Population).Append("\r\n");
+               .Append(sample.Population).Append(',').Append(Csv(sample.SessionId)).Append("\r\n");
         File.WriteAllText(dialog.FileName, csv.ToString(), new UTF8Encoding(true));
         SummaryLabel.Text = $"Exported {export.Count()} samples to {Path.GetFileName(dialog.FileName)}";
     }
@@ -129,7 +129,7 @@ public sealed class PopulationHistoryChart : FrameworkElement
         DateTimeOffset first = _samples.Min(x => x.CapturedAt), last = _samples.Max(x => x.CapturedAt);
         double ratio = Math.Clamp((mouse.X - _plotLeft) / (_plotRight - _plotLeft), 0, 1);
         var target = first + TimeSpan.FromTicks((long)((last - first).Ticks * ratio));
-        var nearest = _samples.OrderBy(x => Math.Abs((x.CapturedAt - target).Ticks)).First();
+        var nearest = _samples.MinBy(x => Math.Abs((x.CapturedAt - target).Ticks))!;
         _hoveredAt = nearest.CapturedAt;
         _hoveredValues = _samples.Where(x => x.CapturedAt == nearest.CapturedAt)
             .OrderByDescending(x => x.Population).ToList();
@@ -161,7 +161,7 @@ public sealed class PopulationHistoryChart : FrameworkElement
             DrawText(dc, (max * i / 4).ToString(), muted, 10, 2, y - 7);
         }
 
-        if (_samples.Count == 0) { DrawText(dc, "Refresh population data to begin the session graph.", muted, 12, left + 15, top + 20); return; }
+        if (_samples.Count == 0) { DrawText(dc, "No recorded samples in this view.", muted, 12, left + 15, top + 20); return; }
         DateTimeOffset first = _samples.Min(x => x.CapturedAt), last = _samples.Max(x => x.CapturedAt);
         double seconds = Math.Max(1, (last - first).TotalSeconds);
         Point Map(MatchmakingPopulationSample s) => new(
@@ -183,12 +183,23 @@ public sealed class PopulationHistoryChart : FrameworkElement
             using (var ctx = geometry.Open())
             {
                 ctx.BeginFigure(Map(points[0]), false, false);
-                if (points.Count == 1) ctx.LineTo(new Point(right, Map(points[0]).Y), true, false);
-                else foreach (var sample in points.Skip(1)) ctx.LineTo(Map(sample), true, false);
+                for (int i = 1; i < points.Count; i++)
+                {
+                    var previous = points[i - 1];
+                    var sample = points[i];
+                    // Never interpolate across restarts, paused recording, or missed polls.
+                    if (sample.SessionId != previous.SessionId ||
+                        sample.CapturedAt - previous.CapturedAt > TimeSpan.FromSeconds(90))
+                        ctx.BeginFigure(Map(sample), false, false);
+                    else
+                        ctx.LineTo(Map(sample), true, false);
+                }
             }
             geometry.Freeze();
             dc.DrawGeometry(null, new Pen(seriesBrush, overall ? 1.5 : 2), geometry);
-            foreach (var sample in points) dc.DrawEllipse(seriesBrush, null, Map(sample), overall ? 2 : 3, overall ? 2 : 3);
+            // Dense multi-day series remain lines; avoid hundreds of thousands of marker draws.
+            if (points.Count <= 2000)
+                foreach (var sample in points) dc.DrawEllipse(seriesBrush, null, Map(sample), overall ? 2 : 3, overall ? 2 : 3);
 
             if (overall)
             {
@@ -227,8 +238,8 @@ public sealed class PopulationHistoryChart : FrameworkElement
                 dc.DrawText(countText, new Point(cardX + cardWidth - countText.Width - 10, rowY));
             }
         }
-        DrawText(dc, first.ToLocalTime().ToString("h:mm:ss tt"), text, 10, left, bottom + 8);
-        string end = last.ToLocalTime().ToString("h:mm:ss tt");
+        DrawText(dc, first.ToLocalTime().ToString("MMM d, h:mm tt"), text, 10, left, bottom + 8);
+        string end = last.ToLocalTime().ToString("MMM d, h:mm tt");
         var endText = MakeText(end, text, 10);
         dc.DrawText(endText, new Point(right - endText.Width, bottom + 8));
     }

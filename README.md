@@ -6,7 +6,7 @@
 
 ![Halo MCC Toolbox Home page with the vertical navigation menu](screenshots/current/home.png)
 
-Halo MCC Toolbox is organized around a persistent vertical menu. Open a focused workspace for the task at hand while MCC edition, VPN, Live Features, and Waypoint status remain visible in the lower-left status card.
+Halo MCC Toolbox is organized around a persistent vertical menu. Open a focused workspace for the task at hand while MCC edition, VPN, Proxy, and Waypoint status remain visible in the lower-left status card.
 
 ## Sidebar at a glance
 
@@ -14,8 +14,8 @@ Halo MCC Toolbox is organized around a persistent vertical menu. Open a focused 
 |---|---|---|
 | **Start** | Home | Configure MCC and Waypoint, review status, and jump to common tasks. |
 | **Play** | Halo 3 Maps, Mods, Playlists | Control installed content, use offline tools, and inspect playlist composition. |
-| **Network** | MCC VPN, Live Features | Route only MCC through a VPN and manage live capture, recovery, firewall, and overlay services. |
-| **Review** | Stats, Ban Checker, Theater, Report | Review players and sessions, preserve films, and assemble report evidence. |
+| **Network** | MCC VPN, Overlays, Firewall Fix | Route only MCC through a VPN and configure live overlays or MCC-only firewall automation. |
+| **Review** | Stats, Population, Match History, Ban Checker, Theater, Report | Review players, sessions, matchmaking population, and report evidence. |
 | **System** | Fixes, Log, About | Repair MCC, inspect diagnostics, export logs, and view project information. |
 
 Use the gear in the title bar to show or hide optional sidebar sections. The moon/sun control switches themes, and first-run setup can preselect the sections you care about without uninstalling anything.
@@ -28,8 +28,9 @@ Home keeps setup and everyday actions together:
 
 - Detect or browse to a Steam or Microsoft Store/Xbox app installation.
 - Save the gamertag used by Stats and optionally connect Halo Waypoint.
-- Jump directly to maps, MCC VPN, Ban Checker, Fixes, or Live Features.
-- See MCC edition, VPN, Live Features, and Waypoint state without leaving the current page.
+- Start or stop the MCC Data Proxy used by Rejoin Recovery, overlays, and firewall automation.
+- Jump directly to maps, MCC VPN, Ban Checker, Fixes, Overlays, or Firewall Fix.
+- See MCC edition, VPN, Proxy, and Waypoint state without leaving the current page.
 
 ### Halo 3 maps and playlist explorer
 
@@ -44,7 +45,7 @@ The **Playlist Explorer** reads MCC's live `findgamehopperdb-v4.xml` and turns t
 - Browse Social and Ranked playlists by game size and playlist name.
 - Filter by included games and categories.
 - Inspect map, mode, variant, raw weight, and normalized share for every entry.
-- Switch to **Rotation Schedule** for featured Social, Ranked 4v4, and Ranked 2v2 history and estimates.
+- The current **Rotation Schedule** appears above Live Composer. Select **Explore Schedule** to browse featured Social, Ranked 4v4, and Ranked 2v2 history and estimates without leaving the composer.
 
 ### Offline mods
 
@@ -71,34 +72,37 @@ MCC VPN routes Halo through a NordVPN OpenVPN exit while browsers, Discord, Stea
 - Import a custom `.ovpn` profile when needed.
 - Route both MCC TCP and UDP by process, block MCC IPv6 leaks, and fail closed if the tunnel drops.
 - Optionally launch MCC after tunnel verification.
-- Start Advanced Services and core Rejoin Recovery before MCC launches.
+- Start the MCC Data Proxy and core Rejoin Recovery before MCC launches.
 
 The NordVPN desktop app is not required. MCC VPN uses Nord service credentials from Manual setup, not the normal Nord account password.
 
-### Live Features and Rejoin Recovery
+### MCC Data Proxy, Overlays, and Firewall Fix
 
-![Live Features page with overlay and firewall controls](screenshots/current/live_features.png)
-
-Live Features starts the supporting services only when a feature needs them and exposes the current path, party, capture, and firewall state in the UI.
+The MCC Data Proxy is controlled from Home. Overlays and Firewall Fix each have their own focused Network page while Rejoin Recovery runs as a core proxy service.
 
 - **Rejoin Recovery** is a core service that preserves matchmaking and session connection context for experimental crash recovery and diagnostics.
 - **Steam-only firewall controls** offer separate Campaign and Matchmaking modes plus automatic matchmaking behavior. They are hidden for Microsoft Store installations.
-- **Network Stats**, **Matchmaking Wait Estimate**, and **Session Stats** overlays can be player-visible, OBS-only, or published together through the local OBS browser source.
+- **Network Stats**, **Matchmaking Wait Estimate**, **Session Stats**, and the compact **Combined Network / Session** overlay can be player-visible or OBS-only. The original individual overlays remain available.
 - Overlay windows can be repositioned and retain their layout.
 
 ### Stats
 
-![Stats page with matchmaking population and a completed lobby](screenshots/current/stats.png)
-
 Stats combines live matchmaking observations, MCC carnage reports, and optional Halo Waypoint data:
 
-- View lifetime K/D, kills, deaths, recent form, and match history for the saved gamertag.
+- View lifetime K/D, kills, deaths, and recent form for the saved gamertag.
 - Inspect the current lobby or last completed game, including squads, teams, result, objective stats, games played, MMR percentile, and each player's best observed server.
 - Compare team strength and see which side is favored.
-- Browse live matchmaking population, average wait, queue activity, and population history.
 - Track a full session with W/L, win rate, K/D, kills, deaths, best spree, multikill medals, per-game timelines, captured lobbies, and repeat encounters.
 
+### Population
+
+Population has its own Review page with live hopper population, average wait, and queue activity. An always-visible history chart defaults to Social 4s; select another queue from the table to replace the chart line, and use the 15-minute, 30-minute, 1-hour, or 3-hour range controls to change the window.
+
 Halo Waypoint connection is optional. It adds richer recent stats and history; the Toolbox never asks for or stores your Microsoft password.
+
+### Match History
+
+Enter any gamertag to load up to their latest 100 available games, with recent win rate, K/D, totals, averages, and per-game results. Players with fewer than 100 games show their complete available history.
 
 ### Ban Checker
 

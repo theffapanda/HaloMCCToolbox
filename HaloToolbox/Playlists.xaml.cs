@@ -24,7 +24,6 @@ public partial class Playlists : UserControl
     private readonly ObservableCollection<PlaylistRotationViewRow> _confirmedRotationRows = new();
     private bool _loaded;
     private PlaylistMode _mode = PlaylistMode.Social;
-    private PlaylistSubview _subview = PlaylistSubview.LiveComposer;
     private string _mccInstallationPath = App.DefaultMccPath;
 
     private static readonly string[] GameOrder =
@@ -188,7 +187,11 @@ public partial class Playlists : UserControl
 
     private void Playlists_Loaded(object sender, RoutedEventArgs e)
     {
-        if (_loaded) return;
+        if (_loaded)
+        {
+            UpdateCurrentRotationSummary();
+            return;
+        }
         _loaded = true;
 
         CboScheduleFilter.ItemsSource = Enum.GetValues<RotationScheduleFilter>();
@@ -197,16 +200,14 @@ public partial class Playlists : UserControl
 
         LoadPlaylists();
         LoadRotationSchedule();
-        SetSubview(PlaylistSubview.LiveComposer);
     }
 
     private void BtnRefresh_Click(object sender, RoutedEventArgs e)
     {
-        if (_subview == PlaylistSubview.LiveComposer)
-            LoadPlaylists();
-        else
-            LoadRotationSchedule();
+        LoadPlaylists();
     }
+
+    private void BtnReloadSchedule_Click(object sender, RoutedEventArgs e) => LoadRotationSchedule();
 
     public void SetMccInstallationPath(string path)
     {
@@ -215,7 +216,7 @@ public partial class Playlists : UserControl
             return;
 
         _mccInstallationPath = normalizedPath;
-        if (_loaded && _subview == PlaylistSubview.LiveComposer)
+        if (_loaded)
             LoadPlaylists();
     }
 
@@ -258,8 +259,14 @@ public partial class Playlists : UserControl
             _ => playlists[0].SelectionName
         };
 
-    private void BtnLiveComposer_Click(object sender, RoutedEventArgs e) => SetSubview(PlaylistSubview.LiveComposer);
-    private void BtnRotationSchedule_Click(object sender, RoutedEventArgs e) => SetSubview(PlaylistSubview.RotationSchedule);
+    private void BtnRotationSchedule_Click(object sender, RoutedEventArgs e)
+    {
+        var expanded = RotationScheduleView.Visibility != Visibility.Visible;
+        RotationScheduleView.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        BtnRotationSchedule.Content = expanded ? "COLLAPSE SCHEDULE ^" : "EXPLORE SCHEDULE v";
+        if (expanded)
+            ApplyRotationFilters();
+    }
     private void BtnSocial_Click(object sender, RoutedEventArgs e) => SetMode(PlaylistMode.Social);
     private void BtnRanked_Click(object sender, RoutedEventArgs e) => SetMode(PlaylistMode.Ranked);
     private void CboSize_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshPlaylistsForMode();
@@ -272,31 +279,6 @@ public partial class Playlists : UserControl
     {
         if (GridConfirmedRotations.SelectedItem is PlaylistRotationViewRow row)
             UpdateRotationSummary(row.Source);
-    }
-
-    private void SetSubview(PlaylistSubview subview)
-    {
-        _subview = subview;
-        var liveActive = subview == PlaylistSubview.LiveComposer;
-
-        LiveControlsPanel.Visibility = liveActive ? Visibility.Visible : Visibility.Collapsed;
-        ScheduleControlsPanel.Visibility = liveActive ? Visibility.Collapsed : Visibility.Visible;
-        LiveComposerView.Visibility = liveActive ? Visibility.Visible : Visibility.Collapsed;
-        RotationScheduleView.Visibility = liveActive ? Visibility.Collapsed : Visibility.Visible;
-
-        BtnRefresh.Content = liveActive ? "RELOAD XML" : "RELOAD SCHEDULE";
-        TxtViewTitle.Text = liveActive ? "PLAYLISTS" : "PLAYLIST ROTATION SCHEDULE";
-        TxtHeaderSub.Text = liveActive
-            ? "Browse live hopper composition and playlist weights from MCC's XML"
-            : "Browse weekly featured playlist rotations and current playlist picks";
-
-        ApplyModeButton(BtnLiveComposer, liveActive);
-        ApplyModeButton(BtnRotationSchedule, !liveActive);
-
-        if (liveActive)
-            RefreshSelection();
-        else
-            ApplyRotationFilters();
     }
 
     private void LoadPlaylists()
@@ -347,6 +329,9 @@ public partial class Playlists : UserControl
         try
         {
             _allRotationRecords.Clear();
+            _confirmedRotationRows.Clear();
+            UpdateCurrentRotationSummary();
+            TxtScheduleHint.Text = "Jump to any week and inspect the featured playlists.";
 
             var dataPath = Path.Combine(AppContext.BaseDirectory, RotationDataPath);
             IEnumerable<string> lines;
@@ -394,11 +379,15 @@ public partial class Playlists : UserControl
             }
 
             _allRotationRecords.Sort((a, b) => a.Date.CompareTo(b.Date));
+            UpdateCurrentRotationSummary();
             PopulateRotationSearchValues();
             ApplyRotationFilters();
         }
         catch (Exception ex)
         {
+            _allRotationRecords.Clear();
+            _confirmedRotationRows.Clear();
+            UpdateCurrentRotationSummary();
             TxtConfirmedSummary.Text = "Failed to load rotation schedule." + Environment.NewLine + ex.Message;
         }
     }
@@ -764,15 +753,35 @@ public partial class Playlists : UserControl
 
     private void UpdateRotationSummary(PlaylistRotationRecord selectedRecord)
     {
-        TxtCurrentWeek.Text = selectedRecord.Date.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
-        TxtNextReset.Text = $"Next reset: {selectedRecord.Date.AddDays(7).ToString("dddd, MMM d", CultureInfo.InvariantCulture)}";
+        TxtScheduleHint.Text = $"Selected week: {selectedRecord.Date:MMM d, yyyy} ({selectedRecord.Status})" +
+                               (string.IsNullOrWhiteSpace(selectedRecord.SourceNote) ? "" : $"  |  note: {selectedRecord.SourceNote}");
+    }
 
+    private void UpdateCurrentRotationSummary()
+    {
         var today = DateOnly.FromDateTime(DateTime.Today);
         var activeRecord = _allRotationRecords
             .Where(x => x.Date <= today)
             .OrderByDescending(x => x.Date)
-            .FirstOrDefault()
-            ?? _allRotationRecords.First();
+            .FirstOrDefault();
+
+        if (activeRecord is null)
+        {
+            TxtRotationStatus.Text = "UNAVAILABLE";
+            TxtCurrentWeek.Text = "No current rotation data available.";
+            TxtNextReset.Text = "Explore the schedule for available history.";
+            TxtCurrentSocial.Text = TxtCurrentRanked4v4.Text = TxtCurrentRanked2v2.Text = "-";
+            TxtCurrentSocialMeta.Text = TxtCurrentRanked4v4Meta.Text = TxtCurrentRanked2v2Meta.Text = "";
+            return;
+        }
+
+        var currentWeek = today < activeRecord.Date.AddDays(7);
+        TxtRotationStatus.Text = !currentWeek ? "LATEST AVAILABLE" :
+            activeRecord.Status == PlaylistRotationStatus.Estimated ? "CURRENT WEEK / ESTIMATED" : "CURRENT WEEK / CONFIRMED";
+        TxtCurrentWeek.Text = $"{activeRecord.Date:MMM d} - {activeRecord.Date.AddDays(6):MMM d, yyyy}";
+        TxtNextReset.Text = currentWeek
+            ? $"Next rotation: {activeRecord.Date.AddDays(7):dddd, MMM d}"
+            : "Schedule does not cover the current week.";
 
         var activeSocial = ResolveLaneValue(activeRecord, RotationScheduleFilter.Social, out var socialSource);
         var activeRanked4v4 = ResolveLaneValue(activeRecord, RotationScheduleFilter.Ranked4v4, out var ranked4v4Source);
@@ -784,8 +793,6 @@ public partial class Playlists : UserControl
         TxtCurrentSocialMeta.Text = BuildPlaylistMetaRelative(activeSocial, RotationScheduleFilter.Social, activeRecord.Date, socialSource != activeRecord.Date);
         TxtCurrentRanked4v4Meta.Text = BuildPlaylistMetaRelative(activeRanked4v4, RotationScheduleFilter.Ranked4v4, activeRecord.Date, ranked4v4Source != activeRecord.Date);
         TxtCurrentRanked2v2Meta.Text = BuildPlaylistMetaRelative(activeRanked2v2, RotationScheduleFilter.Ranked2v2, activeRecord.Date, ranked2v2Source != activeRecord.Date);
-        TxtScheduleHint.Text = $"Selected week: {selectedRecord.Date:MMM d, yyyy}" +
-                               (string.IsNullOrWhiteSpace(selectedRecord.SourceNote) ? "" : $"  •  note: {selectedRecord.SourceNote}");
     }
 
     private string BuildPlaylistMeta(string? playlistName, RotationScheduleFilter lane, DateOnly referenceDate, bool isEstimatedFromHistory = false)
@@ -1166,12 +1173,6 @@ public enum PlaylistMode
 {
     Social,
     Ranked
-}
-
-public enum PlaylistSubview
-{
-    LiveComposer,
-    RotationSchedule
 }
 
 public enum RotationScheduleFilter

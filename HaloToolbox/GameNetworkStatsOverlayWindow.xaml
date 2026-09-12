@@ -79,7 +79,12 @@
             CornerRadius="3"
             IsHitTestVisible="False">
         <Grid>
-            <Border x:Name="NetworkPanel" Style="{StaticResource OverlayCard}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Border x:Name="NetworkPanel" Grid.Row="1" Style="{StaticResource OverlayCard}">
                 <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
@@ -244,8 +249,125 @@
                 </Grid>
             </Border>
 
-            <Border x:Name="WaitPanel" Style="{StaticResource OverlayCard}" Visibility="Collapsed">
-                <StackPanel VerticalAlignment="Center">
+            <Border x:Name="CombinedPanel" Grid.Row="1" Style="{StaticResource OverlayCard}" Visibility="Collapsed">
+                <Viewbox Stretch="Uniform"
+                         StretchDirection="Both"
+                         HorizontalAlignment="Stretch"
+                         VerticalAlignment="Stretch">
+                    <Grid Width="496" Height="88">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="268"/>
+                            <ColumnDefinition Width="1"/>
+                            <ColumnDefinition Width="227"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Grid Grid.Column="0" Margin="0,0,14,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="18"/>
+                                <RowDefinition Height="26"/>
+                                <RowDefinition Height="16"/>
+                                <RowDefinition Height="28"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="NETWORK"
+                                       Foreground="#00C8FF"
+                                       FontFamily="Consolas"
+                                       FontWeight="Bold"
+                                       FontSize="10"/>
+                            <Grid Grid.Row="1">
+                                <TextBlock x:Name="CombinedPingText"
+                                           Foreground="#39FF14"
+                                           FontFamily="Consolas"
+                                           FontWeight="Bold"
+                                           FontSize="18"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock x:Name="CombinedLossText"
+                                           Style="{StaticResource OverlayValue}"
+                                           FontSize="16"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Grid.Row="2">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="UP" Foreground="#39FF14" FontFamily="Consolas" FontWeight="Bold" FontSize="10"/>
+                                    <TextBlock x:Name="CombinedUpText" Style="{StaticResource OverlayValue}" FontSize="10" Margin="7,0,0,0"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <TextBlock Text="DOWN" Foreground="#00C8FF" FontFamily="Consolas" FontWeight="Bold" FontSize="10"/>
+                                    <TextBlock x:Name="CombinedDownText" Style="{StaticResource OverlayValue}" FontSize="10" Margin="7,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <Canvas Grid.Row="3" Width="254" Height="28" HorizontalAlignment="Left">
+                                <Line X1="0" Y1="9" X2="254" Y2="9" Stroke="#2400C8FF" StrokeThickness="1"/>
+                                <Line X1="0" Y1="21" X2="254" Y2="21" Stroke="#2400C8FF" StrokeThickness="1"/>
+                                <Polyline x:Name="CombinedGraphGlow"
+                                          Stroke="#5200C8FF"
+                                          StrokeThickness="5"
+                                          StrokeLineJoin="Round"/>
+                                <Polyline x:Name="CombinedGraphLine"
+                                          Stroke="#39FF14"
+                                          StrokeThickness="2"
+                                          StrokeLineJoin="Round"/>
+                            </Canvas>
+                        </Grid>
+
+                        <Border Grid.Column="1" Background="#2E00C8FF"/>
+
+                        <Grid Grid.Column="2" Margin="14,0,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="18"/>
+                                <RowDefinition Height="42"/>
+                                <RowDefinition Height="28"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="SESSION"
+                                       Style="{StaticResource OverlayLabel}"
+                                       FontWeight="Bold"
+                                       FontSize="10"/>
+                            <Grid Grid.Row="1">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock x:Name="CombinedWinsText"
+                                               Foreground="#39FF14"
+                                               FontFamily="Consolas"
+                                               FontWeight="Bold"
+                                               FontSize="24"/>
+                                    <TextBlock Text=" - "
+                                               Foreground="#53636E"
+                                               FontFamily="Consolas"
+                                               FontWeight="Bold"
+                                               FontSize="24"/>
+                                    <TextBlock x:Name="CombinedLossesText"
+                                               Foreground="#FF2D55"
+                                               FontFamily="Consolas"
+                                               FontWeight="Bold"
+                                               FontSize="24"/>
+                                </StackPanel>
+                                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <TextBlock Text="WIN RATE"
+                                               Style="{StaticResource OverlayLabel}"
+                                               FontSize="9"
+                                               TextAlignment="Right"/>
+                                    <TextBlock x:Name="CombinedWinRateText"
+                                               Foreground="#00C8FF"
+                                               FontFamily="Consolas"
+                                               FontWeight="Bold"
+                                               FontSize="17"
+                                               TextAlignment="Right"/>
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="K/D" Style="{StaticResource OverlayLabel}" FontWeight="Bold" FontSize="9"/>
+                                <TextBlock x:Name="CombinedKdText"
+                                           Style="{StaticResource OverlayValue}"
+                                           FontSize="15"
+                                           Margin="8,0,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Viewbox>
+            </Border>
+
+            <Border x:Name="WaitPanel" Grid.Row="1" Style="{StaticResource OverlayCard}" Visibility="Collapsed">
+                <Grid>
+                <StackPanel x:Name="WaitClassicLayout" VerticalAlignment="Center">
                     <TextBlock x:Name="WaitValueText"
                                Text="EST. WAIT --"
                                Foreground="#00C8FF"
@@ -259,9 +381,29 @@
                                TextWrapping="Wrap"
                                Margin="0,8,0,0"/>
                 </StackPanel>
+                <Border x:Name="WaitModernLayout" Visibility="Collapsed" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="2" Padding="10">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="SEARCHING" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="#00C8FF"/>
+                            <TextBlock x:Name="WaitPlaylistModernText" Grid.Column="1" Margin="10,0,0,0" TextTrimming="CharacterEllipsis" TextAlignment="Right" FontFamily="Consolas" FontSize="9" Foreground="#71869A"/>
+                        </Grid>
+                        <Grid Grid.Row="1" Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="ESTIMATED" FontFamily="Consolas" FontSize="8" Foreground="#71869A"/><TextBlock x:Name="WaitEstimateModernText" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="#D8E6EC"/></StackPanel>
+                            <StackPanel Grid.Column="1" HorizontalAlignment="Right"><TextBlock Text="ELAPSED" FontFamily="Consolas" FontSize="8" Foreground="#71869A"/><TextBlock x:Name="WaitElapsedModernText" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="#39FF14" HorizontalAlignment="Right"/></StackPanel>
+                        </Grid>
+                        <TextBlock x:Name="WaitPopulationModernText" Grid.Row="3" FontFamily="Consolas" FontSize="10" Foreground="#8EA4B8" TextWrapping="Wrap" Margin="0,7,0,0"/><Grid Grid.Row="2" Height="3" Margin="0,7,0,0">
+                            <Border Background="#24313A"/>
+                            <Border Background="#00C8FF"><Border.RenderTransform><ScaleTransform x:Name="WaitProgressScale" ScaleX="0"/></Border.RenderTransform></Border>
+                        </Grid>
+                    </Grid>
+                </Border>
+                </Grid>
             </Border>
 
-            <Border x:Name="SessionPanel" Style="{StaticResource OverlayCard}" Visibility="Collapsed">
+            <Border x:Name="SessionPanel" Grid.Row="1" Style="{StaticResource OverlayCard}" Visibility="Collapsed">
                 <Grid>
                 <Viewbox x:Name="SessionClassicLayout"
                          Stretch="Uniform"
@@ -366,7 +508,7 @@
                          Stretch="Uniform"
                          StretchDirection="Both"
                          HorizontalAlignment="Stretch"
-                         VerticalAlignment="Stretch">
+                         VerticalAlignment="Top">
                     <Grid Width="320" Height="135">
                         <StackPanel>
                             <TextBlock Text="SESSION"
@@ -389,6 +531,7 @@
             </Border>
 
             <Border x:Name="RecapPanel"
+                    Grid.Row="1"
                     Style="{StaticResource OverlayCard}"
                     BorderThickness="0"
                     Visibility="Collapsed">
@@ -520,6 +663,7 @@
             </Border>
 
             <Border x:Name="EditToolbar"
+                    Grid.Row="0"
                     Panel.ZIndex="20"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Top"
@@ -529,7 +673,10 @@
                     BorderBrush="#CC00C8FF"
                     BorderThickness="1"
                     CornerRadius="3"
-                    Visibility="Collapsed">
+                    Visibility="Collapsed"
+                    Cursor="SizeAll"
+                    ToolTip="Drag to move docked overlays together. Hold Shift while dragging to detach this overlay."
+                    PreviewMouseLeftButtonDown="EditToolbar_MouseLeftButtonDown">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock x:Name="EditToolbarLabel"
                                Text="MOVE / RESIZE"
@@ -561,15 +708,19 @@
             </Border>
 
             <Border x:Name="DragSurface"
+                    Grid.Row="0"
+                    Grid.RowSpan="2"
                     Background="#01000000"
                     Panel.ZIndex="5"
                     HorizontalAlignment="Stretch"
                     VerticalAlignment="Stretch"
                     Cursor="SizeAll"
                     Visibility="Collapsed"
+                    ToolTip="Drag to move docked overlays together. Hold Shift while dragging to detach this overlay."
                     PreviewMouseLeftButtonDown="DragSurface_MouseLeftButtonDown"/>
 
             <primitives:Thumb x:Name="ResizeThumb"
+                              Grid.Row="1"
                               Width="42"
                               Height="42"
                               Panel.ZIndex="10"

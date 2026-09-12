@@ -192,7 +192,7 @@
                             </Border>
                             <Border Style="{StaticResource FeatureCard}" Cursor="Hand"
                                     MouseLeftButtonUp="FeatureCard_Click" Tag="{Binding ElementName=PlaylistsPreference}">
-                                <StackPanel><CheckBox x:Name="PlaylistsPreference" Content="PLAYLISTS" Style="{StaticResource SetupCheck}"/>
+                                <StackPanel><CheckBox x:Name="PlaylistsPreference" Content="PLAYLIST INFO" Style="{StaticResource SetupCheck}"/>
                                     <TextBlock Text="Playlist rotations, hopper population, and schedule information." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/></StackPanel>
                             </Border>
                             <Border Style="{StaticResource FeatureCard}" BorderBrush="{DynamicResource OrangeBrush}"

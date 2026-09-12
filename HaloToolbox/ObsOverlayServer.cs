@@ -12,7 +12,7 @@ namespace HaloToolbox;
 internal sealed class ObsOverlayServer : IDisposable
 {
     private const int Port = 19998;
-    private const string OverlayVersion = "component-placement-v19";
+    private const string OverlayVersion = "component-placement-v20";
     private static readonly ResourceManager AppResources =
         new("HaloMCCToolbox.g", typeof(ObsOverlayServer).Assembly);
     private readonly object _sync = new();
@@ -300,8 +300,44 @@ internal sealed class ObsOverlayServer : IDisposable
     .inner { display: flex; align-items: flex-start; gap: 24px; padding: 10px; background: transparent; }
     .network { width: 392px; flex: 0 0 392px; }
     .network.hidden { display: none; }
+    .combined { display: grid; grid-template-columns: 268px 1px 227px; width: 496px; flex: 0 0 496px; height: 88px; }
+    .combined.hidden { display: none; }
+    .combined-network { padding-right: 14px; }
+    .combined-divider { background: rgba(0, 200, 255, .18); }
+    .combined-session { padding-left: 14px; }
+    .combined-title { color: var(--cyan); font-size: 10px; font-weight: 700; line-height: 18px; text-shadow: var(--shadow); }
+    .combined-session .combined-title { color: var(--muted); }
+    .combined-quality { display: flex; align-items: center; justify-content: space-between; height: 26px; }
+    .combined-ping { color: var(--green); font-size: 18px; font-weight: 700; text-shadow: var(--shadow); }
+    .combined-loss { color: var(--text); font-size: 16px; font-weight: 700; text-shadow: var(--shadow); }
+    .combined-traffic { display: flex; align-items: baseline; justify-content: space-between; height: 16px; color: var(--text); font-size: 10px; font-weight: 700; text-shadow: var(--shadow); }
+    .combined-traffic .up { color: var(--green); }
+    .combined-traffic .down { color: var(--cyan); }
+    .combined-graph { display: block; width: 254px; height: 28px; }
+    .combined-record { display: flex; align-items: center; justify-content: space-between; height: 42px; }
+    .combined-wins, .combined-losses, .combined-sep { font-size: 24px; font-weight: 700; text-shadow: var(--shadow); }
+    .combined-wins { color: var(--green); }
+    .combined-losses { color: var(--red); }
+    .combined-sep { color: #53636e; padding: 0 4px; }
+    .combined-winrate-label { color: var(--muted); font-size: 9px; text-align: right; text-shadow: var(--shadow); }
+    .combined-winrate { color: var(--cyan); font-size: 17px; font-weight: 700; text-align: right; text-shadow: var(--shadow); }
+    .combined-kd { display: flex; align-items: center; height: 28px; color: var(--muted); font-size: 9px; font-weight: 700; text-shadow: var(--shadow); }
+    .combined-kd strong { color: var(--text); font-size: 15px; margin-left: 8px; }
     .matchmaking { width: 300px; flex: 0 0 300px; padding-top: 1px; }
     .matchmaking.hidden { display: none; }
+    .wait-modern { display: none; background: transparent; padding: 10px; }
+    #waitPopulation { color: #8ea4b8; font-size: 10px; margin-top: 7px; }
+    .matchmaking.modern .wait-classic { display: none; }
+    .matchmaking.modern .wait-modern { display: block; }
+    .wait-modern-header, .wait-modern-times { display: flex; justify-content: space-between; gap: 10px; }
+    .wait-modern-header { color: #00c8ff; font-size: 11px; font-weight: bold; }
+    #waitPlaylist { color: #71869a; font-size: 9px; font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wait-modern-times { margin-top: 8px; color: #71869a; font-size: 8px; }
+    .wait-modern-times strong { display: block; color: #d8e6ec; font-size: 15px; }
+    .wait-modern-times .elapsed { text-align: right; }
+    #waitElapsed { color: #39ff14; }
+    .wait-progress { height: 3px; background: #24313a; margin-top: 7px; }
+    #waitProgress { height: 100%; background: #00c8ff; transform-origin: left; }
     .wait-value { color: var(--cyan); font-size: 25px; font-weight: 700; margin-top: 7px; text-shadow: var(--shadow); }
     .wait-value.warn { color: #ffb020; }
     .wait-value.long { color: var(--red); }
@@ -376,6 +412,35 @@ internal sealed class ObsOverlayServer : IDisposable
 <body>
   <main class="overlay">
     <div class="inner">
+      <section id="combined" class="combined hidden">
+        <div class="combined-network">
+          <div class="combined-title">NETWORK</div>
+          <div class="combined-quality">
+            <div id="combinedPing" class="combined-ping"></div>
+            <div id="combinedLoss" class="combined-loss"></div>
+          </div>
+          <div class="combined-traffic">
+            <div><span class="up">UP</span> <span id="combinedUp"></span></div>
+            <div><span class="down">DOWN</span> <span id="combinedDown"></span></div>
+          </div>
+          <svg class="combined-graph" viewBox="0 0 254 28" preserveAspectRatio="none">
+            <line x1="0" y1="9" x2="254" y2="9" stroke="rgba(0,200,255,.14)" />
+            <line x1="0" y1="21" x2="254" y2="21" stroke="rgba(0,200,255,.14)" />
+            <polyline id="combinedGraphGlow" points="" fill="none" stroke="rgba(0,200,255,.32)" stroke-width="5" stroke-linejoin="round" />
+            <polyline id="combinedGraphLine" points="" fill="none" stroke="#39ff14" stroke-width="2" stroke-linejoin="round" />
+          </svg>
+        </div>
+        <div class="combined-divider"></div>
+        <div class="combined-session">
+          <div class="combined-title">SESSION</div>
+          <div class="combined-record">
+            <div><span id="combinedWins" class="combined-wins">0W</span><span class="combined-sep">-</span><span id="combinedLosses" class="combined-losses"></span></div>
+            <div><div class="combined-winrate-label">WIN RATE</div><div id="combinedWinRate" class="combined-winrate">--</div></div>
+          </div>
+          <div class="combined-kd">K/D <strong id="combinedKd">0.00</strong></div>
+        </div>
+      </section>
+
       <div id="network" class="network">
         <div class="row">
           <div class="section-title">NETWORK</div>
@@ -409,12 +474,20 @@ internal sealed class ObsOverlayServer : IDisposable
       </div>
 
       <section id="matchmaking" class="matchmaking hidden">
+        <div class="wait-classic">
         <div class="row">
           <div class="section-title">MATCHMAKING</div>
           <div class="label">ESTIMATE</div>
         </div>
         <div id="waitValue" class="wait-value">EST. WAIT --</div>
         <div id="waitDetail" class="wait-detail"></div>
+        </div>
+        <div class="wait-modern">
+          <div class="wait-modern-header"><span>SEARCHING</span><span id="waitPlaylist"></span></div>
+          <div class="wait-modern-times"><div>ESTIMATED<strong id="waitEstimate">0:00</strong></div><div class="elapsed">ELAPSED<strong id="waitElapsed">0:00</strong></div></div>
+          <div class="wait-progress"><div id="waitProgress"></div></div>
+          <div id="waitPopulation"></div>
+        </div>
       </section>
 
       <section id="session" class="session">
@@ -484,6 +557,7 @@ internal sealed class ObsOverlayServer : IDisposable
     document.body.classList.toggle("component-mode", component !== "all");
     const componentSize = {
       network: [430, 164],
+      combined: [516, 110],
       wait: [360, 112],
       session: [920, 230],
       all: [1280, 150]
@@ -509,6 +583,17 @@ internal sealed class ObsOverlayServer : IDisposable
       return history.map((v, i) => {
         const value = v === null ? max : Number(v);
         const y = 30 - Math.max(0, Math.min(1, value / max)) * 26;
+        return `${(i * step).toFixed(1)},${y.toFixed(1)}`;
+      }).join(" ");
+    }
+
+    function combinedGraphPoints(history) {
+      if (!history || history.length < 2) return "";
+      const max = Math.max(80, ...history.filter(x => x !== null).map(Number));
+      const step = 254 / Math.max(1, history.length - 1);
+      return history.map((v, i) => {
+        const value = v === null ? max : Number(v);
+        const y = 26 - Math.max(0, Math.min(1, value / max)) * 22;
         return `${(i * step).toFixed(1)},${y.toFixed(1)}`;
       }).join(" ");
     }
@@ -581,6 +666,20 @@ internal sealed class ObsOverlayServer : IDisposable
         applyPlacement(data);
         const hasPing = data.rttMs !== null && data.rttMs !== undefined;
         const hasNetwork = hasPing || data.uploadKilobytesPerSecond !== null || data.downloadKilobytesPerSecond !== null;
+        const showCombined = component === "combined" && data.showCombinedOverlay;
+        $("combined").classList.toggle("hidden", !showCombined);
+        setBlankable("combinedPing", hasPing ? `Ping: ${data.rttMs} ms` : "");
+        setBlankable("combinedLoss", hasNetwork ? `Loss: ${(data.packetLossPercent ?? 0).toFixed(0)}%` : "");
+        setBlankable("combinedUp", data.uploadKilobytesPerSecond !== null && data.uploadKilobytesPerSecond !== undefined ? formatKb(data.uploadKilobytesPerSecond) : "");
+        setBlankable("combinedDown", data.downloadKilobytesPerSecond !== null && data.downloadKilobytesPerSecond !== undefined ? formatKb(data.downloadKilobytesPerSecond) : "");
+        const combinedPoints = combinedGraphPoints(data.rttHistoryMs);
+        $("combinedGraphLine").setAttribute("points", combinedPoints);
+        $("combinedGraphGlow").setAttribute("points", combinedPoints);
+        const combinedGames = data.gamesPlayed ?? 0;
+        set("combinedWins", `${data.wins ?? 0}W`);
+        setBlankable("combinedLosses", combinedGames > 0 ? `${data.losses ?? 0}L` : "");
+        set("combinedWinRate", combinedGames > 0 ? `${Math.round(((data.wins ?? 0) / combinedGames) * 100)}%` : "--");
+        set("combinedKd", data.sessionKd || "0.00");
         $("network").classList.toggle("hidden", component !== "all" && component !== "network" || !data.showNetworkStats);
         setBlankable("server", hasNetwork && data.serverLabel !== "SERVER: --" ? data.serverLabel : "");
         setBlankable("vpn", data.vpnRegion ? `VPN: ${data.vpnRegion}` : "");
@@ -603,6 +702,7 @@ internal sealed class ObsOverlayServer : IDisposable
           data.matchmakingWaitSeconds !== null && data.matchmakingWaitSeconds !== undefined &&
           (!data.matchmakingExpiresAtUtc || Date.now() < Date.parse(data.matchmakingExpiresAtUtc));
         $("matchmaking").classList.toggle("hidden", (component !== "all" && component !== "wait") || !showWait);
+        $("matchmaking").classList.toggle("modern", !!data.matchmakingWaitModern);
         if (showWait) {
           const estimate = Math.max(0, Number(data.matchmakingWaitSeconds));
           const elapsed = data.matchmakingStartedAtUtc
@@ -615,6 +715,14 @@ internal sealed class ObsOverlayServer : IDisposable
           const hasPopulation = data.matchmakingPopulation !== null && data.matchmakingPopulation !== undefined;
           const playlistName = data.matchmakingPlaylistName || "this playlist";
           const searchScope = data.matchmakingSearchScope || "all gametypes";
+          const clock = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+          set("waitEstimate", clock(estimate));
+          set("waitElapsed", clock(elapsed));
+          set("waitPlaylist", data.matchmakingPlaylistName || "MATCHMAKING");
+          set("waitPopulation", hasPopulation
+            ? `${data.matchmakingPopulation} player${data.matchmakingPopulation === 1 ? "" : "s"} searching across ${searchScope}`
+            : "Population unavailable");
+          $("waitProgress").style.transform = `scaleX(${estimate > 0 ? Math.min(1, elapsed / estimate) : 1})`;
           set("waitDetail", hasPopulation
             ? `${data.matchmakingPopulation} player${data.matchmakingPopulation === 1 ? "" : "s"} searching ${playlistName} across ${searchScope} - your wait time may vary`
             : `elapsed ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`);
@@ -704,8 +812,10 @@ internal sealed class ObsOverlayServer : IDisposable
 internal sealed record ObsOverlaySnapshot(
     bool ShowSessionStats,
     bool ShowNetworkStats,
+    bool ShowCombinedOverlay,
     bool ShowMatchmakingWait,
     int? MatchmakingWaitSeconds,
+    bool MatchmakingWaitModern,
     int? MatchmakingPopulation,
     string MatchmakingPlaylistName,
     string MatchmakingSearchScope,
@@ -749,8 +859,10 @@ internal sealed record ObsOverlaySnapshot(
     public static ObsOverlaySnapshot Empty { get; } = new(
         ShowSessionStats: true,
         ShowNetworkStats: true,
+        ShowCombinedOverlay: false,
         ShowMatchmakingWait: false,
         MatchmakingWaitSeconds: null,
+        MatchmakingWaitModern: false,
         MatchmakingPopulation: null,
         MatchmakingPlaylistName: "",
         MatchmakingSearchScope: "all gametypes",

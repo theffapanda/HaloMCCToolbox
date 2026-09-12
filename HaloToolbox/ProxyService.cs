@@ -209,6 +209,9 @@ public class ProxyService : IDisposable
         string scid;
         lock (_smartMatchAuthLock)
         {
+            // MCC may retry with the rejected token before it obtains a replacement.
+            if (string.Equals(authorization, _rejectedPopulationAuthorization, StringComparison.Ordinal))
+                return;
             scid = string.IsNullOrWhiteSpace(serviceConfigId)
                 ? _smartMatchServiceConfigId
                 : serviceConfigId;
@@ -220,10 +223,9 @@ public class ProxyService : IDisposable
             _smartMatchServiceConfigId = scid;
             _smartMatchAuthCapturedAtUtc = capturedAtUtc;
             _smartMatchAuthSourceHost = sourceHost;
+            if (changed && !string.IsNullOrWhiteSpace(scid))
+                PersistSmartMatchAuthorization(authorization, reusableHeaders, scid, capturedAtUtc, sourceHost);
         }
-
-        if (changed && !string.IsNullOrWhiteSpace(scid))
-            PersistSmartMatchAuthorization(authorization, reusableHeaders, scid, capturedAtUtc, sourceHost);
     }
 
     private void PersistSmartMatchAuthorization(
@@ -365,12 +367,15 @@ public class ProxyService : IDisposable
             }
 
             _smartMatchRequestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            _smartMatchServiceConfigId = "";
+            // Retain the non-secret title ID so newly observed authorization can
+            // resume population polling without waiting for another /serviceconfigs request.
             _smartMatchAuthCapturedAtUtc = default;
             _smartMatchAuthSourceHost = "";
+            _rejectedPopulationAuthorization = currentAuthorization;
+            // Keep deletion under the capture lock so it cannot delete a newer token's cache.
+            try { File.Delete(RejoinFixPaths.SmartMatchAuthFile); } catch { }
         }
 
-        try { File.Delete(RejoinFixPaths.SmartMatchAuthFile); } catch { }
         RejoinFixDiagnostics.Warn("smartmatch", "Discarded expired population authorization after HTTP 401.");
     }
 
@@ -769,6 +774,11 @@ public class ProxyService : IDisposable
     {
         if (IsRunning) return;
 
+        // Explicit opt-in for the isolated routing prototype. Never change Windows
+        // proxy settings in this mode; the external test router owns admission.
+        bool listenerOnlyPrototype = Environment.GetEnvironmentVariable("HALO_SCOPED_PROXY_PROTOTYPE") == "1";
+        if (listenerOnlyPrototype) Port = 18888;
+
         var staleRecovery = ToolboxWinInetProxy.RecoverStaleProxy();
         if (staleRecovery is StaleProxyRecoveryResult.RestoredSavedSettings or StaleProxyRecoveryResult.DisabledLegacyProxy)
             RejoinFixDiagnostics.Warn("proxy", $"Recovered stale Windows proxy settings before startup ({staleRecovery}).");
@@ -797,12 +807,15 @@ public class ProxyService : IDisposable
             _endpoint = endpoint;
 
             // WinINet proxy (no admin required)
-            SetWinINetProxy($"127.0.0.1:{Port}");
-            winInetProxySet = true;
+            if (!listenerOnlyPrototype)
+            {
+                SetWinINetProxy($"127.0.0.1:{Port}");
+                winInetProxySet = true;
+            }
             IsRunning = true;
 
             // WinHTTP proxy: Halo MCC uses WinHTTP, not WinINet.
-            TrySetWinHttpProxy();
+            if (!listenerOnlyPrototype) TrySetWinHttpProxy();
 
             if (!_stopRequested)
                 RejoinFixDiagnostics.Info("proxy", $"Proxy started on 127.0.0.1:{Port}.");
@@ -3494,6 +3507,37 @@ public class ProxyService : IDisposable
         }
     }
 
+    private string? _rejectedPopulationAuthorization;
+
+    public bool HasPopulationAuthorization
+    {
+        get
+        {
+            lock (_smartMatchAuthLock)
+                return !string.IsNullOrWhiteSpace(_smartMatchServiceConfigId) && _smartMatchRequestHeaders.ContainsKey("Authorization");
+        }
+    }
+
+    public async Task<(long kills, long deaths)?> GetCareerTotalsAsync(string xuid)
+    {
+        string? authorization;
+        lock (_smartMatchAuthLock)
+            _smartMatchRequestHeaders.TryGetValue("Authorization", out authorization);
+        if (string.IsNullOrWhiteSpace(authorization) || string.IsNullOrWhiteSpace(xuid)) return null;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://userstats.xboxlive.com/batch");
+            request.Headers.TryAddWithoutValidation("Authorization", authorization);
+            request.Headers.TryAddWithoutValidation("X-Xbl-Contract-Version", "1");
+            request.Content = new StringContent(XboxCareerStats.CreateRequest(xuid), Encoding.UTF8, "application/json");
+            using var response = await _refreshClient.SendAsync(request, timeout.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            return XboxCareerStats.Parse(await response.Content.ReadAsStringAsync(timeout.Token), xuid);
+        }
+        catch (Exception) { return null; }
+    }
+
     public async Task<HopperPopulationResult> GetHopperStatisticsAsync(string hopperName, CancellationToken cancellationToken = default)
     {
         Dictionary<string, string> headers;
@@ -3505,7 +3549,7 @@ public class ProxyService : IDisposable
         }
 
         if (string.IsNullOrWhiteSpace(scid) || headers.Count == 0)
-            return new HopperPopulationResult(hopperName, null, null, "Launch MCC once to authorize population data.");
+            return new HopperPopulationResult(hopperName, null, null, "Waiting for MCC authorization. Start the MCC Data Proxy, launch MCC, start matchmaking, then cancel and return to the lobby; collection resumes when a fresh token is captured.");
 
         string url = $"https://smartmatch.xboxlive.com/serviceconfigs/{Uri.EscapeDataString(scid)}/hoppers/{Uri.EscapeDataString(hopperName)}/stats";
         try

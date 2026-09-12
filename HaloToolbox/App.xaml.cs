@@ -78,7 +78,7 @@ namespace HaloToolbox
                 using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
                 string valueName = $"GameOverlayVisualStyle.{component}";
                 string? savedStyle = key?.GetValue(valueName) as string
-                    ?? key?.GetValue("GameOverlayVisualStyle") as string;
+                    ?? (component == "wait" ? null : key?.GetValue("GameOverlayVisualStyle") as string);
                 return string.Equals(
                     savedStyle,
                     nameof(GameOverlayVisualStyle.Modern),
@@ -118,6 +118,26 @@ namespace HaloToolbox
             {
                 using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
                 key.SetValue("MatchmakingWaitOverlay", enabled ? "Enabled" : "Disabled");
+            }
+            catch { }
+        }
+
+        public static bool LoadCombinedNetworkSessionOverlayEnabled()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(SettingsRegistryPath);
+                return (key?.GetValue("CombinedNetworkSessionOverlay") as string) == "Enabled";
+            }
+            catch { return false; }
+        }
+
+        public static void SaveCombinedNetworkSessionOverlayEnabled(bool enabled)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(SettingsRegistryPath);
+                key.SetValue("CombinedNetworkSessionOverlay", enabled ? "Enabled" : "Disabled");
             }
             catch { }
         }
@@ -207,6 +227,12 @@ namespace HaloToolbox
 
         public static void SaveSessionStatsObsOnlyEnabled(bool enabled) =>
             SaveFeatureObsOnlyOverlayEnabled("SessionStatsObsOnly", enabled);
+
+        public static bool LoadCombinedNetworkSessionObsOnlyEnabled() =>
+            LoadFeatureObsOnlyOverlayEnabled("CombinedNetworkSessionObsOnly");
+
+        public static void SaveCombinedNetworkSessionObsOnlyEnabled(bool enabled) =>
+            SaveFeatureObsOnlyOverlayEnabled("CombinedNetworkSessionObsOnly", enabled);
 
         public static bool LoadObsBrowserOverlaySessionStatsEnabled()
         {

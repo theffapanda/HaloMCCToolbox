@@ -1,4 +1,4 @@
-﻿<Window x:Class="HaloToolbox.MainWindow"
+<Window x:Class="HaloToolbox.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:HaloToolbox"
@@ -91,7 +91,7 @@
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         </Style>
 
-        <!-- Shared toggle style used by Advanced Features and Stats. -->
+        <!-- Shared toggle style used by Population and Stats. -->
         <Style x:Key="StatsToggleBtn" TargetType="ToggleButton">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
@@ -368,15 +368,23 @@
                                                FontWeight="Bold" FontSize="11"
                                                Foreground="{DynamicResource AccentBrush}"
                                                Margin="0,0,0,10"/>
-                                    <CheckBox Content="Tools" IsChecked="True" IsEnabled="False" Margin="0,3"/>
+                                    <CheckBox x:Name="ShowHomeSection" Content="Dashboard" IsChecked="True" IsEnabled="False" Margin="0,3"/>
+                                    <CheckBox x:Name="ShowMapsSection" Content="Halo 3 Maps" Tag="Maps" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowH3ModsSection" Content="Mods" Tag="H3Mods" Margin="0,3" Click="SectionVisibility_Click"/>
-                                    <CheckBox x:Name="ShowReportSection" Content="Report" Tag="Report" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowPlaylistsSection" Content="Playlist Info" Tag="Playlists" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowVpnSection" Content="MCC VPN" Tag="Vpn" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowOverlaysSection" Content="Overlays" Tag="Overlays" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowFirewallSection" Content="Firewall Fix" Tag="Firewall" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowStatsSection" Content="Stats" Tag="Stats" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowPopulationSection" Content="Population" Tag="Population" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowMatchHistorySection" Content="Match History" Tag="MatchHistory" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowBanCheckerSection" Content="Ban Checker" Tag="BanChecker" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowTheaterSection" Content="Theater" Tag="Theater" Margin="0,3" Click="SectionVisibility_Click"/>
-                                    <CheckBox x:Name="ShowPlaylistsSection" Content="Playlists" Tag="Playlists" Margin="0,3" Click="SectionVisibility_Click"/>
-                                    <CheckBox x:Name="ShowVpnSection" Content="VPN" Tag="Vpn" Margin="0,3" Click="SectionVisibility_Click"/>
-                                    <CheckBox x:Name="ShowAboutSection" Content="About" IsChecked="True" IsEnabled="False" Margin="0,3"/>
+                                    <CheckBox x:Name="ShowDownpatchSection" Content="Downpatching" Tag="Downpatch" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowReportSection" Content="Report" Tag="Report" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowFixesSection" Content="Fixes" Tag="Fixes" Margin="0,3" Click="SectionVisibility_Click"/>
                                     <CheckBox x:Name="ShowLogSection" Content="Log" Tag="Log" Margin="0,3" Click="SectionVisibility_Click"/>
+                                    <CheckBox x:Name="ShowAboutSection" Content="About" IsChecked="True" IsEnabled="False" Margin="0,3"/>
                                     <Button x:Name="ToggleAllSectionsBtn" Content="HIDE ALL" Margin="0,12,0,0" Padding="8,4"
                                             FontFamily="Consolas" FontSize="10"
                                             Click="ToggleAllSections_Click"/>
@@ -534,14 +542,14 @@
                                   HorizontalScrollBarVisibility="Disabled"
                                   Style="{StaticResource FlatScrollViewer}">
                         <StackPanel Margin="9,10">
-                            <TextBlock Text="START" Style="{StaticResource SidebarSectionLabel}" Margin="8,0,0,6"/>
+                            <TextBlock Text="HOME" Style="{StaticResource SidebarSectionLabel}" Margin="8,0,0,6"/>
                             <RadioButton x:Name="SidebarHomeButton"
                                          GroupName="MainNavigation" Tag="Home"
                                          Style="{StaticResource SidebarNavButton}"
                                          Click="SidebarNavigation_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="⌂" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
-                                    <TextBlock Text="HOME" VerticalAlignment="Center"/>
+                                    <TextBlock Text="DASHBOARD" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
 
@@ -572,7 +580,7 @@
                                          Click="SidebarNavigation_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="▤" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
-                                    <TextBlock Text="PLAYLISTS" VerticalAlignment="Center"/>
+                                    <TextBlock Text="PLAYLIST INFO" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
 
@@ -587,13 +595,22 @@
                                     <TextBlock Text="MCC VPN" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton x:Name="SidebarFeaturesButton"
-                                         GroupName="MainNavigation" Tag="Features"
+                            <RadioButton x:Name="SidebarOverlaysButton"
+                                         GroupName="MainNavigation" Tag="Overlays"
                                          Style="{StaticResource SidebarNavButton}"
                                          Click="SidebarNavigation_Click">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="↻" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
-                                    <TextBlock Text="LIVE FEATURES" VerticalAlignment="Center"/>
+                                    <TextBlock Text="▣" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="OVERLAYS" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarFirewallButton"
+                                         GroupName="MainNavigation" Tag="Firewall"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="♢" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="FIREWALL FIX" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
 
@@ -608,8 +625,29 @@
                                     <TextBlock Text="STATS" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
+                            <RadioButton x:Name="SidebarPopulationButton"
+                                         GroupName="MainNavigation" Tag="Population"
+                                         Visibility="{Binding Visibility, ElementName=PopulationSection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="⌁" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="POPULATION" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="SidebarMatchHistoryButton"
+                                         GroupName="MainNavigation" Tag="MatchHistory"
+                                         Visibility="{Binding Visibility, ElementName=MatchHistorySection}"
+                                         Style="{StaticResource SidebarNavButton}"
+                                         Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="▦" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="MATCH HISTORY" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
                             <RadioButton x:Name="SidebarBanCheckerButton"
                                          GroupName="MainNavigation" Tag="BanChecker"
+                                         Visibility="{Binding Visibility, ElementName=BanCheckerSection}"
                                          Style="{StaticResource SidebarNavButton}"
                                          Click="SidebarNavigation_Click">
                                 <StackPanel Orientation="Horizontal">
@@ -627,13 +665,19 @@
                                     <TextBlock Text="THEATER" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
+                            <RadioButton x:Name="SidebarDownpatchButton" Visibility="{Binding Visibility, ElementName=DownpatchSection}" GroupName="MainNavigation" Tag="Downpatch" Style="{StaticResource SidebarNavButton}" Click="SidebarNavigation_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#x21A7;" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="DOWNPATCHING" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
                             <RadioButton x:Name="SidebarReportButton"
                                          GroupName="MainNavigation" Tag="Report"
                                          Visibility="{Binding Visibility, ElementName=ReportSection}"
                                          Style="{StaticResource SidebarNavButton}"
                                          Click="SidebarNavigation_Click">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="♟" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="&#x1F6A8;" Width="22" TextAlignment="Center" VerticalAlignment="Center"/>
                                     <TextBlock Text="REPORT" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
@@ -707,11 +751,9 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <Button Content="LIVE FEATURES"
-                                            Tag="Features"
-                                            Style="{StaticResource SidebarStatusLink}"
-                                            ToolTip="Open Live Features configuration"
-                                            Click="ToolsHomeTask_Click"/>
+                                    <TextBlock Text="PROXY"
+                                               FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                                               Foreground="#8499AC" VerticalAlignment="Center"/>
                                     <TextBlock x:Name="HomeFeaturesStatus"
                                                Grid.Column="1"
                                                Text="● OFF"
@@ -725,7 +767,7 @@
                                             Grid.Column="2"
                                             Content="START"
                                             Style="{StaticResource SidebarStatusActionButton}"
-                                            ToolTip="Start Live Features without leaving this page"
+                                            ToolTip="Start the MCC data proxy without leaving this page"
                                             Click="BtnRejoinFix_Click"/>
                                 </Grid>
                                 <Grid Margin="0,5" MinHeight="20">
@@ -733,6 +775,7 @@
                                     <TextBlock Text="WAYPOINT" FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
                                                Foreground="#8499AC" VerticalAlignment="Center"/>
                                     <TextBlock x:Name="StatsHwStatusLabel" Grid.Column="1" Text="NOT CONNECTED"
+                                               Margin="8,0,0,0"
                                                FontFamily="Consolas" FontSize="11" FontWeight="Bold"
                                                Foreground="#71869A" VerticalAlignment="Center"/>
                                 </Grid>
@@ -779,6 +822,7 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
                             <Border Grid.Row="0" BorderBrush="{DynamicResource BorderBrush}"
@@ -786,7 +830,7 @@
                                 <StackPanel>
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="⌂ " FontSize="16" Foreground="{DynamicResource AccentBrush}"/>
-                                        <TextBlock Text="HOME" FontFamily="Consolas" FontSize="15" FontWeight="Bold"
+                                        <TextBlock Text="DASHBOARD" FontFamily="Consolas" FontSize="15" FontWeight="Bold"
                                                    Foreground="{DynamicResource TextBrush}"/>
                                     </StackPanel>
                                     <TextBlock Text="Everything in the Toolbox, organized around the task you want to complete."
@@ -885,7 +929,51 @@
                                 </StackPanel>
                             </Border>
 
-                            <ScrollViewer Grid.Row="3"
+                            <Border Grid.Row="3"
+                                    Background="{DynamicResource PanelBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    Padding="14"
+                                    Margin="0,0,0,16">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,18,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="↻ " FontSize="16" Foreground="{DynamicResource AccentBrush}"/>
+                                            <TextBlock Text="MCC DATA PROXY"
+                                                       FontFamily="Consolas" FontSize="12" FontWeight="Bold"
+                                                       Foreground="{DynamicResource TextBrush}"/>
+                                        </StackPanel>
+                                        <TextBlock Text="Captures live MCC session data for Rejoin Recovery, overlays, and firewall automation."
+                                                   FontFamily="Consolas" FontSize="11"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                        <TextBlock x:Name="HomeProxyStatusText"
+                                                   Text="○ STOPPED"
+                                                   FontFamily="Consolas" FontSize="10"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   Margin="0,8,0,0"/>
+                                        <TextBlock x:Name="HomeProxyModeText"
+                                                   Text=""
+                                                   FontFamily="Consolas" FontSize="10"
+                                                   Foreground="{DynamicResource MutedBrush}"
+                                                   Visibility="Collapsed" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                    <Button x:Name="HomeProxyToggleButton"
+                                            Grid.Column="1"
+                                            Content="START PROXY"
+                                            Style="{StaticResource OrangeButton}"
+                                            Width="128"
+                                            VerticalAlignment="Top"
+                                            Click="BtnRejoinFix_Click"/>
+                                </Grid>
+                            </Border>
+
+                            <ScrollViewer Grid.Row="4"
                                           VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled"
                                           Style="{StaticResource FlatScrollViewer}">
@@ -960,15 +1048,30 @@
                                         </Grid>
                                     </Button>
 
-                                    <Button Tag="Features" Style="{StaticResource HomeTaskButton}"
+                                    <Button Tag="Overlays" Style="{StaticResource HomeTaskButton}"
+                                            Click="ToolsHomeTask_Click" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextBrush}">
+                                                    <Run Foreground="{DynamicResource AccentBrush}" Text="▣  "/><Run Text="CONFIGURE OVERLAYS"/>
+                                                </TextBlock>
+                                                <TextBlock Text="Choose in-game and OBS views for live match data."
+                                                           FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="OPEN  ›" FontFamily="Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                        </Grid>
+                                    </Button>
+                                    <Button Tag="Firewall" Style="{StaticResource HomeTaskButton}"
                                             Click="ToolsHomeTask_Click">
                                         <Grid>
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                             <StackPanel>
                                                 <TextBlock FontFamily="Consolas" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextBrush}">
-                                                    <Run Foreground="{DynamicResource AccentBrush}" Text="↻  "/><Run Text="CONFIGURE LIVE FEATURES"/>
+                                                    <Run Foreground="{DynamicResource AccentBrush}" Text="♢  "/><Run Text="CONFIGURE FIREWALL FIX"/>
                                                 </TextBlock>
-                                                <TextBlock Text="Rejoin Recovery, firewall fixes, and stream overlays."
+                                                <TextBlock Text="Manage MCC-only P2P rules and automation."
                                                            FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0"/>
                                             </StackPanel>
                                             <TextBlock Grid.Column="1" Text="OPEN  ›" FontFamily="Consolas" FontSize="10"
@@ -981,7 +1084,7 @@
 
                         <!-- Section: Fix & Repair -->
                         <TextBlock x:Name="FixRepairSectionLabel" Grid.Row="0" Visibility="Collapsed"
-                                   Text="— FIX &amp; REPAIR"
+                                   Text="FIX &amp; REPAIR"
                                    FontFamily="Consolas"
                                    FontSize="10"
                                    FontWeight="Bold"
@@ -1004,8 +1107,8 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <Expander IsExpanded="True" HorizontalContentAlignment="Stretch" Margin="0,0,20,0">
-                                    <Expander.Header>
+                                <StackPanel Margin="0,0,20,0">
+                                    
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <TextBlock Text="🔑 "
                                                        FontSize="16"
@@ -1018,7 +1121,7 @@
                                                        Foreground="White"
                                                        VerticalAlignment="Center"/>
                                         </StackPanel>
-                                    </Expander.Header>
+                                    
                                     <TextBlock Text="Deletes stored Xbox Live credentials and MCC webcache files. Run this if you're stuck on sign-in, getting auth errors, or experiencing matchmaking issues."
                                                FontFamily="Consolas"
                                                FontSize="11"
@@ -1026,7 +1129,7 @@
                                                TextWrapping="Wrap"
                                                LineHeight="18"
                                                Margin="0,10,0,0"/>
-                                </Expander>
+                                </StackPanel>
                                 <Button Grid.Column="1"
                                         x:Name="BtnCleanCreds"
                                         Content="RUN FIX"
@@ -1053,8 +1156,8 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <Expander IsExpanded="True" HorizontalContentAlignment="Stretch" Margin="0,0,20,0">
-                                    <Expander.Header>
+                                <StackPanel Margin="0,0,20,0">
+                                    
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <TextBlock Text="🛡 "
                                                        FontSize="16"
@@ -1067,7 +1170,7 @@
                                                        Foreground="White"
                                                        VerticalAlignment="Center"/>
                                         </StackPanel>
-                                    </Expander.Header>
+                                    
                                     <TextBlock Text="Launches the EasyAntiCheat setup tool and triggers a service repair. Use this if MCC is failing to launch, showing EAC errors, or getting stuck on the anti-cheat check."
                                                FontFamily="Consolas"
                                                FontSize="11"
@@ -1075,7 +1178,7 @@
                                                TextWrapping="Wrap"
                                                LineHeight="18"
                                                Margin="0,10,0,0"/>
-                                </Expander>
+                                </StackPanel>
                                 <Button Grid.Column="1"
                                         x:Name="BtnRepairEAC"
                                         Content="RUN FIX"
@@ -1102,8 +1205,8 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <Expander IsExpanded="True" HorizontalContentAlignment="Stretch" Margin="0,0,20,0">
-                                    <Expander.Header>
+                                <StackPanel Margin="0,0,20,0">
+                                    
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <TextBlock Text="🔊 "
                                                        FontSize="16"
@@ -1116,7 +1219,7 @@
                                                        Foreground="White"
                                                        VerticalAlignment="Center"/>
                                         </StackPanel>
-                                    </Expander.Header>
+                                    
                                     <TextBlock Text="Clears MCC's saved audio output device so it can detect the current Windows device on launch. Use this when MCC starts with no audio until an in-game audio device is changed."
                                                FontFamily="Consolas"
                                                FontSize="11"
@@ -1124,7 +1227,7 @@
                                                TextWrapping="Wrap"
                                                LineHeight="18"
                                                Margin="0,10,0,0"/>
-                                </Expander>
+                                </StackPanel>
                                 <Button Grid.Column="1"
                                         x:Name="BtnRepairAudioDevices"
                                         Content="RUN FIX"
@@ -1135,7 +1238,7 @@
                             </Grid>
                         </Border>
 
-                        <!-- Advanced Features Card -->
+                        <!-- Overlay and firewall configuration card -->
                         <Border x:Name="AdvancedFeaturesCard" Grid.Row="4" Visibility="Collapsed"
                                 Background="{DynamicResource PanelBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
@@ -1151,69 +1254,299 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <Expander IsExpanded="True" HorizontalContentAlignment="Stretch" Margin="0,0,20,0">
-                                    <Expander.Header>
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <TextBlock Text="↻ "
-                                                       FontSize="16"
-                                                       Foreground="#00C8FF"
-                                                       VerticalAlignment="Center"/>
-                                            <TextBlock Text="ADVANCED FEATURES"
-                                                       FontFamily="Consolas"
-                                                       FontSize="13"
-                                                       FontWeight="Bold"
-                                                       Foreground="White"
-                                                       VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                    </Expander.Header>
-                                    <StackPanel Margin="0,10,0,0">
-                                        <TextBlock Text="Provides live MCC data to Toolbox features. Required services start automatically when you enable a feature."
+                                <StackPanel Grid.Column="0" Margin="0,0,20,0">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="↻ "
+                                                   FontSize="16"
+                                                   Foreground="#00C8FF"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="AdvancedFeaturesHeaderText"
+                                                   Text="OVERLAYS"
                                                    FontFamily="Consolas"
-                                                   FontSize="11"
-                                                   Foreground="{DynamicResource MutedBrush}"
-                                                   TextWrapping="Wrap"
-                                                   LineHeight="18"/>
-                                        <TextBlock x:Name="TxtRejoinFixStatus"
-                                                   Text="● STOPPED"
-                                                   FontFamily="Consolas"
-                                                   FontSize="10"
-                                                   Margin="0,8,0,0"
-                                                   Foreground="{DynamicResource MutedBrush}"/>
-                                        <TextBlock x:Name="TxtRejoinFixMode"
-                                                   Text=""
-                                                   FontFamily="Consolas"
-                                                   FontSize="10"
-                                                   Margin="0,4,0,0"
-                                                   Visibility="Collapsed"
-                                                   Foreground="{DynamicResource MutedBrush}"/>
-                                        <TextBlock x:Name="TxtRejoinFirewallStatus"
-                                                   Text="FIREWALL: OFF"
-                                                   FontFamily="Consolas"
-                                                   FontSize="10"
-                                                   Margin="0,4,0,0"
-                                                   Foreground="{DynamicResource MutedBrush}"/>
-                                        <TextBlock x:Name="TxtRejoinRecoveryStatus"
-                                                   Text="○ REJOIN RECOVERY · CORE · STARTS WITH SERVICES"
-                                                   FontFamily="Consolas"
-                                                   FontSize="10"
+                                                   FontSize="13"
                                                    FontWeight="Bold"
-                                                   Margin="0,8,0,0"
+                                                   Foreground="White"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,10,0,0">
+                                        <StackPanel x:Name="ProxyDetailsPanel" Visibility="Collapsed">
+                                            <TextBlock Text="The MCC data proxy captures live session data for Rejoin Recovery, overlays, and firewall automation."
+                                                       FontFamily="Consolas" FontSize="11"
+                                                       Foreground="{DynamicResource MutedBrush}"
+                                                       TextWrapping="Wrap" LineHeight="18"/>
+                                            <TextBlock x:Name="TxtRejoinFixStatus"
+                                                       Text="● STOPPED"
+                                                       FontFamily="Consolas" FontSize="10"
+                                                       Margin="0,8,0,0"
+                                                       Foreground="{DynamicResource MutedBrush}"/>
+                                            <TextBlock x:Name="TxtRejoinFixMode"
+                                                       Text=""
+                                                       FontFamily="Consolas" FontSize="10"
+                                                       Margin="0,4,0,0" Visibility="Collapsed"
+                                                       Foreground="{DynamicResource MutedBrush}"/>
+                                            <TextBlock x:Name="TxtRejoinRecoveryStatus"
+                                                       Text="○ REJOIN RECOVERY · CORE · STARTS WITH PROXY"
+                                                       FontFamily="Consolas" FontSize="10" FontWeight="Bold"
+                                                       Margin="0,8,0,0"
+                                                       Foreground="{DynamicResource MutedBrush}"
+                                                       ToolTip="Rejoin Recovery is a core component. It is always active while the MCC data proxy is running."/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="FirewallControlsPanel" Visibility="Collapsed">
+                                            <TextBlock Text="Control MCC-only P2P firewall rules and see exactly what the automation is doing."
+                                                       FontFamily="Consolas" FontSize="11"
+                                                       Foreground="{DynamicResource MutedBrush}"
+                                                       TextWrapping="Wrap" LineHeight="18"/>
+
+                                            <Border Background="{DynamicResource SurfaceBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3"
+                                                    Padding="16"
+                                                    Margin="0,14,0,0">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="&#x25C8; " FontSize="16" Foreground="{DynamicResource AccentBrush}"/>
+                                                            <TextBlock x:Name="FirewallHeroStatusText"
+                                                                       Text="FIREWALL FIX IS DISABLED"
+                                                                       FontFamily="Consolas"
+                                                                       FontSize="14"
+                                                                       FontWeight="Bold"
+                                                                       Foreground="White"
+                                                                       VerticalAlignment="Center"/>
+                                                        </StackPanel>
+                                                        <TextBlock x:Name="FirewallHeroMetaText"
+                                                                   Text="MCC ONLY &#xB7; STEAM &#xB7; PORTS 3478 + 4379"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="9"
+                                                                   Margin="0,6,0,0"
+                                                                   Foreground="{DynamicResource MutedBrush}"/>
+                                                        <TextBlock x:Name="TxtRejoinFirewallStatus"
+                                                                   Text="FIREWALL: OFF"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="10"
+                                                                   FontWeight="Bold"
+                                                                   Margin="0,9,0,0"
+                                                                   Foreground="{DynamicResource MutedBrush}"
+                                                                   TextWrapping="Wrap"/>
+                                                    </StackPanel>
+                                                    <Button x:Name="FirewallFixToggleButton"
+                                                            Grid.Column="1"
+                                                            Content="ENABLE FIX"
+                                                            Style="{StaticResource OrangeButton}"
+                                                            Width="126"
+                                                            Margin="20,0,0,0"
+                                                            VerticalAlignment="Center"
+                                                            Click="FirewallFixToggleButton_Click"/>
+                                                </Grid>
+                                            </Border>
+
+                                            <TextBlock Text="MODE"
+                                                       FontFamily="Consolas"
+                                                       FontSize="9"
+                                                       FontWeight="Bold"
+                                                       Foreground="{DynamicResource AccentBrush}"
+                                                       Margin="0,16,0,7"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0"
+                                                        Background="{DynamicResource SurfaceBrush}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="3"
+                                                        Padding="14"
+                                                        Margin="0,0,6,0">
+                                                    <StackPanel>
+                                                        <CheckBox x:Name="ChkRejoinFixFirewall"
+                                                                  Content="CAMPAIGN"
+                                                                  ToolTip="Block MCC P2P while the proxy runs for Campaign Rejoin Recovery."
+                                                                  Style="{StaticResource MapCheckBox}"
+                                                                  FontSize="10"
+                                                                  FontWeight="Bold"
+                                                                  Checked="ChkRejoinFixFirewall_Checked"
+                                                                  Unchecked="ChkRejoinFixFirewall_Unchecked"/>
+                                                        <TextBlock Text="Block MCC P2P while the Proxy runs. Rejoin Recovery can open the required path during a restore."
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="10"
+                                                                   Foreground="{DynamicResource MutedBrush}"
+                                                                   TextWrapping="Wrap"
+                                                                   LineHeight="16"
+                                                                   Margin="24,8,0,0"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Border Grid.Column="1"
+                                                        Background="{DynamicResource SurfaceBrush}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="3"
+                                                        Padding="14"
+                                                        Margin="6,0,0,0">
+                                                    <StackPanel>
+                                                        <CheckBox x:Name="ChkRejoinFixFirewallMatchmaking"
+                                                                  Content="MATCHMAKING AUTO"
+                                                                  ToolTip="Open ports while MCC searches or connects, then re-enable the block after an active match is detected."
+                                                                  Style="{StaticResource MapCheckBox}"
+                                                                  FontSize="10"
+                                                                  FontWeight="Bold"
+                                                                  Checked="ChkRejoinFixFirewallMatchmaking_Checked"
+                                                                  Unchecked="ChkRejoinFixFirewallMatchmaking_Unchecked"/>
+                                                        <TextBlock Text="Open ports while MCC searches or connects, then re-enable the block after an active match is detected."
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="10"
+                                                                   Foreground="{DynamicResource MutedBrush}"
+                                                                   TextWrapping="Wrap"
+                                                                   LineHeight="16"
+                                                                   Margin="24,8,0,0"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </Grid>
+
+                                            <Border Background="{DynamicResource SurfaceBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3"
+                                                    Padding="14"
+                                                    Margin="0,14,0,0">
+                                                <StackPanel>
+                                                    <TextBlock Text="CURRENT STATUS"
+                                                               FontFamily="Consolas"
+                                                               FontSize="10"
+                                                               FontWeight="Bold"
+                                                               Foreground="White"/>
+                                                    <TextBlock Text="Persisted selection, live rule state, and automation state."
+                                                               FontFamily="Consolas"
+                                                               FontSize="9"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               Margin="0,4,0,9"/>
+                                                    <Grid Margin="0,5,0,5">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                        <TextBlock Text="FIREWALL RULES" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                        <TextBlock x:Name="FirewallRulesStatusText" Grid.Column="1" Text="DISABLED &#xB7; PORTS OPEN" FontFamily="Consolas" FontSize="9" FontWeight="Bold"/>
+                                                    </Grid>
+                                                    <Border Height="1" Background="{DynamicResource BorderBrush}"/>
+                                                    <Grid Margin="0,7,0,7">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                        <TextBlock Text="AUTOMATION" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                        <TextBlock x:Name="FirewallAutomationStatusText" Grid.Column="1" Text="DISABLED" FontFamily="Consolas" FontSize="9" FontWeight="Bold"/>
+                                                    </Grid>
+                                                    <Border Height="1" Background="{DynamicResource BorderBrush}"/>
+                                                    <Grid Margin="0,7,0,7">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                        <TextBlock Text="MCC DATA PROXY" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                        <TextBlock x:Name="FirewallProxyStatusText" Grid.Column="1" Text="STOPPED" FontFamily="Consolas" FontSize="9" FontWeight="Bold"/>
+                                                    </Grid>
+                                                    <Border Height="1" Background="{DynamicResource BorderBrush}"/>
+                                                    <Grid Margin="0,7,0,7">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                        <TextBlock Text="REJOIN RECOVERY" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                        <TextBlock x:Name="FirewallRejoinStatusText" Grid.Column="1" Text="STANDBY" FontFamily="Consolas" FontSize="9" FontWeight="Bold"/>
+                                                    </Grid>
+                                                    <Border Height="1" Background="{DynamicResource BorderBrush}"/>
+                                                    <Grid Margin="0,7,0,0">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                        <TextBlock Text="ADMIN ACCESS" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}"/>
+                                                        <TextBlock x:Name="FirewallAdminStatusText" Grid.Column="1" Text="PROMPT ON ENABLE" FontFamily="Consolas" FontSize="9" FontWeight="Bold"/>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Grid Margin="0,16,0,7">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Text="FIREWALL RULES"
+                                                               FontFamily="Consolas"
+                                                               FontSize="10"
+                                                               FontWeight="Bold"
+                                                               Foreground="White"/>
+                                                    <TextBlock x:Name="FirewallRuleTableSummary"
+                                                               Text="Not checked yet."
+                                                               FontFamily="Consolas"
+                                                               FontSize="9"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               Margin="0,4,0,0"/>
+                                                </StackPanel>
+                                                <Button x:Name="FirewallRulesRefreshButton"
+                                                        Grid.Column="1"
+                                                        Content="REFRESH RULES"
+                                                        Style="{StaticResource PrimaryButton}"
+                                                        Padding="10,4"
+                                                        FontSize="9"
+                                                        VerticalAlignment="Center"
+                                                        Click="FirewallRulesRefreshButton_Click"/>
+                                            </Grid>
+                                            <Border Background="{DynamicResource SurfaceBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3">
+                                                <ListView x:Name="FirewallRuleTable"
+                                                          Height="236"
+                                                          Background="Transparent"
+                                                          BorderThickness="0"
+                                                          Focusable="False"
+                                                          IsTabStop="False"
+                                                          Foreground="{DynamicResource TextBrush}"
+                                                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                          ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                                    <ListView.Resources>
+                                                        <Style TargetType="GridViewColumnHeader">
+                                                            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+                                                            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                                                            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                                            <Setter Property="Padding" Value="7,5"/>
+                                                            <Setter Property="FontFamily" Value="Consolas"/>
+                                                            <Setter Property="FontSize" Value="9"/>
+                                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                                            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                                                        </Style>
+                                                        <Style TargetType="ListViewItem">
+                                                            <Setter Property="Background" Value="Transparent"/>
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                                                            <Setter Property="Focusable" Value="False"/>
+                                                            <Setter Property="IsHitTestVisible" Value="False"/>
+                                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                                            <Setter Property="Padding" Value="4,5"/>
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                                                            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                                            <Setter Property="FontFamily" Value="Consolas"/>
+                                                            <Setter Property="FontSize" Value="9"/>
+                                                        </Style>
+                                                    </ListView.Resources>
+                                                    <ListView.View>
+                                                        <GridView>
+                                                            <GridViewColumn Header="MODE" Width="92" DisplayMemberBinding="{Binding Mode}"/>
+                                                            <GridViewColumn Header="PORT" Width="55" DisplayMemberBinding="{Binding Port}"/>
+                                                            <GridViewColumn Header="PROTOCOL" Width="72" DisplayMemberBinding="{Binding Protocol}"/>
+                                                            <GridViewColumn Header="DIRECTION" Width="82" DisplayMemberBinding="{Binding Direction}"/>
+                                                            <GridViewColumn Header="STATE" Width="92">
+                                                                <GridViewColumn.CellTemplate>
+                                                                    <DataTemplate>
+                                                                        <TextBlock Text="{Binding State}" Foreground="{Binding StateBrush}" FontWeight="Bold"/>
+                                                                    </DataTemplate>
+                                                                </GridViewColumn.CellTemplate>
+                                                            </GridViewColumn>
+                                                            <GridViewColumn Header="ACTION" Width="66" DisplayMemberBinding="{Binding Action}"/>
+                                                            <GridViewColumn Header="DEFINITION" Width="300" DisplayMemberBinding="{Binding Definition}"/>
+                                                        </GridView>
+                                                    </ListView.View>
+                                                </ListView>
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel x:Name="OverlaysControlsPanel">
+                                        <TextBlock Text="Choose which live MCC data appears in-game, in OBS, or both. Start the proxy from Dashboard when you are ready."
+                                                   FontFamily="Consolas" FontSize="11"
                                                    Foreground="{DynamicResource MutedBrush}"
-                                                   ToolTip="Rejoin Recovery is a core component. It is always active while Advanced Features are running and stops with them."/>
-                                        <CheckBox x:Name="ChkRejoinFixFirewall"
-                                                  Content="Firewall Fix (Campaign)"
-                                                  Style="{StaticResource MapCheckBox}"
-                                                  FontSize="10"
-                                                  Margin="0,6,0,0"
-                                                  Checked="ChkRejoinFixFirewall_Checked"
-                                                  Unchecked="ChkRejoinFixFirewall_Unchecked"/>
-                                        <CheckBox x:Name="ChkRejoinFixFirewallMatchmaking"
-                                                  Content="Firewall Fix (Matchmaking)"
-                                                  Style="{StaticResource MapCheckBox}"
-                                                  FontSize="10"
-                                                  Margin="0,6,0,0"
-                                                  Checked="ChkRejoinFixFirewallMatchmaking_Checked"
-                                                  Unchecked="ChkRejoinFixFirewallMatchmaking_Unchecked"/>
+                                                   TextWrapping="Wrap" LineHeight="18"/>
                                         <Grid Margin="0,12,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
@@ -1242,6 +1575,7 @@
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <CheckBox x:Name="ChkNetworkStatsOverlay"
                                                       Grid.Column="0"
@@ -1251,8 +1585,22 @@
                                                       VerticalAlignment="Center"
                                                       Checked="ChkNetworkStatsOverlay_Checked"
                                                       Unchecked="ChkNetworkStatsOverlay_Unchecked"/>
-                                            <CheckBox x:Name="NetworkStatsObsOnlyToggle"
+                                            <ComboBox x:Name="NetworkOverlayStyleCombo"
                                                       Grid.Column="1"
+                                                      Tag="network"
+                                                      Width="92"
+                                                      Height="25"
+                                                      Margin="14,0,0,0"
+                                                      Style="{StaticResource DarkCombo}"
+                                                      FontFamily="Consolas"
+                                                      FontSize="9"
+                                                      ToolTip="Choose the Network Stats layout."
+                                                      SelectionChanged="OverlayStyleCombo_SelectionChanged">
+                                                <ComboBoxItem Content="CLASSIC"/>
+                                                <ComboBoxItem Content="MODERN"/>
+                                            </ComboBox>
+                                            <CheckBox x:Name="NetworkStatsObsOnlyToggle"
+                                                      Grid.Column="2"
                                                       Content="OBS ONLY"
                                                       Style="{StaticResource MapCheckBox}"
                                                       FontSize="9"
@@ -1263,7 +1611,7 @@
                                                       Checked="NetworkStatsObsOnlyToggle_Checked"
                                                       Unchecked="NetworkStatsObsOnlyToggle_Unchecked"/>
                                             <Button x:Name="BtnNetworkStatsOverlayMove"
-                                                    Grid.Column="2"
+                                                    Grid.Column="3"
                                                     Content="REPOSITION"
                                                     Style="{StaticResource PrimaryButton}"
                                                     Padding="8,3"
@@ -1276,6 +1624,7 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <CheckBox x:Name="ChkMatchmakingWaitOverlay"
                                                       Grid.Column="0"
@@ -1285,8 +1634,12 @@
                                                       FontSize="10"
                                                       Checked="ChkMatchmakingWaitOverlay_Checked"
                                                       Unchecked="ChkMatchmakingWaitOverlay_Unchecked"/>
+                                            <ComboBox x:Name="MatchmakingWaitOverlayStyleCombo" Grid.Column="1" Tag="wait" Width="92" Height="25" Margin="14,0,0,0" Style="{StaticResource DarkCombo}" FontFamily="Consolas" FontSize="9" ToolTip="Choose the Matchmaking Wait layout." SelectionChanged="OverlayStyleCombo_SelectionChanged">
+                                                <ComboBoxItem Content="CLASSIC"/>
+                                                <ComboBoxItem Content="MODERN"/>
+                                            </ComboBox>
                                             <CheckBox x:Name="MatchmakingWaitObsOnlyToggle"
-                                                      Grid.Column="1"
+                                                      Grid.Column="2"
                                                       Content="OBS ONLY"
                                                       Style="{StaticResource MapCheckBox}"
                                                       FontSize="9"
@@ -1300,6 +1653,7 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <CheckBox x:Name="StatsObsSessionStatsToggle"
                                                       Grid.Column="0"
@@ -1309,8 +1663,22 @@
                                                       ToolTip="Include session W/L, K/D, kills, deaths, and medals in the overlay."
                                                       Checked="StatsObsSessionStatsToggle_Checked"
                                                       Unchecked="StatsObsSessionStatsToggle_Unchecked"/>
-                                            <CheckBox x:Name="SessionStatsObsOnlyToggle"
+                                            <ComboBox x:Name="SessionOverlayStyleCombo"
                                                       Grid.Column="1"
+                                                      Tag="session"
+                                                      Width="92"
+                                                      Height="25"
+                                                      Margin="14,0,0,0"
+                                                      Style="{StaticResource DarkCombo}"
+                                                      FontFamily="Consolas"
+                                                      FontSize="9"
+                                                      ToolTip="Choose the Session Stats layout."
+                                                      SelectionChanged="OverlayStyleCombo_SelectionChanged">
+                                                <ComboBoxItem Content="CLASSIC"/>
+                                                <ComboBoxItem Content="MODERN"/>
+                                            </ComboBox>
+                                            <CheckBox x:Name="SessionStatsObsOnlyToggle"
+                                                      Grid.Column="2"
                                                       Content="OBS ONLY"
                                                       Style="{StaticResource MapCheckBox}"
                                                       FontSize="9"
@@ -1319,6 +1687,30 @@
                                                       ToolTip="Hide Session Stats and medals from the player while keeping its OBS browser source visible."
                                                       Checked="SessionStatsObsOnlyToggle_Checked"
                                                       Unchecked="SessionStatsObsOnlyToggle_Unchecked"/>
+                                        </Grid>
+                                        <Grid Margin="0,6,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox x:Name="CombinedNetworkSessionOverlayToggle"
+                                                      Grid.Column="0"
+                                                      Content="COMBINED NETWORK / SESSION"
+                                                      Style="{StaticResource MapCheckBox}"
+                                                      FontSize="10"
+                                                      ToolTip="Show Network and compact Session stats in one overlay. This can be used instead of the individual Network Stats and Session Stats overlays."
+                                                      Checked="CombinedNetworkSessionOverlayToggle_Checked"
+                                                      Unchecked="CombinedNetworkSessionOverlayToggle_Unchecked"/>
+                                            <CheckBox x:Name="CombinedNetworkSessionObsOnlyToggle"
+                                                      Grid.Column="1"
+                                                      Content="OBS ONLY"
+                                                      Style="{StaticResource MapCheckBox}"
+                                                      FontSize="9"
+                                                      Margin="14,0,0,0"
+                                                      IsEnabled="{Binding IsChecked, ElementName=CombinedNetworkSessionOverlayToggle}"
+                                                      ToolTip="Hide the combined overlay from the player while keeping its OBS browser source visible."
+                                                      Checked="CombinedNetworkSessionObsOnlyToggle_Checked"
+                                                      Unchecked="CombinedNetworkSessionObsOnlyToggle_Unchecked"/>
                                         </Grid>
                                         <TextBlock Text="OUTPUT"
                                                    FontFamily="Consolas"
@@ -1333,24 +1725,189 @@
                                                   ToolTip="Starts a local browser-source overlay for OBS and copies the current overlay URL."
                                                   Checked="StatsObsOverlayToggle_Checked"
                                                   Unchecked="StatsObsOverlayToggle_Unchecked"/>
-                                        <TextBlock x:Name="StatsObsOverlayUrlLabel"
-                                                   Text=""
-                                                   FontFamily="Consolas"
-                                                   FontSize="10"
-                                                   Foreground="{DynamicResource MutedBrush}"
-                                                   TextWrapping="Wrap"
-                                                   Visibility="Collapsed"
-                                                   Margin="0,5,0,0"/>
+                                        <StackPanel x:Name="StatsObsOverlayUrlsPanel"
+                                                    Visibility="Collapsed"
+                                                    Margin="0,7,0,0">
+                                            <TextBox x:Name="StatsObsOverlayUrlLabel"
+                                                     Text=""
+                                                     FontFamily="Consolas"
+                                                     FontSize="10"
+                                                     Foreground="{DynamicResource TextBrush}"
+                                                     Background="{DynamicResource SurfaceBrush}"
+                                                     BorderBrush="{DynamicResource BorderBrush}"
+                                                     BorderThickness="1"
+                                                     Padding="9,7"
+                                                     MinHeight="76"
+                                                     IsReadOnly="True"
+                                                     IsReadOnlyCaretVisible="True"
+                                                     AcceptsReturn="True"
+                                                     TextWrapping="NoWrap"
+                                                     HorizontalScrollBarVisibility="Auto"
+                                                     VerticalScrollBarVisibility="Disabled"
+                                                     SelectionBrush="{DynamicResource AccentBrush}"/>
+                                            <Button x:Name="StatsObsOverlayCopyButton"
+                                                    Content="COPY ALL URLS"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Padding="10,4"
+                                                    FontSize="9"
+                                                    HorizontalAlignment="Right"
+                                                    Margin="0,7,0,0"
+                                                    Click="StatsObsOverlayCopyButton_Click"/>
+                                        </StackPanel>
+                                        </StackPanel>
                                     </StackPanel>
-                                </Expander>
+                                </StackPanel>
                                 <Button Grid.Column="1"
                                         x:Name="BtnRejoinFix"
-                                        Content="START SERVICES"
+                                        Content="START PROXY"
                                         Style="{StaticResource OrangeButton}"
                                         Width="140"
                                         Click="BtnRejoinFix_Click"
-                                        VerticalAlignment="Top"/>
+                                        VerticalAlignment="Top"
+                                        Visibility="Collapsed"/>
                             </Grid>
+                        </Border>
+
+                        <!-- Overlay preview gallery -->
+                        <Border Grid.Row="5"
+                                x:Name="OverlayPreviewsCard"
+                                Visibility="Collapsed"
+                                Background="{DynamicResource PanelBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Padding="20"
+                                Margin="0,0,0,14">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#x25A3; " FontSize="16" Foreground="{DynamicResource AccentBrush}"/>
+                                    <TextBlock Text="OVERLAY PREVIEWS"
+                                               FontFamily="Consolas"
+                                               FontSize="13"
+                                               FontWeight="Bold"
+                                               Foreground="White"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Text="Representative layouts using sample match data. Your selected Classic or Modern style is applied when the live overlay opens."
+                                           FontFamily="Consolas"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource MutedBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,6,0,12"/>
+
+                                <UniformGrid Columns="2">
+                                    <Border x:Name="NetworkPreviewCard" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3" Padding="11" Margin="0,0,6,6">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,7">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="NETWORK STATS" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}"/>
+                                                <TextBlock x:Name="NetworkPreviewStateText" Grid.Column="1" Text="OFF · CLASSIC" FontFamily="Consolas" FontSize="8" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}"/>
+                                            </Grid>
+                                            <Border x:Name="NetworkPreviewClassicPanel" Background="#D9080D12" BorderBrush="#3300C8FF" BorderThickness="1" CornerRadius="2" Padding="10">
+                                                <Grid Height="76">
+                                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                                    <TextBlock Text="NETWORK" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="#00C8FF"/>
+                                                    <TextBlock Grid.Row="1" Text="PING: 42 MS     LOSS: 0%" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="#D8E6EC" Margin="0,7,0,0"/>
+                                                    <TextBlock Grid.Row="2" Text="UPLOAD:   18 KB/S" FontFamily="Consolas" FontSize="9" Foreground="#39FF14" Margin="0,6,0,0"/>
+                                                    <TextBlock Grid.Row="3" Text="DOWNLOAD: 64 KB/S" FontFamily="Consolas" FontSize="9" Foreground="#00C8FF" Margin="0,3,0,0"/>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="NetworkPreviewModernPanel" Visibility="Collapsed" Background="#D9080D12" BorderBrush="#3300C8FF" BorderThickness="1" CornerRadius="2" Padding="10">
+                                                <Grid Height="76">
+                                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                        <TextBlock Text="PING  42 ms" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="#39FF14"/>
+                                                        <TextBlock Grid.Column="1" Text="LOSS  0%" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="#D8E6EC" VerticalAlignment="Center"/>
+                                                    </Grid>
+                                                    <Grid Grid.Row="1" Margin="0,6,0,0">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                        <TextBlock Text="UP  18 KB/s" FontFamily="Consolas" FontSize="9" Foreground="#39FF14"/>
+                                                        <TextBlock Grid.Column="1" Text="DOWN  64 KB/s" FontFamily="Consolas" FontSize="9" Foreground="#00C8FF" HorizontalAlignment="Right"/>
+                                                    </Grid>
+                                                    <Polyline Grid.Row="2" Points="0,23 34,18 68,21 102,9 136,14 170,5 204,11 238,4 272,8 306,2" Stretch="Fill" Stroke="#00C8FF" StrokeThickness="2" Margin="0,7,0,0"/>
+                                                </Grid>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border x:Name="MatchmakingWaitPreviewCard" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3" Padding="11" Margin="6,0,0,6">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,7">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="MATCHMAKING WAIT" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}"/>
+                                                <TextBlock x:Name="MatchmakingWaitPreviewStateText" Grid.Column="1" Text="OFF" FontFamily="Consolas" FontSize="8" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}"/>
+                                            </Grid>
+                                            <Border x:Name="MatchmakingWaitPreviewClassicPanel" Background="#D9080D12" BorderBrush="#3300C8FF" BorderThickness="1" CornerRadius="2" Padding="10">
+                                                <StackPanel Height="76" VerticalAlignment="Center">
+                                                    <TextBlock Text="EST. WAIT ~48 SEC" Foreground="#FFD166" FontFamily="Consolas" FontWeight="Bold" FontSize="21" HorizontalAlignment="Center"/>
+                                                    <TextBlock Text="elapsed 0:21" Foreground="#71869A" FontFamily="Consolas" FontSize="12" TextAlignment="Center" Margin="0,8,0,0"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border x:Name="MatchmakingWaitPreviewModernPanel" Visibility="Collapsed"  Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="2" Padding="10">
+                                                <Grid Height="96">
+                                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                        <TextBlock Text="SEARCHING" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="#00C8FF"/>
+                                                        <TextBlock Grid.Column="1" Text="SOCIAL 4v4" FontFamily="Consolas" FontSize="9" Foreground="#71869A"/>
+                                                    </Grid>
+                                                    <Grid Grid.Row="1" Margin="0,8,0,0">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                        <StackPanel><TextBlock Text="ESTIMATED" FontFamily="Consolas" FontSize="8" Foreground="#71869A"/><TextBlock Text="0:48" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="#D8E6EC"/></StackPanel>
+                                                        <StackPanel Grid.Column="1" HorizontalAlignment="Right"><TextBlock Text="ELAPSED" FontFamily="Consolas" FontSize="8" Foreground="#71869A"/><TextBlock Text="0:21" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="#39FF14" HorizontalAlignment="Right"/></StackPanel>
+                                                    </Grid>
+                                                    <TextBlock Grid.Row="3" Text="25 players searching across all gametypes" FontFamily="Consolas" FontSize="10" Foreground="#8EA4B8" TextWrapping="Wrap" Margin="0,7,0,0"/><Grid Grid.Row="2" Height="3" Margin="0,7,0,0"><Border Background="#24313A"/><Border Width="128" HorizontalAlignment="Left" Background="#00C8FF"/></Grid>
+                                                </Grid>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border x:Name="SessionPreviewCard" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3" Padding="11" Margin="0,6,6,0">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,7">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="SESSION STATS" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}"/>
+                                                <TextBlock x:Name="SessionPreviewStateText" Grid.Column="1" Text="OFF · CLASSIC" FontFamily="Consolas" FontSize="8" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}"/>
+                                            </Grid>
+                                            <Border x:Name="SessionPreviewClassicPanel" Background="#D9080D12" BorderBrush="#3300C8FF" BorderThickness="1" CornerRadius="2" Padding="10">
+                                                <Grid Height="76">
+                                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                                    <TextBlock Text="SESSION  4 WINS / 2 LOSSES" FontFamily="Consolas" FontSize="10" FontWeight="Bold" Foreground="#00C8FF"/>
+                                                    <TextBlock Grid.Row="1" Text="K/D: 1.34     WIN RATE: 67%" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="#D8E6EC" Margin="0,9,0,0"/>
+                                                    <TextBlock Grid.Row="2" Text="KILLS: 86     DEATHS: 64" FontFamily="Consolas" FontSize="9" Foreground="#71869A" Margin="0,8,0,0"/>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="SessionPreviewModernPanel" Visibility="Collapsed" Background="#D9080D12" BorderBrush="#3300C8FF" BorderThickness="1" CornerRadius="2" Padding="10">
+                                                <Grid Height="76">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0"><TextBlock Text="RECORD" FontFamily="Consolas" FontSize="8" Foreground="#71869A"/><TextBlock Text="4W - 2L" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="#39FF14" Margin="0,7,0,0"/></StackPanel>
+                                                    <StackPanel Grid.Column="1"><TextBlock Text="K/D" FontFamily="Consolas" FontSize="8" Foreground="#71869A"/><TextBlock Text="1.34" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="#00C8FF" Margin="0,7,0,0"/></StackPanel>
+                                                    <StackPanel Grid.Column="2"><TextBlock Text="KILLS / DEATHS" FontFamily="Consolas" FontSize="8" Foreground="#71869A"/><TextBlock Text="86 / 64" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="#D8E6EC" Margin="0,7,0,0"/></StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border x:Name="CombinedPreviewCard" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3" Padding="11" Margin="6,6,0,0">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,7">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="COMBINED NETWORK / SESSION" FontFamily="Consolas" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}"/>
+                                                <TextBlock x:Name="CombinedPreviewStateText" Grid.Column="1" Text="OFF" FontFamily="Consolas" FontSize="8" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}"/>
+                                            </Grid>
+                                            <Border Background="#D9080D12" BorderBrush="#3300C8FF" BorderThickness="1" CornerRadius="2" Padding="10">
+                                                <Grid Height="76">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="1"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0" Margin="0,0,10,0"><TextBlock Text="NETWORK" FontFamily="Consolas" FontSize="8" FontWeight="Bold" Foreground="#00C8FF"/><TextBlock Text="PING  42 ms" FontFamily="Consolas" FontSize="14" FontWeight="Bold" Foreground="#39FF14" Margin="0,7,0,0"/><TextBlock Text="UP 18  ·  DOWN 64 KB/s" FontFamily="Consolas" FontSize="8" Foreground="#71869A" Margin="0,5,0,0"/></StackPanel>
+                                                    <Border Grid.Column="1" Background="#3300C8FF"/>
+                                                    <StackPanel Grid.Column="2" Margin="10,0,0,0"><TextBlock Text="SESSION" FontFamily="Consolas" FontSize="8" FontWeight="Bold" Foreground="#71869A"/><TextBlock Text="4W - 2L" FontFamily="Consolas" FontSize="14" FontWeight="Bold" Foreground="#39FF14" Margin="0,7,0,0"/><TextBlock Text="WIN 67%  ·  K/D 1.34" FontFamily="Consolas" FontSize="8" Foreground="#00C8FF" Margin="0,5,0,0"/></StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+                                </UniformGrid>
+                            </StackPanel>
                         </Border>
 
                         <!-- Steam Firewall Card -->
@@ -1371,21 +1928,19 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <Expander IsExpanded="True" HorizontalContentAlignment="Stretch" Margin="0,0,20,0">
-                                    <Expander.Header>
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <TextBlock Text="&#x1F6E1; "
-                                                       FontSize="16"
-                                                       Foreground="#00C8FF"
-                                                       VerticalAlignment="Center"/>
-                                            <TextBlock Text="MCC P2P FIREWALL FIX"
-                                                       FontFamily="Consolas"
-                                                       FontSize="13"
-                                                       FontWeight="Bold"
-                                                       Foreground="White"
-                                                       VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                    </Expander.Header>
+                                <StackPanel Grid.Column="0" Margin="0,0,20,0">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="&#x1F6E1; "
+                                                   FontSize="16"
+                                                   Foreground="#00C8FF"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Text="MCC P2P FIREWALL FIX"
+                                                   FontFamily="Consolas"
+                                                   FontSize="13"
+                                                   FontWeight="Bold"
+                                                   Foreground="White"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
                                     <StackPanel Margin="0,10,0,0">
                                         <TextBlock Text="Blocks or unblocks TCP/UDP ports 3478 and 4379 for Halo MCC only. Other apps can keep using those ports."
                                                    FontFamily="Consolas"
@@ -1407,7 +1962,7 @@
                                                   Checked="ChkSteamFirewallAuto_Checked"
                                                   Unchecked="ChkSteamFirewallAuto_Unchecked"/>
                                     </StackPanel>
-                                </Expander>
+                                </StackPanel>
                                 <Button Grid.Column="1"
                                         x:Name="BtnSteamFirewallFix"
                                         Content="ENABLE"
@@ -1735,7 +2290,7 @@
                 </TabItem>
 
                 <!-- ═══ TAB 2: LOG ═══ -->
-                <!-- ═══ TAB 3: REPORT CHEATER ═══ -->
+                <!-- ═══ TAB 3: REPORT PLAYER ═══ -->
                 <TabItem x:Name="ReportSection" Header="🚨  REPORT" Style="{StaticResource DarkTabItem}">
                     <Grid Margin="20,12,20,12">
                         <Grid.RowDefinitions>
@@ -1755,11 +2310,11 @@
                             <StackPanel Grid.Column="0" VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
                                     <TextBlock Text="🚨 " FontSize="16" VerticalAlignment="Center"/>
-                                    <TextBlock Text="REPORT A CHEATER"
+                                    <TextBlock Text="REPORT A PLAYER"
                                                FontFamily="Consolas" FontSize="13" FontWeight="Bold"
                                                Foreground="White" VerticalAlignment="Center"/>
                                 </StackPanel>
-                                <TextBlock Text="Loads the last game's carnage report, lets you select the cheating player, and bundles everything into a ZIP with your theater evidence."
+                                <TextBlock Text="Loads the last game's carnage report, lets you select the player to report, and bundles everything into a ZIP with your theater evidence."
                                            FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}"
                                            TextWrapping="Wrap" LineHeight="17"/>
                             </StackPanel>
@@ -1848,7 +2403,7 @@
                                 <ScrollViewer Grid.Row="1"
                                               VerticalScrollBarVisibility="Auto"
                                               Style="{StaticResource FlatScrollViewer}">
-                                    <ItemsControl x:Name="ScoreboardList">
+                                    <ItemsControl x:Name="ScoreboardList" Loaded="ReportScoreboard_Loaded">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
                                                 <Border BorderBrush="{DynamicResource BorderBrush}"
@@ -1982,19 +2537,25 @@
 
                                 <!-- Cheat type -->
                                 <StackPanel Grid.Column="0" Grid.Row="1" Margin="0,0,0,10">
-                                    <TextBlock Text="CHEAT TYPE" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="CboCheatType"
+                                    <TextBlock Text="BEHAVIOR / REASON" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="CboReportReason"
                                               Style="{StaticResource DarkCombo}"
                                               FontFamily="Consolas"
                                               FontSize="12">
-                                        <ComboBoxItem Content="Aimbot / Auto-aim"/>
-                                        <ComboBoxItem Content="Wall hacks / ESP"/>
-                                        <ComboBoxItem Content="Speed / movement hacks"/>
-                                        <ComboBoxItem Content="God mode / invincibility"/>
-                                        <ComboBoxItem Content="Map exploits / out of bounds"/>
-                                        <ComboBoxItem Content="Score / stat manipulation"/>
-                                        <ComboBoxItem Content="Host manipulation / lag switching"/>
-                                        <ComboBoxItem Content="Other (see description)"/>
+                                        <ComboBoxItem Content="Abusive communication: Discriminatory language" Tag="Discriminatory language"/>
+                                        <ComboBoxItem Content="Abusive communication: Harassment/bullying" Tag="Harassment/bullying"/>
+                                        <ComboBoxItem Content="Abusive communication: Vulgar language" Tag="Vulgar language"/>
+                                        <ComboBoxItem Content="Unsporting conduct: Team killing or self-destruction" Tag="Team killing or self-destruction"/>
+                                        <ComboBoxItem Content="Unsporting conduct: Idling/quitting" Tag="Idling/quitting"/>
+                                        <ComboBoxItem Content="Inappropriate user generated content" Tag="Inappropriate user generated content"/>
+                                        <ComboBoxItem Content="Cheating: Aimbot / Auto-aim" Tag="Cheating"/>
+                                        <ComboBoxItem Content="Cheating: Wall hacks / ESP" Tag="Cheating"/>
+                                        <ComboBoxItem Content="Cheating: Speed / movement hacks" Tag="Cheating"/>
+                                        <ComboBoxItem Content="Cheating: God mode / invincibility" Tag="Cheating"/>
+                                        <ComboBoxItem Content="Cheating: Map exploits / out of bounds" Tag="Cheating"/>
+                                        <ComboBoxItem Content="Cheating: Score / stat manipulation" Tag="Cheating"/>
+                                        <ComboBoxItem Content="Cheating: Host manipulation / lag switching" Tag="Cheating"/>
+                                        <ComboBoxItem Content="Cheating: Other (see description)" Tag="Cheating"/>
                                     </ComboBox>
                                 </StackPanel>
 
@@ -2030,7 +2591,7 @@
                                              TextWrapping="Wrap"
                                              VerticalScrollBarVisibility="Auto"
                                              Text=""
-                                             ToolTip="Describe what you saw. Timestamps, weapon used, anything unusual."/>
+                                             ToolTip="Describe what happened, including timestamps and whether it was voice or text chat. Attach screenshots or recordings in Halo Support for communication reports."/>
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -2046,7 +2607,7 @@
                             <TextBlock x:Name="TxtReportStatus"
                                        FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource MutedBrush}"
                                        VerticalAlignment="Center"
-                                       Text="Load a game, select the cheating player, fill in the form, then export."/>
+                                       Text="Load a game, select the player to report, fill in the form, then export."/>
                             <Button Grid.Column="1"
                                     x:Name="BtnBuildReport"
                                     Content="📦  BUILD REPORT ZIP"
@@ -2156,10 +2717,9 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/> <!-- 0: Stats bar -->
                             <RowDefinition Height="Auto"/> <!-- 1: Buttons -->
-                            <RowDefinition Height="Auto"/> <!-- 2: Population -->
-                            <RowDefinition Height="Auto"/> <!-- 3: Team summary -->
-                            <RowDefinition Height="*"/>    <!-- 4: Lobby list -->
-                            <RowDefinition Height="Auto"/> <!-- 5: Status bar -->
+                            <RowDefinition Height="Auto"/> <!-- 2: Team summary -->
+                            <RowDefinition Height="*"/>    <!-- 3: Lobby list -->
+                            <RowDefinition Height="Auto"/> <!-- 4: Status bar -->
                         </Grid.RowDefinitions>
 
                         <!-- ── Row 0: Stats summary bar ───────────────────────────────── -->
@@ -2186,12 +2746,6 @@
                                     <TextBlock x:Name="StatsLifetimeTotalsLabel" Text=""
                                                FontFamily="Consolas" FontSize="12"
                                                Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
-                                    <Button x:Name="BtnStatsMyHistory"
-                                            Content="📋 MATCH HISTORY"
-                                            Style="{StaticResource PrimaryButton}"
-                                            Padding="8,3" FontSize="11"
-                                            Margin="16,0,0,0" VerticalAlignment="Center"
-                                            Click="BtnStatsMyHistory_Click"/>
                                 </StackPanel>
 
                                 <!-- Session stats -->
@@ -2259,12 +2813,6 @@
                                         Style="{StaticResource PrimaryButton}"
                                         Margin="0,0,6,0"
                                         Click="StatsScanBtn_Click"/>
-                                <ToggleButton x:Name="StatsAutoToggle"
-                                              Content="AUTO: ON"
-                                              Style="{StaticResource StatsToggleBtn}"
-                                              Margin="0,0,6,0"
-                                              Checked="StatsAutoToggle_Checked"
-                                              Unchecked="StatsAutoToggle_Unchecked"/>
                             </StackPanel>
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                 <ToggleButton x:Name="StatsLobbyViewBtn"
@@ -2283,78 +2831,9 @@
                             </DockPanel>
                         </Border>
 
-                        <!-- ── Row 3: Matchmaking population ──────────────────────────── -->
-                        <Expander Grid.Row="2"
-                                  IsExpanded="True"
-                                  Background="{DynamicResource SurfaceBrush}"
-                                  BorderBrush="{DynamicResource BorderBrush}"
-                                  BorderThickness="0,0,0,1">
-                            <Expander.Header>
-                                <DockPanel Margin="14,7" LastChildFill="True">
-                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <Button x:Name="StatsPopulationGraphBtn"
-                                            Content="⌁ GRAPH"
-                                            Style="{StaticResource PrimaryButton}"
-                                            Padding="8,3"
-                                            Margin="0,0,6,0"
-                                            FontSize="10"
-                                            Click="StatsPopulationGraph_Click"/>
-                                    <Button
-                                            Content="↻ REFRESH"
-                                            Style="{StaticResource PrimaryButton}"
-                                            Padding="8,3"
-                                            FontSize="10"
-                                            Click="StatsPopulationRefresh_Click"/>
-                                    </StackPanel>
-                                    <StackPanel>
-                                        <TextBlock Text="MATCHMAKING POPULATION"
-                                                   FontFamily="Consolas" FontSize="10" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource AccentBrush}"/>
-                                        <TextBlock x:Name="StatsPopulationStatusLabel"
-                                                   Text="Launch MCC once to authorize live hopper data."
-                                                   FontFamily="Consolas" FontSize="9"
-                                                   Foreground="{DynamicResource MutedBrush}"
-                                                   Margin="0,3,0,0"/>
-                                    </StackPanel>
-                                </DockPanel>
-                            </Expander.Header>
-                            <StackPanel Margin="14,0,14,9">
-                                <ListView x:Name="StatsPopulationList"
-                                          ItemsSource="{Binding}"
-                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                    <ListView.View>
-                                        <GridView>
-                                            <GridViewColumn Width="330" DisplayMemberBinding="{Binding DisplayName}">
-                                                <GridViewColumn.Header><GridViewColumnHeader Content="QUEUE" Tag="DisplayName" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
-                                            </GridViewColumn>
-                                            <GridViewColumn Width="80" DisplayMemberBinding="{Binding Mode}">
-                                                <GridViewColumn.Header><GridViewColumnHeader Content="MODE" Tag="Mode" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
-                                            </GridViewColumn>
-                                            <GridViewColumn Width="80" DisplayMemberBinding="{Binding Size}">
-                                                <GridViewColumn.Header><GridViewColumnHeader Content="SIZE" Tag="Size" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
-                                            </GridViewColumn>
-                                            <GridViewColumn Width="100" DisplayMemberBinding="{Binding PopulationDisplay}">
-                                                <GridViewColumn.Header><GridViewColumnHeader Content="SEARCHING" Tag="Population" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
-                                            </GridViewColumn>
-                                            <GridViewColumn Width="100" DisplayMemberBinding="{Binding WaitDisplay}">
-                                                <GridViewColumn.Header><GridViewColumnHeader Content="AVG WAIT" Tag="WaitSeconds" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
-                                            </GridViewColumn>
-                                            <GridViewColumn Width="100" DisplayMemberBinding="{Binding Activity}">
-                                                <GridViewColumn.Header><GridViewColumnHeader Content="ACTIVITY" Tag="Activity" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
-                                            </GridViewColumn>
-                                        </GridView>
-                                    </ListView.View>
-                                </ListView>
-                                <TextBlock Text="Population and wait are shared across each hopper. Specific game and mode selections may take longer."
-                                           FontFamily="Consolas" FontSize="9"
-                                           Foreground="{DynamicResource MutedBrush}"
-                                           Margin="0,6,0,0"/>
-                            </StackPanel>
-                        </Expander>
-
                         <!-- ── Row 4: Team summary bar (hidden until team game detected) ── -->
                         <Border x:Name="StatsTeamSummaryBar"
-                                  Grid.Row="3"
+                                  Grid.Row="2"
                                 Background="{DynamicResource BgBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,0,0,1"
@@ -2407,7 +2886,7 @@
                         </Border>
 
                         <!-- ── Row 5: Current lobby + last game ────────────────────────── -->
-                        <Grid x:Name="StatsLobbyContent" Grid.Row="4">
+                        <Grid x:Name="StatsLobbyContent" Grid.Row="3">
                             <Grid.RowDefinitions>
                                 <RowDefinition x:Name="StatsCurrentLobbyHeaderRow" Height="Auto"/>
                                 <RowDefinition x:Name="StatsCurrentLobbyListRow" Height="260" MinHeight="170"/>
@@ -2913,15 +3392,182 @@
                         </Border>
 
                         <!-- ── Row 6: Status bar ──────────────────────────────────────── -->
-                        <Border Grid.Row="5" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                        <Border Grid.Row="4" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,1,0,0" Padding="14,6">
                             <TextBlock x:Name="StatsStatusLabel"
                                        FontFamily="Consolas" FontSize="11"
                                        Foreground="{DynamicResource MutedBrush}"
                                        TextTrimming="CharacterEllipsis"
-                                       Text="Ready — configure your gamertag on Home, then sync or scan."/>
+                                       Text="Ready — configure your gamertag on Dashboard, then sync or scan."/>
                         </Border>
                     </Grid>
+                </TabItem>
+
+                <!-- ═══ POPULATION ═══ -->
+                <TabItem x:Name="PopulationSection" Header="⌁  POPULATION" Style="{StaticResource DarkTabItem}">
+                    <TabItem.Resources>
+                        <Style x:Key="PopulationActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+                            <Setter Property="Height" Value="32"/>
+                            <Setter Property="MinWidth" Value="100"/>
+                            <Setter Property="Padding" Value="12,4"/>
+                            <Setter Property="Margin" Value="0,0,6,6"/>
+                            <Setter Property="VerticalAlignment" Value="Center"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                            <Setter Property="VerticalContentAlignment" Value="Center"/>
+                        </Style>
+                        <Style TargetType="ListView">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                        </Style>
+                        <Style TargetType="GridViewColumnHeader">
+                            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                            <Setter Property="Padding" Value="8,5"/>
+                            <Setter Property="FontFamily" Value="Consolas"/>
+                            <Setter Property="FontSize" Value="11"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                        </Style>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListViewItem">
+                                        <Border x:Name="PopulationRowBorder"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="0,0,0,1">
+                                            <GridViewRowPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="PopulationRowBorder" Property="Background" Value="{DynamicResource StatsHoverRowBrush}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="PopulationRowBorder" Property="Background" Value="#102A36"/>
+                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </TabItem.Resources>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="280"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1"
+                                Padding="14,10">
+                            <StackPanel>
+                                <TextBlock Text="MATCHMAKING POPULATION" FontFamily="Consolas" FontSize="12"
+                                           FontWeight="Bold" Foreground="{DynamicResource AccentBrush}"/>
+                                <TextBlock Text="1. Start the MCC Data Proxy below. Allow the Administrator prompt if shown."
+                                           TextWrapping="Wrap" FontSize="11" Margin="0,8,0,0" Foreground="{DynamicResource TextBrush}"/>
+                                <TextBlock Text="2. Launch MCC, sign in, and open Multiplayer. If MCC was already open, restart it after starting the proxy."
+                                           TextWrapping="Wrap" FontSize="11" Margin="0,3,0,0" Foreground="{DynamicResource TextBrush}"/>
+                                <TextBlock Text="3. Start searching for a multiplayer game, then cancel the search and return to the lobby. This captures population authorization."
+                                           TextWrapping="Wrap" FontSize="11" Margin="0,3,0,0" Foreground="{DynamicResource TextBrush}"/>
+                                <TextBlock Text="4. Wait up to one minute or click Refresh. Select a queue below to show its graph; more points appear each minute."
+                                           TextWrapping="Wrap" FontSize="11" Margin="0,3,0,0" Foreground="{DynamicResource TextBrush}"/>
+                                <WrapPanel Margin="0,10,0,0">
+                                    <Button x:Name="PopulationStartProxyButton" Content="START PROXY"
+                                            Style="{StaticResource PopulationActionButton}" Click="PopulationStartProxy_Click"/>
+                                    <Button Content="REFRESH" Style="{StaticResource PopulationActionButton}" Click="StatsPopulationRefresh_Click"/>
+                                    <Button Content="OPEN GRAPH" Style="{StaticResource PopulationActionButton}" Click="StatsPopulationGraph_Click"/>
+                                </WrapPanel>
+                                <TextBlock x:Name="StatsPopulationStatusLabel" Text="Start the proxy, launch MCC, then start matchmaking and return to the lobby to authorize population data."
+                                           TextWrapping="Wrap" FontFamily="Consolas" FontSize="10"
+                                           Foreground="{DynamicResource MutedBrush}" Margin="0,3,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Margin="14,12,14,10" Padding="12"
+                                Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1" CornerRadius="3">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <DockPanel Margin="0,0,0,6">
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                        <ToggleButton x:Name="PopulationRange15Button" Content="15M" Tag="15" Style="{StaticResource StatsToggleBtn}" Padding="8,4" Margin="0,0,4,0" Click="PopulationRangeButton_Click"/>
+                                        <ToggleButton x:Name="PopulationRange30Button" Content="30M" Tag="30" Style="{StaticResource StatsToggleBtn}" Padding="8,4" Margin="0,0,4,0" Click="PopulationRangeButton_Click"/>
+                                        <ToggleButton x:Name="PopulationRange60Button" Content="1H" Tag="60" IsChecked="True" Style="{StaticResource StatsToggleBtn}" Padding="8,4" Margin="0,0,4,0" Click="PopulationRangeButton_Click"/>
+                                        <ToggleButton x:Name="PopulationRange180Button" Content="3H" Tag="180" Style="{StaticResource StatsToggleBtn}" Padding="8,4" Click="PopulationRangeButton_Click"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock x:Name="StatsPopulationChartTitle" Text="POPULATION HISTORY · SOCIAL 4S" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource TextBrush}"/>
+                                        <TextBlock Text="Select any queue in the table below to replace this line." FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,3,0,0"/>
+                                    </StackPanel>
+                                </DockPanel>
+                                <local:PopulationHistoryChart x:Name="StatsPopulationChart" Grid.Row="1"/>
+                                <TextBlock x:Name="StatsPopulationChartSummary" Grid.Row="2" Text="LAST 60 MINUTES · WAITING FOR SAMPLES" FontFamily="Consolas" FontSize="9" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0"/>
+                            </Grid>
+                        </Border>
+
+                        <ListView x:Name="StatsPopulationList" Grid.Row="2"
+                                  SelectionChanged="StatsPopulationSelectionChanged"
+                                  ItemsSource="{Binding}"
+                                  SelectionMode="Single"
+
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Width="330" DisplayMemberBinding="{Binding DisplayName}">
+                                        <GridViewColumn.Header><GridViewColumnHeader Content="QUEUE" Tag="DisplayName" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                    </GridViewColumn>
+                                    <GridViewColumn Width="80" DisplayMemberBinding="{Binding Mode}">
+                                        <GridViewColumn.Header><GridViewColumnHeader Content="MODE" Tag="Mode" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                    </GridViewColumn>
+                                    <GridViewColumn Width="80" DisplayMemberBinding="{Binding Size}">
+                                        <GridViewColumn.Header><GridViewColumnHeader Content="SIZE" Tag="Size" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                    </GridViewColumn>
+                                    <GridViewColumn Width="100" DisplayMemberBinding="{Binding PopulationDisplay}">
+                                        <GridViewColumn.Header><GridViewColumnHeader Content="SEARCHING" Tag="Population" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                    </GridViewColumn>
+                                    <GridViewColumn Width="100" DisplayMemberBinding="{Binding WaitDisplay}">
+                                        <GridViewColumn.Header><GridViewColumnHeader Content="AVG WAIT" Tag="WaitSeconds" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                    </GridViewColumn>
+                                    <GridViewColumn Width="100" DisplayMemberBinding="{Binding Activity}">
+                                        <GridViewColumn.Header><GridViewColumnHeader Content="ACTIVITY" Tag="Activity" Click="StatsPopulationHeader_Click"/></GridViewColumn.Header>
+                                    </GridViewColumn>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                        <Border Grid.Row="3" Background="{DynamicResource SurfaceBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0"
+                                Padding="14,6">
+                            <TextBlock Text="Population and wait are shared across each hopper. Specific game and mode selections may take longer."
+                                       FontFamily="Consolas" FontSize="9"
+                                       Foreground="{DynamicResource MutedBrush}"/>
+                        </Border>
+                    </Grid>
+                </TabItem>
+
+                <!-- ═══ MATCH HISTORY ═══ -->
+                <TabItem x:Name="MatchHistorySection" Header="▦  MATCH HISTORY" Style="{StaticResource DarkTabItem}">
+                    <ContentControl x:Name="MatchHistoryHost">
+                        <TextBlock Text="Match History loads when this tab is opened."
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </ContentControl>
                 </TabItem>
 
                 <!-- ═══ BAN CHECKER ═══ -->
@@ -2947,7 +3593,11 @@
                 </TabItem>
 
                 <!-- ═══ TAB 5: PLAYLISTS ═══ -->
-                <TabItem x:Name="PlaylistsSection" Header="🗂  PLAYLISTS" Style="{StaticResource DarkTabItem}">
+                <TabItem x:Name="DownpatchSection" Header="DOWNPATCHING" Style="{StaticResource DarkTabItem}">
+                    <ContentControl x:Name="DownpatchHost"/>
+                </TabItem>
+
+                <TabItem x:Name="PlaylistsSection" Header="🗂  PLAYLIST INFO" Style="{StaticResource DarkTabItem}">
                     <ContentControl x:Name="PlaylistsHost">
                         <TextBlock Text="Playlists load when this tab is opened."
                                    Foreground="{DynamicResource MutedBrush}"
@@ -3030,16 +3680,16 @@
                                         </Style>
                                     </UniformGrid.Resources>
                                     <StackPanel Margin="0,0,18,14">
-                                        <TextBlock Text="START" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
+                                        <TextBlock Text="HOME" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
                                         <TextBlock FontSize="11" LineHeight="18" TextWrapping="Wrap">
-                                            <Run Foreground="{DynamicResource AccentBrush}" Text="HOME"/><Run Text=" — setup, status, and common tasks"/>
+                                            <Run Foreground="{DynamicResource AccentBrush}" Text="DASHBOARD"/><Run Text=" — setup, status, and common tasks"/>
                                         </TextBlock>
                                     </StackPanel>
                                     <StackPanel Margin="0,0,0,14">
                                         <TextBlock Text="PLAY" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
                                         <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="HALO 3 MAPS"/><Run Text=" — map selection"/></TextBlock>
                                         <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="MODS"/><Run Text=" — installed mod tools"/></TextBlock>
-                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="PLAYLISTS"/><Run Text=" — rotation explorer"/></TextBlock>
+                                        <TextBlock FontSize="11" LineHeight="18"><Run Foreground="{DynamicResource AccentBrush}" Text="PLAYLIST INFO"/><Run Text=" — rotation explorer"/></TextBlock>
                                     </StackPanel>
                                     <StackPanel Margin="0,0,18,0">
                                         <TextBlock Text="NETWORK" Style="{StaticResource SidebarSectionLabel}" Margin="0,0,0,5"/>
@@ -3193,6 +3843,7 @@
                                 BorderThickness="1"
                                 CornerRadius="2">
                             <TextBox x:Name="TxtLog"
+                                     IsUndoEnabled="False"
                                      Background="Transparent"
                                      BorderThickness="0"
                                      Foreground="{DynamicResource TextBrush}"

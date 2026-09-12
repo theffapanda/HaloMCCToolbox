@@ -398,3 +398,7 @@ FodyWeavers.xsd
 /docs/Halo-MCC-Rejoin-Fix-Official-Source-Brief.docx
 /docs/Halo-MCC-Rejoin-Fix-Official-Source-Brief.md
 /docs/Rejoin-Fix-Video-Animation/scenes
+/.history-reset-preparation.git
+
+# Local recovery backups
+/checkpoints/recovery-*/

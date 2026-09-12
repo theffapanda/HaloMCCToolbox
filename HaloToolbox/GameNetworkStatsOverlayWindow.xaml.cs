@@ -30,6 +30,11 @@ public partial class GameNetworkStatsOverlayWindow : Window
     private const int HtCaption = 2;
     private const int HtBottomRight = 17;
     private const int SnapDistance = 14;
+    private const int DockTolerance = 3;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpNoOwnerZOrder = 0x0200;
     private static readonly HashSet<GameNetworkStatsOverlayWindow> OpenOverlays = [];
 
     private readonly DispatcherTimer _positionTimer;
@@ -46,6 +51,12 @@ public partial class GameNetworkStatsOverlayWindow : Window
     private GameOverlayVisualStyle _visualStyle;
     private ObsOverlaySnapshot _lastSnapshot = ObsOverlaySnapshot.Empty;
     private HwndSource? _windowSource;
+    private readonly HashSet<GameNetworkStatsOverlayWindow> _activeMoveGroup = [];
+    private readonly Dictionary<GameNetworkStatsOverlayWindow, WindowRect> _activeMoveStartRects = [];
+    private WindowRect _activeLeaderStartRect;
+    private WindowRect _activeGroupStartBounds;
+    private bool _hasActiveMoveGeometry;
+    private bool _suppressMoveSnapping;
 
     internal GameNetworkStatsOverlayWindow(
         string component = "all",
@@ -153,12 +164,11 @@ public partial class GameNetworkStatsOverlayWindow : Window
         Cursor = enabled ? Cursors.SizeAll : Cursors.Arrow;
         ResizeMode = enabled ? ResizeMode.CanResize : ResizeMode.NoResize;
         ResizeThumb.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-        EditToolbar.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-        EditToolbarLabel.Text = $"{_component.ToUpperInvariant()}  ·  MOVE / RESIZE";
-        StyleOptionsPanel.Visibility =
-            enabled && (_component == "network" || _component == "session")
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+        // Keep editing controls out of the overlay's layout so they never cover
+        // or push down the actual stats. Variants are selected in the main
+        // window's Overlays section.
+        EditToolbar.Visibility = Visibility.Collapsed;
+        StyleOptionsPanel.Visibility = Visibility.Collapsed;
         OverlayRoot.Background = enabled ? Brush("#66081018") : Brushes.Transparent;
         OverlayRoot.BorderBrush = enabled ? Brush("#CC00C8FF") : Brushes.Transparent;
         ConfigureVisualStyle();
@@ -190,6 +200,8 @@ public partial class GameNetworkStatsOverlayWindow : Window
         (double width, double height, double minWidth, double minHeight) = _component switch
         {
             "network" => (430, 164, 360, 142),
+            "combined" => (516, 110, 430, 96),
+            "wait" when _visualStyle == GameOverlayVisualStyle.Modern => (360, 148, 300, 148),
             "wait" => (360, 112, 300, 96),
             "session" when _visualStyle == GameOverlayVisualStyle.Modern => (340, 160, 310, 145),
             "session" => (920, 230, 620, 215),
@@ -211,6 +223,7 @@ public partial class GameNetworkStatsOverlayWindow : Window
     private void ConfigureComponentPanel()
     {
         NetworkPanel.Visibility = _component == "network" ? Visibility.Visible : Visibility.Collapsed;
+        CombinedPanel.Visibility = _component == "combined" ? Visibility.Visible : Visibility.Collapsed;
         WaitPanel.Visibility = _component == "wait" ? Visibility.Visible : Visibility.Collapsed;
         SessionPanel.Visibility = _component == "session" ? Visibility.Visible : Visibility.Collapsed;
         RecapPanel.Visibility = Visibility.Collapsed;
@@ -219,6 +232,8 @@ public partial class GameNetworkStatsOverlayWindow : Window
     private void ConfigureVisualStyle()
     {
         bool classic = _visualStyle == GameOverlayVisualStyle.Classic;
+        WaitClassicLayout.Visibility = classic ? Visibility.Visible : Visibility.Collapsed;
+        WaitModernLayout.Visibility = classic ? Visibility.Collapsed : Visibility.Visible;
         NetworkClassicLayout.Visibility = classic ? Visibility.Visible : Visibility.Collapsed;
         NetworkModernLayout.Visibility = classic ? Visibility.Collapsed : Visibility.Visible;
         SessionClassicLayout.Visibility = classic ? Visibility.Visible : Visibility.Collapsed;
@@ -245,6 +260,9 @@ public partial class GameNetworkStatsOverlayWindow : Window
         {
             case "network":
                 RenderNetwork(snapshot);
+                break;
+            case "combined":
+                RenderCombined(snapshot);
                 break;
             case "wait":
                 RenderWait(snapshot);
@@ -355,6 +373,47 @@ public partial class GameNetworkStatsOverlayWindow : Window
         RefreshTimeSensitiveDisplay();
     }
 
+    private void RenderCombined(ObsOverlaySnapshot snapshot)
+    {
+        CombinedPanel.Visibility = Visibility.Visible;
+        bool hasNetwork = snapshot.RttMs.HasValue ||
+            snapshot.UploadKilobytesPerSecond.HasValue ||
+            snapshot.DownloadKilobytesPerSecond.HasValue;
+        CombinedPingText.Text = snapshot.RttMs.HasValue ? $"Ping: {snapshot.RttMs.Value} ms" : "";
+        CombinedLossText.Text = hasNetwork ? $"Loss: {snapshot.PacketLossPercent:0}%" : "";
+        CombinedUpText.Text = snapshot.UploadKilobytesPerSecond.HasValue
+            ? FormatRate(snapshot.UploadKilobytesPerSecond.Value)
+            : "";
+        CombinedDownText.Text = snapshot.DownloadKilobytesPerSecond.HasValue
+            ? FormatRate(snapshot.DownloadKilobytesPerSecond.Value)
+            : "";
+
+        var history = snapshot.RttHistoryMs.TakeLast(60).ToArray();
+        var points = new PointCollection();
+        if (history.Length > 0)
+        {
+            int historyMax = history.Where(x => x.HasValue).Select(x => x!.Value).DefaultIfEmpty(1).Max();
+            int graphMax = Math.Max(80, historyMax);
+            for (int i = 0; i < history.Length; i++)
+            {
+                if (!history[i].HasValue)
+                    continue;
+                double x = history.Length == 1 ? 254 : i * 254.0 / (history.Length - 1);
+                double y = 26 - Math.Clamp(history[i]!.Value / (double)graphMax, 0, 1) * 22;
+                points.Add(new Point(x, y));
+            }
+        }
+        CombinedGraphGlow.Points = points;
+        CombinedGraphLine.Points = points;
+
+        CombinedWinsText.Text = $"{snapshot.Wins}W";
+        CombinedLossesText.Text = snapshot.GamesPlayed > 0 ? $"{snapshot.Losses}L" : "";
+        CombinedWinRateText.Text = snapshot.GamesPlayed > 0
+            ? $"{Math.Round(snapshot.Wins * 100.0 / snapshot.GamesPlayed):0}%"
+            : "--";
+        CombinedKdText.Text = snapshot.SessionKd;
+    }
+
     private void RenderSession(ObsOverlaySnapshot snapshot)
     {
         SessionWinsText.Text = $"{snapshot.Wins}W";
@@ -406,6 +465,14 @@ public partial class GameNetworkStatsOverlayWindow : Window
             int elapsed = snapshot.MatchmakingStartedAtUtc.HasValue
                 ? Math.Max(0, (int)(DateTimeOffset.UtcNow - snapshot.MatchmakingStartedAtUtc.Value).TotalSeconds)
                 : 0;
+            WaitEstimateModernText.Text = $"{estimate / 60}:{estimate % 60:00}";
+            WaitElapsedModernText.Text = $"{elapsed / 60}:{elapsed % 60:00}";
+            WaitPlaylistModernText.Text = DefaultText(snapshot.MatchmakingPlaylistName, "MATCHMAKING");
+            WaitPopulationModernText.Text = snapshot.MatchmakingPopulation.HasValue
+                ? $"{snapshot.MatchmakingPopulation.Value} player{(snapshot.MatchmakingPopulation.Value == 1 ? "" : "s")} searching across " +
+                  DefaultText(snapshot.MatchmakingSearchScope, "all gametypes")
+                : "Population unavailable";
+            WaitProgressScale.ScaleX = estimate > 0 ? Math.Clamp((double)elapsed / estimate, 0, 1) : 1;
             WaitDetailText.Text = snapshot.MatchmakingPopulation.HasValue
                 ? $"{snapshot.MatchmakingPopulation.Value} player{(snapshot.MatchmakingPopulation.Value == 1 ? "" : "s")} searching " +
                   $"{DefaultText(snapshot.MatchmakingPlaylistName, "this playlist")} across " +
@@ -663,13 +730,24 @@ public partial class GameNetworkStatsOverlayWindow : Window
         }
 
         var windowRect = Marshal.PtrToStructure<WindowRect>(lParam);
-        SnapWindowRect(ref windowRect, message, wParam.ToInt32());
+        if (message == WmMoving && _activeMoveGroup.Count > 1 && _hasActiveMoveGeometry)
+        {
+            MoveDockedGroup(ref windowRect);
+        }
+        else if (!(message == WmMoving && _suppressMoveSnapping))
+        {
+            SnapWindowRect(ref windowRect, message, wParam.ToInt32());
+        }
         Marshal.StructureToPtr(windowRect, lParam, false);
         handled = true;
         return new IntPtr(1);
     }
 
-    private void SnapWindowRect(ref WindowRect windowRect, int message, int sizingEdge)
+    private void SnapWindowRect(
+        ref WindowRect windowRect,
+        int message,
+        int sizingEdge,
+        IReadOnlySet<GameNetworkStatsOverlayWindow>? excludedOverlays = null)
     {
         var horizontalGuides = new List<int>();
         var verticalGuides = new List<int>();
@@ -685,7 +763,9 @@ public partial class GameNetworkStatsOverlayWindow : Window
 
         foreach (var overlay in OpenOverlays)
         {
-            if (ReferenceEquals(overlay, this) || overlay.Visibility != Visibility.Visible)
+            if (ReferenceEquals(overlay, this) ||
+                overlay.Visibility != Visibility.Visible ||
+                excludedOverlays?.Contains(overlay) == true)
                 continue;
 
             var overlayHandle = new WindowInteropHelper(overlay).Handle;
@@ -740,6 +820,78 @@ public partial class GameNetworkStatsOverlayWindow : Window
         if (sizesBottom)
             windowRect.Bottom += ClosestSnapOffset(windowRect.Bottom, verticalGuides);
     }
+
+    private void MoveDockedGroup(ref WindowRect leaderRect)
+    {
+        int requestedX = leaderRect.Left - _activeLeaderStartRect.Left;
+        int requestedY = leaderRect.Top - _activeLeaderStartRect.Top;
+        var groupRect = OffsetRect(_activeGroupStartBounds, requestedX, requestedY);
+        SnapWindowRect(ref groupRect, WmMoving, 0, _activeMoveGroup);
+        ConstrainToGameWindow(ref groupRect);
+
+        int finalX = groupRect.Left - _activeGroupStartBounds.Left;
+        int finalY = groupRect.Top - _activeGroupStartBounds.Top;
+        int leaderWidth = leaderRect.Right - leaderRect.Left;
+        int leaderHeight = leaderRect.Bottom - leaderRect.Top;
+        leaderRect.Left = _activeLeaderStartRect.Left + finalX;
+        leaderRect.Top = _activeLeaderStartRect.Top + finalY;
+        leaderRect.Right = leaderRect.Left + leaderWidth;
+        leaderRect.Bottom = leaderRect.Top + leaderHeight;
+
+        foreach (var member in _activeMoveGroup)
+        {
+            if (ReferenceEquals(member, this) ||
+                !_activeMoveStartRects.TryGetValue(member, out var startRect))
+            {
+                continue;
+            }
+
+            var handle = new WindowInteropHelper(member).Handle;
+            if (handle == IntPtr.Zero)
+                continue;
+
+            SetWindowPos(
+                handle,
+                IntPtr.Zero,
+                startRect.Left + finalX,
+                startRect.Top + finalY,
+                0,
+                0,
+                SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
+        }
+    }
+
+    private void ConstrainToGameWindow(ref WindowRect rect)
+    {
+        var gameWindow = FindMccWindow(_preferredProcessId);
+        if (gameWindow == IntPtr.Zero || !GetWindowRect(gameWindow, out var gameRect))
+            return;
+
+        int width = rect.Right - rect.Left;
+        int height = rect.Bottom - rect.Top;
+        if (width <= gameRect.Right - gameRect.Left)
+        {
+            if (rect.Left < gameRect.Left)
+                rect = OffsetRect(rect, gameRect.Left - rect.Left, 0);
+            if (rect.Right > gameRect.Right)
+                rect = OffsetRect(rect, gameRect.Right - rect.Right, 0);
+        }
+        if (height <= gameRect.Bottom - gameRect.Top)
+        {
+            if (rect.Top < gameRect.Top)
+                rect = OffsetRect(rect, 0, gameRect.Top - rect.Top);
+            if (rect.Bottom > gameRect.Bottom)
+                rect = OffsetRect(rect, 0, gameRect.Bottom - rect.Bottom);
+        }
+    }
+
+    private static WindowRect OffsetRect(WindowRect rect, int x, int y) => new()
+    {
+        Left = rect.Left + x,
+        Top = rect.Top + y,
+        Right = rect.Right + x,
+        Bottom = rect.Bottom + y
+    };
 
     private static int ClosestSnapOffset(int firstEdge, int secondEdge, IEnumerable<int> guides)
     {
@@ -847,12 +999,31 @@ public partial class GameNetworkStatsOverlayWindow : Window
         if (!_moveMode || e.LeftButton != MouseButtonState.Pressed)
             return;
 
-        BeginPlacementEdit();
+        StartWindowMove(e);
+    }
+
+    private void EditToolbar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_moveMode || e.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        if (e.OriginalSource is DependencyObject source &&
+            FindVisualAncestor<System.Windows.Controls.Primitives.ToggleButton>(source) is not null)
+        {
+            return;
+        }
+
+        StartWindowMove(e);
+    }
+
+    private void StartWindowMove(MouseButtonEventArgs e)
+    {
+        bool detach = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+        BeginPlacementEdit(isMove: true, detach);
         try
         {
             ReleaseCapture();
             SendMessage(new WindowInteropHelper(this).Handle, WmNcLButtonDown, HtCaption, 0);
-            SaveCurrentManualPlacement();
         }
         finally
         {
@@ -866,12 +1037,11 @@ public partial class GameNetworkStatsOverlayWindow : Window
         if (!_moveMode || e.LeftButton != MouseButtonState.Pressed)
             return;
 
-        BeginPlacementEdit();
+        BeginPlacementEdit(isMove: false, detach: true);
         try
         {
             ReleaseCapture();
             SendMessage(new WindowInteropHelper(this).Handle, WmNcLButtonDown, HtBottomRight, 0);
-            SaveCurrentManualPlacement();
         }
         finally
         {
@@ -880,19 +1050,136 @@ public partial class GameNetworkStatsOverlayWindow : Window
         }
     }
 
-    private void BeginPlacementEdit()
+    private void BeginPlacementEdit(bool isMove, bool detach)
     {
-        _isUserEditingPlacement = true;
-        if (_positionTimer.IsEnabled)
-            _positionTimer.Stop();
+        _activeMoveGroup.Clear();
+        _activeMoveStartRects.Clear();
+        _hasActiveMoveGeometry = false;
+        _suppressMoveSnapping = isMove && detach;
+
+        var group = isMove && !detach ? FindDockedGroup() : [this];
+        foreach (var overlay in group)
+        {
+            _activeMoveGroup.Add(overlay);
+            overlay._isUserEditingPlacement = true;
+            if (overlay._positionTimer.IsEnabled)
+                overlay._positionTimer.Stop();
+
+            var handle = new WindowInteropHelper(overlay).Handle;
+            if (handle != IntPtr.Zero && GetWindowRect(handle, out var rect))
+                _activeMoveStartRects[overlay] = rect;
+        }
+
+        if (isMove &&
+            _activeMoveStartRects.TryGetValue(this, out _activeLeaderStartRect) &&
+            _activeMoveStartRects.Count > 0)
+        {
+            _activeGroupStartBounds = BoundsOf(_activeMoveStartRects.Values);
+            _hasActiveMoveGeometry = true;
+        }
     }
 
     private void EndPlacementEdit()
     {
-        _isUserEditingPlacement = false;
-        FollowGameWindow();
-        if (!_positionTimer.IsEnabled)
-            _positionTimer.Start();
+        var editedOverlays = _activeMoveGroup.Count > 0
+            ? _activeMoveGroup.ToArray()
+            : [this];
+
+        foreach (var overlay in editedOverlays)
+            overlay.SaveCurrentManualPlacement();
+
+        foreach (var overlay in editedOverlays)
+            overlay._isUserEditingPlacement = false;
+
+        foreach (var overlay in editedOverlays)
+        {
+            overlay.FollowGameWindow();
+            if (!overlay._positionTimer.IsEnabled)
+                overlay._positionTimer.Start();
+        }
+
+        _activeMoveGroup.Clear();
+        _activeMoveStartRects.Clear();
+        _hasActiveMoveGeometry = false;
+        _suppressMoveSnapping = false;
+    }
+
+    private IReadOnlyList<GameNetworkStatsOverlayWindow> FindDockedGroup()
+    {
+        var rects = new Dictionary<GameNetworkStatsOverlayWindow, WindowRect>();
+        foreach (var overlay in OpenOverlays)
+        {
+            if (overlay.Visibility != Visibility.Visible)
+                continue;
+
+            var handle = new WindowInteropHelper(overlay).Handle;
+            if (handle != IntPtr.Zero && GetWindowRect(handle, out var rect))
+                rects[overlay] = rect;
+        }
+
+        if (!rects.ContainsKey(this))
+            return [this];
+
+        var connected = new HashSet<GameNetworkStatsOverlayWindow> { this };
+        var pending = new Queue<GameNetworkStatsOverlayWindow>();
+        pending.Enqueue(this);
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            foreach (var candidate in rects.Keys)
+            {
+                if (connected.Contains(candidate) ||
+                    !AreDocked(rects[current], rects[candidate]))
+                {
+                    continue;
+                }
+
+                connected.Add(candidate);
+                pending.Enqueue(candidate);
+            }
+        }
+
+        return connected.ToArray();
+    }
+
+    private static bool AreDocked(WindowRect first, WindowRect second)
+    {
+        int verticalOverlap = Math.Min(first.Bottom, second.Bottom) - Math.Max(first.Top, second.Top);
+        bool touchesVertically = verticalOverlap > DockTolerance &&
+            (Math.Abs(first.Right - second.Left) <= DockTolerance ||
+             Math.Abs(second.Right - first.Left) <= DockTolerance);
+
+        int horizontalOverlap = Math.Min(first.Right, second.Right) - Math.Max(first.Left, second.Left);
+        bool touchesHorizontally = horizontalOverlap > DockTolerance &&
+            (Math.Abs(first.Bottom - second.Top) <= DockTolerance ||
+             Math.Abs(second.Bottom - first.Top) <= DockTolerance);
+
+        return touchesVertically || touchesHorizontally;
+    }
+
+    private static WindowRect BoundsOf(IEnumerable<WindowRect> rects)
+    {
+        using var iterator = rects.GetEnumerator();
+        iterator.MoveNext();
+        var bounds = iterator.Current;
+        while (iterator.MoveNext())
+        {
+            bounds.Left = Math.Min(bounds.Left, iterator.Current.Left);
+            bounds.Top = Math.Min(bounds.Top, iterator.Current.Top);
+            bounds.Right = Math.Max(bounds.Right, iterator.Current.Right);
+            bounds.Bottom = Math.Max(bounds.Bottom, iterator.Current.Bottom);
+        }
+        return bounds;
+    }
+
+    private static T? FindVisualAncestor<T>(DependencyObject source) where T : DependencyObject
+    {
+        for (DependencyObject? current = source; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is T match)
+                return match;
+        }
+        return null;
     }
 
     private void SaveCurrentManualPlacement()
@@ -901,14 +1188,21 @@ public partial class GameNetworkStatsOverlayWindow : Window
         if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect))
             return;
 
+        var overlayHandle = new WindowInteropHelper(this).Handle;
+        if (overlayHandle == IntPtr.Zero || !GetWindowRect(overlayHandle, out var overlayRect))
+            return;
+
         var dipRect = ToDipRect(rect);
-        var size = CoerceOverlaySizeToGameRect(dipRect);
-        double width = size.Width;
-        double height = size.Height;
+        var overlayDipRect = ToDipRect(overlayRect);
+        double width = Math.Clamp(overlayDipRect.Width, MinWidth, Math.Max(MinWidth, dipRect.Width));
+        double height = Math.Clamp(overlayDipRect.Height, MinHeight, Math.Max(MinHeight, dipRect.Height));
+        Width = width;
+        Height = height;
+        SetPositionIfChanged(overlayDipRect.Left, overlayDipRect.Top);
         double maxLeft = Math.Max(dipRect.Left, dipRect.Right - width);
         double maxTop = Math.Max(dipRect.Top, dipRect.Bottom - height);
-        double x = Math.Clamp(Left, dipRect.Left, maxLeft) - dipRect.Left;
-        double y = Math.Clamp(Top, dipRect.Top, maxTop) - dipRect.Top;
+        double x = Math.Clamp(overlayDipRect.Left, dipRect.Left, maxLeft) - dipRect.Left;
+        double y = Math.Clamp(overlayDipRect.Top, dipRect.Top, maxTop) - dipRect.Top;
         _manualOffset = new Point(x / dipRect.Width, y / dipRect.Height);
         _manualSize = new Size(width / dipRect.Width, height / dipRect.Height);
         _manualPlacementIsRelative = true;
@@ -1155,6 +1449,16 @@ public partial class GameNetworkStatsOverlayWindow : Window
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hwnd, int message, int wParam, int lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(
+        IntPtr hwnd,
+        IntPtr hwndInsertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 

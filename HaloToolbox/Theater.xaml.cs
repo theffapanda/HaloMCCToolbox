@@ -124,6 +124,20 @@ public partial class Theater : UserControl
         new("2025-09-17", new DateTime(2025, 9, 17, 17, 14, 36, DateTimeKind.Utc), "4956458579120161185", "3902112679418599911"),
     ];
 
+    // Base history is independent of game-depot availability. Additional entries supplied
+    // from SteamDB depot 976731 history; do not infer multiplayer manifests for them.
+    private static readonly DownpatchManifestPair[] MccBaseDownpatchCatalog = Halo3DownpatchCatalog
+        .Select(v => v with { MultiplayerManifestId = "" })
+        .Concat(new DownpatchManifestPair[]
+        {
+            new("2019-12-03", new DateTime(2019, 12, 3, 17, 58, 38, DateTimeKind.Utc), "8565557560582291301", ""),
+            new("2019-12-18", new DateTime(2019, 12, 18, 17, 59, 33, DateTimeKind.Utc), "4022906894220163395", ""),
+            new("2020-01-29", new DateTime(2020, 1, 29, 18, 0, 15, DateTimeKind.Utc), "1514983520433510910", ""),
+            new("2020-03-03", new DateTime(2020, 3, 3, 18, 3, 8, DateTimeKind.Utc), "2388461507075591476", ""),
+            new("2020-03-06", new DateTime(2020, 3, 6, 17, 59, 33, DateTimeKind.Utc), "7966799730805437831", ""),
+            new("2020-06-24", new DateTime(2020, 6, 24, 17, 0, 41, DateTimeKind.Utc), "5346539789844485906", ""),
+        }).OrderBy(v => v.EffectiveUtc).ToArray();
+
     // Ordered game keys (determines CboGame indices 1-5)
     private static readonly string[] GameKeys =
         ["Halo2A", "Halo3", "Halo3ODST", "Halo4", "HaloReach"];
@@ -489,6 +503,8 @@ public partial class Theater : UserControl
         CboSort.SelectedIndex = 0;
 
         TxtBackupPath.Text = $"BACKUP: {BackupRoot}";
+        CboDownpatchRelease.ItemsSource = Halo3DownpatchCatalog.Reverse().ToArray();
+        CboDownpatchRelease.SelectedIndex = 0;
         CboDownpatchClip.ItemsSource = _clips;
         TxtDownpatchWorkspace.Text = App.LoadDownpatchWorkspacePath();
         LoadDownpatchIndex();
@@ -498,12 +514,19 @@ public partial class Theater : UserControl
         RefreshDownpatchUi();
     }
 
+    public void ShowDownpatchPage(bool downpatch)
+    {
+        TheaterTabs.SelectedItem = downpatch
+            ? (DownpatchTab.Visibility == Visibility.Visible ? DownpatchTab : DownpatchUnavailableTab)
+            : LibraryTab;
+    }
+
     public void SetMccInstallationPath(string path)
     {
         bool isMicrosoftStore = App.GetMccInstallationKind(path) == MccInstallationKind.MicrosoftStore;
         DownpatchTab.Visibility = isMicrosoftStore ? Visibility.Collapsed : Visibility.Visible;
-        if (isMicrosoftStore && ReferenceEquals(TheaterTabs.SelectedItem, DownpatchTab))
-            TheaterTabs.SelectedItem = LibraryTab;
+        if (ReferenceEquals(TheaterTabs.SelectedItem, DownpatchTab) || ReferenceEquals(TheaterTabs.SelectedItem, DownpatchUnavailableTab))
+            ShowDownpatchPage(true);
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -1383,12 +1406,21 @@ public partial class Theater : UserControl
 
     private void RefreshDownpatchUi()
     {
-        if (TxtDownpatchVersion is null)
+        if (TxtDownpatchVersion is null || TxtDownpatchWorkspace is null)
             return;
 
         var clip = GetSelectedDownpatchClip();
-        var workspace = TxtDownpatchWorkspace?.Text.Trim() ?? "";
-        if (clip is null)
+        var workspace = TxtDownpatchWorkspace.Text.Trim();
+        bool busy = _downpatchWorkflowStep is DownpatchWorkflowStep.WatchingBase
+            or DownpatchWorkflowStep.WatchingMultiplayer or DownpatchWorkflowStep.Staging;
+        ChkDownpatchRelease.IsEnabled = !busy;
+        DownpatchReleasePanel.IsEnabled = !busy;
+        CboDownpatchClip.IsEnabled = !busy && !IsReleaseSelection;
+        BtnBrowseDownpatchClip.IsEnabled = !busy && !IsReleaseSelection;
+        DownpatchClipDropZone.AllowDrop = !busy && !IsReleaseSelection;
+        TxtDownpatchWorkspace.IsEnabled = !busy;
+        BtnBrowseDownpatchWorkspace.IsEnabled = !busy;
+        if (clip is null && !IsReleaseSelection)
         {
             TxtDownpatchClipDetails.Text = "No clip selected.";
             TxtDownpatchDateDetails.Text = "";
@@ -1403,12 +1435,12 @@ public partial class Theater : UserControl
             return;
         }
 
-        TxtDownpatchClipDetails.Text =
-            $"{clip.DisplayName}\n{clip.Game} / {clip.MapDisplayName}\n{clip.FileName}\n{clip.FileSizeStr}";
-        TxtDownpatchDateDetails.Text =
-            $"Detected date: {clip.RecordedAt:MMMM d, yyyy h:mm:ss tt}\nSource: {clip.RecordedAtSource}";
+        TxtDownpatchClipDetails.Text = IsReleaseSelection ? "Halo 3 release download (no theater file required)." :
+            $"{clip!.DisplayName}\n{clip.Game} / {clip.MapDisplayName}\n{clip.FileName}\n{clip.FileSizeStr}";
+        TxtDownpatchDateDetails.Text = IsReleaseSelection ? "Date lookup uses the last catalog release on or before the selected UTC day." :
+            $"Detected date: {clip!.RecordedAt:MMMM d, yyyy h:mm:ss tt}\nSource: {clip.RecordedAtSource}";
 
-        if (!clip.GameKey.Equals("Halo3", StringComparison.OrdinalIgnoreCase))
+        if (!IsReleaseSelection && !clip!.GameKey.Equals("Halo3", StringComparison.OrdinalIgnoreCase))
         {
             TxtDownpatchVersion.Text = "Downpatch recovery is currently mapped for Halo 3 clips only.";
             TxtDownpatchReuse.Text = "";
@@ -1421,7 +1453,7 @@ public partial class Theater : UserControl
             return;
         }
 
-        if (ToUtc(clip.RecordedAt) >= ToUtc(CurrentBuildNoDownpatchCutoff))
+        if (!IsReleaseSelection && clip is not null && ToUtc(clip.RecordedAt) >= ToUtc(CurrentBuildNoDownpatchCutoff))
         {
             TxtDownpatchVersion.Text = "Current MCC build should read this clip date.";
             TxtDownpatchReuse.Text = "No depot download is needed for Halo 3 films from February 28, 2025 or newer. Install a safe-named clip, then launch current MCC with EAC disabled.";
@@ -1443,14 +1475,19 @@ public partial class Theater : UserControl
             return;
         }
 
-        var version = ResolveHalo3Version(clip.RecordedAt);
+        var version = GetSelectedDownpatchVersion();
+        if (IsBaseOnlySelection)
+        {
+            RefreshBaseOnlyDownpatchUi(version);
+            return;
+        }
         if (version is null)
         {
-            TxtDownpatchVersion.Text = "No built-in manifest pair covers this clip date.";
+            TxtDownpatchVersion.Text = "No built-in manifest pair covers the selected date.";
             TxtDownpatchReuse.Text = "Use manual manifests for now, or add this date to the catalog.";
             TxtDownpatchBaseCommand.Text = "";
             TxtDownpatchMultiplayerCommand.Text = "";
-            TxtDownpatchNotes.Text = "The current built-in catalog starts at January 27, 2021.";
+            TxtDownpatchNotes.Text = "The built-in catalog spans May 13, 2020 through September 17, 2025. Dates use the last catalog release on or before that UTC day; later updates may be missing.";
             SetDownpatchLaunchCommand("");
             SetDownpatchPlaybackButtons(false);
             SetDownpatchDepotButtons(false);
@@ -1459,10 +1496,10 @@ public partial class Theater : UserControl
 
         var next = NextHalo3Version(version);
         var windowText = next is null
-            ? $"{version.EffectiveUtc:yyyy-MM-dd} and newer"
+            ? $"{version.EffectiveUtc:yyyy-MM-dd} (latest catalog entry; later updates may be missing)"
             : $"{version.EffectiveUtc:yyyy-MM-dd} through {next.EffectiveUtc.AddSeconds(-1):yyyy-MM-dd}";
         var suggestedFolder = BuildSuggestedDownpatchFolder(workspace, version, next);
-        var tracked = FindTrackedDownpatch(clip.GameKey, version);
+        var tracked = FindTrackedDownpatch("Halo3", version);
         bool trackedFolderExists = tracked is not null && Directory.Exists(tracked.FolderPath);
         bool suggestedExists = !string.IsNullOrWhiteSpace(suggestedFolder) && Directory.Exists(suggestedFolder);
         var launchFolder = trackedFolderExists ? tracked!.FolderPath : suggestedExists ? suggestedFolder : "";
@@ -1511,7 +1548,7 @@ public partial class Theater : UserControl
         notes.AppendLine("The toolbox automatically installs a safe theater copy when you drop or browse to a Halo 3 saved film.");
         if (!hasCompleteManifestPair)
             notes.AppendLine("This patch timestamp is known, but the matching H3 multiplayer manifest ID is not in the local catalog yet.");
-        if (clip.RecordedAt >= new DateTime(2022, 8, 31))
+        if (version.EffectiveUtc >= new DateTime(2022, 8, 31))
             notes.AppendLine("This date may also need the Halo 3 campaign/DLC step in Steam before theater playback works.");
         TxtDownpatchNotes.Text = notes.ToString();
 
@@ -1620,8 +1657,75 @@ public partial class Theater : UserControl
                     and not DownpatchWorkflowStep.Staging;
     }
 
+    private bool IsReleaseSelection => ChkDownpatchRelease?.IsChecked == true;
+    private bool IsBaseOnlySelection => IsReleaseSelection && CboDownpatchReleaseGame.SelectedIndex == 1;
+    private DownpatchManifestPair[] SelectedReleaseCatalog =>
+        CboDownpatchReleaseGame.SelectedIndex == 1 ? MccBaseDownpatchCatalog : Halo3DownpatchCatalog;
+
+    private void DownpatchReleaseGameChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CboDownpatchRelease is null)
+            return;
+        var previous = (CboDownpatchRelease.SelectedItem as DownpatchManifestPair)?.Label;
+        CboDownpatchRelease.ItemsSource = SelectedReleaseCatalog.Reverse().ToArray();
+        CboDownpatchRelease.SelectedItem = DpDownpatchDate?.SelectedDate is { } date
+            ? SelectedReleaseCatalog.LastOrDefault(v => v.EffectiveUtc.Date <= date.Date)
+            : SelectedReleaseCatalog.FirstOrDefault(v => v.Label == previous) ?? SelectedReleaseCatalog.Last();
+        DownpatchReleaseSelectionChanged(sender, e);
+    }
+
+    private void RefreshBaseOnlyDownpatchUi(DownpatchManifestPair? version)
+    {
+        TxtDownpatchClipDetails.Text = "MCC base depot only (976731). No theater file required.";
+        TxtDownpatchVersion.Text = version is null
+            ? "No base manifest covers this date. The catalog starts December 3, 2019."
+            : $"MCC base release: {version.Label} — seen {version.EffectiveUtc:yyyy-MM-dd HH:mm:ss} UTC";
+        TxtDownpatchBaseCommand.Text = version is null ? ""
+            : $"download_depot {HaloMccAppId} {MccBaseDepotId} {version.BaseManifestId}";
+        TxtDownpatchMultiplayerCommand.Text = "Not included in a base-only download.";
+        TxtDownpatchReuse.Text = _downpatchWorkflowStep == DownpatchWorkflowStep.Complete
+            ? "Base depot download complete. Files are in Steam's depot cache."
+            : _downpatchWorkflowStep == DownpatchWorkflowStep.WatchingBase
+                ? "Watching Steam's console log for the selected base manifest..."
+                : "Copy the base command and run it in Steam Console.";
+        TxtDownpatchNotes.Text = $"40 known base manifests: December 3, 2019 through September 17, 2025. Later updates may be missing.\n\nDownload destination: steamapps\\content\\app_{HaloMccAppId}\\depot_{MccBaseDepotId}\n\nThe base depot alone is not a complete game install. This mode does not stage or launch it. Select Halo 3 for the existing paired download and staging workflow.";
+        SetDownpatchLaunchCommand("");
+        SetDownpatchPlaybackButtons(false);
+        SetDownpatchDepotButtons(version is not null);
+        BtnCopyNextDownpatchCommand.Content = _downpatchWorkflowStep == DownpatchWorkflowStep.WatchingBase
+            ? "WATCHING BASE" : "COPY BASE COMMAND";
+    }
+
+    private DownpatchManifestPair? GetSelectedDownpatchVersion()
+        => IsReleaseSelection
+            ? CboDownpatchRelease?.SelectedItem as DownpatchManifestPair
+            : GetSelectedDownpatchClip() is { GameKey: "Halo3" } clip
+                ? ResolveHalo3Version(clip.RecordedAt) : null;
+
+    private void DownpatchReleaseSelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (DownpatchReleasePanel is null || TxtDownpatchVersion is null)
+            return;
+        DownpatchReleasePanel.Visibility = IsReleaseSelection ? Visibility.Visible : Visibility.Collapsed;
+        CboDownpatchClip.IsEnabled = !IsReleaseSelection;
+        BtnBrowseDownpatchClip.IsEnabled = !IsReleaseSelection;
+        _downpatchLogWatchTimer.Stop();
+        _downpatchWorkflowStep = DownpatchWorkflowStep.Idle;
+        RefreshDownpatchUi();
+    }
+
+    private void DownpatchDateChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DpDownpatchDate.SelectedDate is not { } date)
+            return;
+        // A calendar date includes every release published during that UTC day.
+        CboDownpatchRelease.SelectedItem = SelectedReleaseCatalog
+            .LastOrDefault(v => v.EffectiveUtc.Date <= date.Date);
+        DownpatchReleaseSelectionChanged(sender, e);
+    }
+
     private TheaterClip? GetSelectedDownpatchClip()
-        => _externalDownpatchClip ?? CboDownpatchClip?.SelectedItem as TheaterClip;
+        => IsReleaseSelection ? null : _externalDownpatchClip ?? CboDownpatchClip?.SelectedItem as TheaterClip;
 
     private TheaterClip? BuildExternalDownpatchClip(string path)
     {
@@ -1826,7 +1930,7 @@ public partial class Theater : UserControl
     private async void DownpatchLogWatchTimer_Tick(object? sender, EventArgs e)
     {
         var clip = GetSelectedDownpatchClip();
-        if (clip is null || ResolveHalo3Version(clip.RecordedAt) is not { } version)
+        if (GetSelectedDownpatchVersion() is not { } version)
             return;
 
         var log = ReadSteamConsoleLog();
@@ -1838,7 +1942,7 @@ public partial class Theater : UserControl
             UpdateDownloadStartedText(log, MccBaseDepotId, version.BaseManifestId, "Base");
             if (HasDepotCompletion(log, MccBaseDepotId, version.BaseManifestId, _downpatchWatchStartedAt))
             {
-                _downpatchWorkflowStep = DownpatchWorkflowStep.BaseComplete;
+                _downpatchWorkflowStep = IsBaseOnlySelection ? DownpatchWorkflowStep.Complete : DownpatchWorkflowStep.BaseComplete;
                 _downpatchLogWatchTimer.Stop();
                 TxtDownpatchReuse.Text = "Base depot complete. Copy the Multiplayer command next.";
                 RefreshDownpatchUi();
@@ -1917,13 +2021,10 @@ public partial class Theater : UserControl
 
     private void BtnCopyNextDownpatchCommand_Click(object sender, RoutedEventArgs e)
     {
-        var clip = GetSelectedDownpatchClip();
-        if (clip is null || ResolveHalo3Version(clip.RecordedAt) is null)
-            return;
-        var selectedVersion = ResolveHalo3Version(clip.RecordedAt);
+        var selectedVersion = GetSelectedDownpatchVersion();
         if (selectedVersion is null ||
             string.IsNullOrWhiteSpace(selectedVersion.BaseManifestId) ||
-            string.IsNullOrWhiteSpace(selectedVersion.MultiplayerManifestId))
+            (!IsBaseOnlySelection && string.IsNullOrWhiteSpace(selectedVersion.MultiplayerManifestId)))
         {
             TxtDownpatchReuse.Text = "This patch timestamp is known, but the complete base + multiplayer manifest pair is not in the toolbox catalog yet.";
             return;
@@ -2006,17 +2107,17 @@ public partial class Theater : UserControl
     private string ResolvePlaybackRoot()
     {
         var clip = GetSelectedDownpatchClip();
-        if (clip is null)
+        if (clip is null && !IsReleaseSelection)
             return "";
 
-        if (ToUtc(clip.RecordedAt) >= ToUtc(CurrentBuildNoDownpatchCutoff))
+        if (!IsReleaseSelection && clip is not null && ToUtc(clip.RecordedAt) >= ToUtc(CurrentBuildNoDownpatchCutoff))
             return App.LoadMccInstallationPath();
 
-        var version = ResolveHalo3Version(clip.RecordedAt);
+        var version = GetSelectedDownpatchVersion();
         if (version is null)
             return "";
 
-        var tracked = FindTrackedDownpatch(clip.GameKey, version);
+        var tracked = FindTrackedDownpatch("Halo3", version);
         if (tracked is not null && Directory.Exists(tracked.FolderPath))
             return tracked.FolderPath;
 
@@ -2116,7 +2217,7 @@ public partial class Theater : UserControl
         return Path.Combine(dir, $"{name}_{Guid.NewGuid():N}{ext}");
     }
 
-    private async Task<bool> StageDownpatchDepotsAsync(TheaterClip clip, DownpatchManifestPair version)
+    private async Task<bool> StageDownpatchDepotsAsync(TheaterClip? clip, DownpatchManifestPair version)
     {
         if (_downpatchStagingActive)
         {
@@ -2186,9 +2287,9 @@ public partial class Theater : UserControl
         }
     }
 
-    private void TrackDownpatchFolder(TheaterClip clip, DownpatchManifestPair version, string folder)
+    private void TrackDownpatchFolder(TheaterClip? clip, DownpatchManifestPair version, string folder)
     {
-        var existing = FindTrackedDownpatch(clip.GameKey, version);
+        var existing = FindTrackedDownpatch("Halo3", version);
         if (existing is not null)
         {
             existing.FolderPath = folder;
@@ -2198,7 +2299,7 @@ public partial class Theater : UserControl
         {
             _downpatchIndex.Entries.Add(new DownpatchWorkspaceEntry
             {
-                GameKey = clip.GameKey,
+                GameKey = "Halo3",
                 VersionLabel = version.Label,
                 EffectiveUtc = version.EffectiveUtc,
                 BaseManifestId = version.BaseManifestId,
@@ -2210,13 +2311,13 @@ public partial class Theater : UserControl
 
         var marker = new DownpatchFolderMarker
         {
-            GameKey = clip.GameKey,
+            GameKey = "Halo3",
             VersionLabel = version.Label,
             EffectiveUtc = version.EffectiveUtc,
             BaseManifestId = version.BaseManifestId,
             MultiplayerManifestId = version.MultiplayerManifestId,
             CreatedAtUtc = DateTime.UtcNow,
-            SourceClip = clip.FileName
+            SourceClip = clip?.FileName ?? ""
         };
         File.WriteAllText(
             Path.Combine(folder, "halo-toolbox-downpatch.json"),

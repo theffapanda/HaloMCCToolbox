@@ -503,11 +503,11 @@ public partial class Vpn : UserControl, IDisposable
             await _service.ConnectAsync(_settings, server);
             if (_ensureCompanionServicesRunningAsync is not null)
             {
-                TxtActionStatus.Text = "VPN connected. Starting Advanced Features and Rejoin Recovery…";
+                TxtActionStatus.Text = "VPN connected. Starting the MCC data proxy and Rejoin Recovery…";
                 bool servicesReady = await _ensureCompanionServicesRunningAsync();
                 if (!servicesReady)
                 {
-                    TxtActionStatus.Text = "VPN connected, but Advanced Features need attention before MCC starts.";
+                    TxtActionStatus.Text = "VPN connected, but the MCC data proxy needs attention before MCC starts.";
                     return;
                 }
             }

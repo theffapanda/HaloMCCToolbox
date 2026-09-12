@@ -979,7 +979,7 @@ internal sealed class VpnService : IDisposable
 
     private static HttpClient CreateHttpClient()
     {
-        // Advanced Features installs a local system proxy for MCC observation.
+        // The MCC data proxy installs a local system proxy for MCC observation.
         // Nord catalog/profile/setup traffic is Toolbox control-plane traffic,
         // so it bypasses that proxy and stays on the normal Windows route.
         var handler = new SocketsHttpHandler

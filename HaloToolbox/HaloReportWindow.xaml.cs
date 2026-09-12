@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -11,7 +11,8 @@ namespace HaloToolbox
     {
         public string SuspectGamertag { get; set; } = "";
         public string SuspectXboxId   { get; set; } = "";
-        public string CheatType       { get; set; } = "";
+        public string BehaviorLabel { get; set; } = "Cheating";
+        public string ReportReason       { get; set; } = "";
         public string GameTitle       { get; set; } = "";  // e.g. "Halo 3", "Halo Reach"
         public string MapName         { get; set; } = "";
         public string GameType        { get; set; } = "";
@@ -158,13 +159,13 @@ namespace HaloToolbox
             sb.AppendLine("Xbox User ID: " + SuspectXboxId);
             sb.AppendLine("(Xbox User ID is persistent and cannot be changed by renaming)");
             sb.AppendLine();
-            sb.AppendLine("--- Cheat Type ---");
-            sb.AppendLine(CheatType);
+            sb.AppendLine("--- Reported Behavior ---");
+            sb.AppendLine(ReportReason);
             sb.AppendLine();
             sb.AppendLine("--- Full Scoreboard ---");
             sb.AppendLine(Scoreboard);
             sb.AppendLine();
-            sb.AppendLine("Evidence: carnage report XML and theater .mov files attached as ZIP.");
+            sb.AppendLine("Evidence: attach the report ZIP and relevant screenshots or recordings. For communication reports, include evidence of the voice or text chat.");
             return sb.ToString();
         }
 
@@ -172,7 +173,7 @@ namespace HaloToolbox
         private async Task RunFillAsync()
         {
             var gamertag = EscJs(SuspectGamertag);
-            var title    = EscJs("Cheating - " + CheatType + " [" + GameTitle + " - " + MapName + "]");
+            var title    = EscJs(ReportReason + " [" + GameTitle + " - " + MapName + "]");
 
             // Plain text for the textarea fallback (actual \n newline characters in the JS string)
             var descText = EscJs(BuildDescription());
@@ -219,8 +220,31 @@ namespace HaloToolbox
                 // 1. Select a game = Halo: The Master Chief Collection
                 "  setNesty('request_custom_fields_360048983931', 'safety__game_title__halo_mcc', 'Halo: The Master Chief Collection');" +
 
-                // 2. Behavior being reported = Cheating
-                "  setNesty('request_custom_fields_360048984131', 'safety__reported_behavior__cheating', 'Cheating');" +
+                // Resolve the real option value from the form instead of guessing Zendesk tags.
+                "  (function() {" +
+                "    var el = document.getElementById('request_custom_fields_360048984131');" +
+                "    var label = '" + EscJs(BehaviorLabel) + "';" +
+                "    if (!el) { log.push('behavior: NOT FOUND'); return; }" +
+                "    var options = [];" +
+                "    try { options = JSON.parse(el.getAttribute('data-tagger') || '[]'); } catch(e) {}" +
+                "    if (el.options) options = options.concat(Array.from(el.options).map(function(o) { return {label:o.text, value:o.value}; }));" +
+                "    function norm(s) { return (s || '').split('::').pop().trim().toLowerCase(); }" +
+                "    function findOption(items) {" +
+                "      if (!Array.isArray(items)) return null;" +
+                "      for (var o of items) {" +
+                "        if (!o || typeof o !== 'object') continue;" +
+                "        if (o.value && norm(o.label || o.name) === norm(label)) return o;" +
+                "        var child = findOption(o.options);" +
+                "        if (child) return child;" +
+                "      }" +
+                "      return null;" +
+                "    }" +
+                "    var option = findOption(options);" +
+                "    var value = option && option.value;" +
+                "    if (!value && label === 'Cheating') value = 'safety__reported_behavior__cheating';" +
+                "    if (!value) { el.value = ''; el.dispatchEvent(new Event('change', {bubbles:true})); log.push('behavior: NOT FOUND - select ' + label + ' manually'); return; }" +
+                "    setNesty(el.id, value, option ? (option.label || option.name) : label);" +
+                "  })();" +
 
                 // 3. Who are you reporting (plain text input)
                 "  setInput('request_custom_fields_360048984151', '" + gamertag + "');" +

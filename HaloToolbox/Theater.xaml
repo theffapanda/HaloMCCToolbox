@@ -55,24 +55,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabControl">
-                        <Grid Background="{TemplateBinding Background}">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="42"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-                            <Border Grid.Row="0"
-                                    Background="{DynamicResource SurfaceBrush}"
-                                    BorderBrush="{DynamicResource BorderBrush}"
-                                    BorderThickness="0,0,0,1">
-                                <TabPanel IsItemsHost="True"
-                                          KeyboardNavigation.TabIndex="1"
-                                          Margin="12,6,0,0"
-                                          VerticalAlignment="Stretch"/>
-                            </Border>
-                            <ContentPresenter Grid.Row="1"
-                                              ContentSource="SelectedContent"
-                                              SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
-                        </Grid>
+                        <ContentPresenter ContentSource="SelectedContent" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -518,6 +501,7 @@
     </Grid>
         </TabItem>
 
+        <TabItem x:Name="DownpatchUnavailableTab" Header="DOWNPATCHING"><TextBlock Text="Downpatching requires the Steam version of MCC. Select your Steam installation on the Halo 3 Maps page to use this tool." TextWrapping="Wrap" Margin="24" Foreground="{DynamicResource TextBrush}"/></TabItem>
         <TabItem x:Name="DownpatchTab" Header="DOWNPATCH" Style="{StaticResource TheaterSubTabItem}">
             <Grid Margin="18">
                 <Grid.RowDefinitions>
@@ -538,11 +522,11 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="DOWNPATCH RECOVERY"
+                            <TextBlock Text="DOWNPATCHING"
                                        FontSize="11"
                                        FontWeight="SemiBold"
                                        Foreground="{DynamicResource AccentBrush}"/>
-                            <TextBlock Text="Build isolated MCC version folders for saved films without touching your current Steam install."
+                            <TextBlock Text="1. Choose a workspace folder for your older MCC versions.&#10;2. Select a saved film, browse or drop a .mov file, or choose a release / date below.&#10;3. Click OPEN STEAM CONSOLE, then COPY NEXT COMMAND. Paste and run the base command in Steam.&#10;4. Wait for the base download to finish, then copy and run the multiplayer command when offered. Keep Toolbox open to track progress.&#10;5. After both downloads finish, Toolbox prepares the version folder automatically. Use LAUNCH NO-EAC to open it. Reuse a compatible folder if one is already available. Base-only downloads stop after the base depot and do not prepare a playable folder."
                                        FontSize="10"
                                        Foreground="{DynamicResource MutedBrush}"
                                        Margin="0,6,0,0"
@@ -656,7 +640,29 @@
                                         Style="{StaticResource FlatBtn}"
                                         Click="BtnBrowseDownpatchClip_Click"/>
                             </Grid>
-                            <StackPanel Grid.Row="3" Margin="0,14,0,0">
+                            <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,14,0,0">
+                            <StackPanel>
+                                <CheckBox x:Name="ChkDownpatchRelease" Content="Select by release / date" Foreground="{DynamicResource TextBrush}"
+                                          Checked="DownpatchReleaseSelectionChanged" Unchecked="DownpatchReleaseSelectionChanged" Margin="0,0,0,8"/>
+                                <StackPanel x:Name="DownpatchReleasePanel" Visibility="Collapsed">
+                                    <TextBlock Text="GAME" Foreground="{DynamicResource MutedBrush}"/>
+                                    <ComboBox x:Name="CboDownpatchReleaseGame" Style="{StaticResource DarkCombo}" SelectedIndex="0" Margin="0,4,0,8"
+                                              SelectionChanged="DownpatchReleaseGameChanged">
+                                        <ComboBoxItem Content="Halo 3"/>
+                                        <ComboBoxItem Content="MCC base only (all releases)"/>
+                                        <ComboBoxItem Content="Halo: Reach (not mapped)" IsEnabled="False"/>
+                                        <ComboBoxItem Content="Halo 2: Anniversary (not mapped)" IsEnabled="False"/>
+                                        <ComboBoxItem Content="Halo 3: ODST (not mapped)" IsEnabled="False"/>
+                                        <ComboBoxItem Content="Halo 4 (not mapped)" IsEnabled="False"/>
+                                    </ComboBox>
+                                    <TextBlock Text="RELEASE" Foreground="{DynamicResource MutedBrush}"/>
+                                    <ComboBox x:Name="CboDownpatchRelease" Style="{StaticResource DarkCombo}" DisplayMemberPath="Label"
+                                              SelectionChanged="DownpatchReleaseSelectionChanged" Margin="0,4,0,8"/>
+                                    <TextBlock Text="Or find the version available on a date (UTC)" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/>
+                                    <DatePicker x:Name="DpDownpatchDate" SelectedDateChanged="DownpatchDateChanged" Margin="0,4,0,8"/>
+                                    <TextBlock Text="Choose Halo 3 for base + multiplayer, or MCC base only for the full base history. Other games still need manifest mappings."
+                                               Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                </StackPanel>
                                 <TextBlock x:Name="TxtDownpatchClipDetails"
                                            Foreground="{DynamicResource TextBrush}"
                                            FontSize="10"
@@ -669,6 +675,7 @@
                                            LineHeight="18"
                                            Margin="0,10,0,0"/>
                             </StackPanel>
+                            </ScrollViewer>
                         </Grid>
                     </Border>
 

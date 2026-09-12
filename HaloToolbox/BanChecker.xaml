@@ -65,7 +65,7 @@
                                    Foreground="{DynamicResource OrangeBrush}"/>
                         <TextBlock Margin="0,6,0,0" FontSize="9" Foreground="{DynamicResource MutedBrush}"
                                    TextWrapping="Wrap" LineHeight="15">
-                            <Run Text="1. Start Rejoin Recovery in Live Features.&#10;"/>
+                            <Run Text="1. Start the MCC Data Proxy on Dashboard.&#10;"/>
                             <Run Text="2. Launch MCC and sign in.&#10;"/>
                             <Run Text="3. Open Multiplayer so MCC requests a fresh ban summary.&#10;"/>
                             <Run Text="4. Return here and refresh the status."/>
